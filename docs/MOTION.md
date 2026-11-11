@@ -1,6 +1,6 @@
 # Motion recording patch (prototype)
 
-Status: **works on a real TR-8** (record while TR-REC is held, hardware test 5). Erase with CLEAR held: test 6 pending. RAM only, one global buffer.
+Status: **works on a real TR-8**: hold TR-REC to record (hardware test 5), hold CLEAR to erase (hardware test 6). RAM only, one global buffer.
 
 ## Use
 
@@ -17,7 +17,7 @@ The patcher takes the user's own Roland file. It refuses anything other than the
 
 | `--patch` | Record | Erase | Status on the unit |
 |---|---|---|---|
-| `motion` (default) | **TR-REC held** while running (`FUN_60013168(0x11)`) | **CLEAR held** + knob, running or stopped (`FUN_60013168(0x1C)`) | Record works (test 5, was `motion-hold`); CLEAR erase: test 6 pending |
+| `motion` (default) | **TR-REC held** while running (`FUN_60013168(0x11)`) | **CLEAR held** + knob, running or stopped (`FUN_60013168(0x1C)`) | **Works** (record: test 5, CLEAR erase: test 6) |
 | `motion-mode` | TR-REC mode active (HMI Setup[0] == 0) while running | Knob while stopped in TR-REC mode | Not tested since the hook fix |
 | `motion-diag` | Always while running | Knob while stopped | Works (test 4) |
 | `motion-probe` | No motion: audible test of each link | - | Not needed so far |
@@ -40,7 +40,7 @@ Default build (`motion`):
 - 49 controls (36 knobs, 11 level controls, 2 others), 16 steps x 2 variations (A/B) each.
 - One global motion buffer: it is **not** stored per pattern. Changing pattern keeps the same motion.
 - `motion-mode` build: "record on" = HMI Setup parameter 0 (database object `0x60149F38`, global id `0x2A`) must be 0. The payload reads it with the firmware getter `FUN_6001B12E(0x60149F38, 0)`. Evidence: the mode buttons 0x11-0x16 in `FUN_6001961E` set it to 0-5; the step clear function `FUN_600192BA` only works in modes 0 and 3; the MIDI note input in `FUN_60004D8C` records notes into the pattern only in mode 3 (INST REC). So 0 = TR-REC, 3 = INST REC.
-- Default build: record = `FUN_60013168(0x11)`, erase = `FUN_60013168(0x1C)`: the button-held bitmap (FINDINGS, "Panel buttons"). Test 5 confirmed that 0x11 is TR-REC. 0x1C = CLEAR comes from the code (CLEAR + instrument button clears a row); test 6 will confirm it.
+- Default build: record = `FUN_60013168(0x11)`, erase = `FUN_60013168(0x1C)`: the button-held bitmap (FINDINGS, "Panel buttons"). Test 5 confirmed that 0x11 is TR-REC. Test 6 confirmed that 0x1C is CLEAR.
 - Since test 4 the panel boot mode (`0x6007E574`) and the knob redirect flag (`0x6007E580`) are not tested any more: they belong to the `FUN_6001446A` path, which normal play does not use. So motion also replays while an instrument button is held.
 
 ## How it works
@@ -115,6 +115,7 @@ python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion_probe.BIN --patch motion
 - After test 4: boot mode and redirect tests removed (wrong path, see Behaviour). Two builds for test 5: `motion` (TR-REC mode) and `motion-hold` (TR-REC held, the user's proposal). If `motion` records now, one of the removed tests was the cause; if only `motion-hold` records, the Setup[0] value is wrong.
 - Test 5 (`motion-hold`, `e7c4ca4`): **works perfectly** according to the user: record while TR-REC is held, live tweak otherwise. This also proves that button id 0x11 is TR-REC and that `FUN_60013168` is the button-held state. (`motion` not reported.)
 - After test 5, at the user's request: erase = hold **CLEAR** (0x1C) and turn the knob, running or stopped. The hold rule became the default build `motion`; the old Setup[0] rule is now `motion-mode`; `motion-hold` was removed.
+- Test 6 (`motion`, `613191c`): **works perfectly** according to the user: CLEAR held + knob erases that control's motion, while running or stopped, other motion is kept. This confirms that button id 0x1C is CLEAR.
 
 ## Rebuild the payload
 

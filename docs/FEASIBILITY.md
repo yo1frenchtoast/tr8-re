@@ -22,7 +22,7 @@ Hard parts: 16-bit step masks everywhere (parameters, handlers, storage slots of
 
 ## B. Motion recording (current focus)
 
-**Status:** a RAM-only prototype is implemented and passes emulation: see [MOTION.md](MOTION.md). It records only in TR-REC. The plan below is the original design; MOTION.md describes what was built.
+**Status:** a RAM-only version works on the unit (hold TR-REC to record, hold CLEAR to erase): see [MOTION.md](MOTION.md). The plan below is the original design; MOTION.md describes what was built.
 
 ### Hook points found
 
@@ -48,6 +48,6 @@ Feasible. Capture and playback each need one small detour (two patched calls plu
 
 ### Next steps
 
-1. Hardware test of the prototype ([UPDATE.md](UPDATE.md), test checklist).
+1. ~~Hardware test of the prototype~~: done, works (MOTION.md, History tests 5-6). Remaining checklist items: [UPDATE.md](UPDATE.md).
 2. Per-pattern motion and saving it: needs a new storage area next to `TR8_PTN` (0x50-byte slots are full) and more code space (grow the image, Space option 2).
 3. Map control id -> parameter -> knob name, to show useful names and to choose which controls can record.
