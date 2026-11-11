@@ -1,0 +1,116 @@
+/*
+ * Roland TR-8 system v1.61: firmware addresses and functions for patch payloads.
+ *
+ * Every address is a runtime address of the main application (loaded at 0x60000000).
+ * Function pointers have the Thumb bit set. See docs/FINDINGS.md for the evidence
+ * behind each entry and docs/DEVELOPING.md for how to use them.
+ *
+ * Confidence tags:
+ *   [unit]  confirmed on a real TR-8
+ *   [code]  read from the code, consistent, not tested on a unit
+ *   [hyp]   hypothesis
+ */
+#ifndef TR8_V161_H
+#define TR8_V161_H
+
+#include <stdint.h>
+
+/* ---------------------------------------------------------------- sequencer */
+
+/* Sequencer state struct at 0x6007E100. */
+#define TR8_SEQ_RUNNING   (*(volatile uint8_t  *)0x6007E102)  /* [unit] 1 while playing      */
+#define TR8_SEQ_COUNTER   (*(volatile uint32_t *)0x6007E118)  /* [unit] HALF steps: step = counter >> 1 */
+#define TR8_SEQ_LAST      (*(volatile uint32_t *)0x6007E11C)  /* [code] last counter value of the pattern */
+#define TR8_SEQ_TICK      (*(volatile uint32_t *)0x6007E120)  /* [code] tick inside the half step */
+#define TR8_SEQ_TICKS     (*(volatile uint32_t *)0x6007E130)  /* [code] ticks per half step   */
+#define TR8_SEQ_VARIATION (*(volatile uint32_t *)0x6012FA74)  /* [unit] 0 = A, other = B      */
+
+/* Per-step function: called (usually twice) for every step from the clock tick.
+ * Hook its call sites 0x60009862 and 0x60009808 to run code once per step. */
+typedef uint64_t (*tr8_step_fn)(void *p, int step);
+#define TR8_FN_STEP ((tr8_step_fn)0x6000978F)                 /* [unit] FUN_6000978E          */
+
+/* ---------------------------------------------------------------- panel controls */
+
+#define TR8_NCTRL 49  /* control ids 0..48, see TR8_CTRL_* and docs/FINDINGS.md "Control ids" */
+
+/* Post a control change exactly like the ADC scan does: event {0x0B, id, value}
+ * into the panel FIFO (critical section inside, safe from the sequencer task).
+ * The panel task then runs the normal knob path: screen, parameter, sound, display. */
+typedef void (*tr8_post_ctrl_fn)(int id, int value /* 0..255 */);
+#define TR8_POST_CTRL ((tr8_post_ctrl_fn)0x60000CC1)           /* [unit] ADC change callback   */
+
+/* HMI knob event handler (case 10 of the HMI dispatcher), at 0x60013892:
+ *   if (modal) return; store value; if (FUN_60013242(screen, ev) == 0) FUN_60013F6A(id, value);
+ * Hook the "bl FUN_60013242" at 0x600138C8 to see every knob event before the firmware. */
+typedef int (*tr8_screen_fn)(int screen, const int16_t *ev /* {10, id, value} */);
+#define TR8_FN_SCREEN_EVENT ((tr8_screen_fn)0x60013243)         /* [unit] FUN_60013242          */
+#define TR8_HOOK_KNOB_EVENT 0x600138C8                          /* [unit] bl site               */
+
+/* Global control -> parameter table (used when the screen does not take the event). */
+typedef void (*tr8_ctrl_apply_fn)(int id, int value);
+#define TR8_FN_CTRL_APPLY ((tr8_ctrl_apply_fn)0x60013F6B)       /* [code] FUN_60013F6A          */
+
+/* ---------------------------------------------------------------- buttons */
+
+/* 1 while the button is held. Bitmap at 0x6014893C. */
+typedef int (*tr8_held_fn)(unsigned id);
+#define TR8_BTN_HELD ((tr8_held_fn)0x60013169)                  /* [unit] FUN_60013168          */
+
+#define TR8_BTN_STEP(n)   ((n) - 1)   /* [code] step buttons 1..16 = ids 0x00..0x0F            */
+#define TR8_BTN_TR_REC    0x11        /* [unit]                                                */
+#define TR8_BTN_CLEAR     0x1C        /* [unit]                                                */
+#define TR8_BTN_INST_FIRST 0x1D       /* [code] instrument buttons 0x1D..0x2B                  */
+
+/* ---------------------------------------------------------------- parameters */
+
+/* HMI parameter databases. All take the object pointer as first argument. */
+typedef int (*tr8_get_fn)(void *db, int idx, int def);
+#define TR8_HMI_SETUP ((void *)0x60149F38)                      /* [code] Setup database object */
+#define TR8_SETUP_GET ((tr8_get_fn)0x6001B12F)                  /* [code] Setup idx n = global 0x2A+n */
+#define TR8_SYSTEM_GET ((tr8_get_fn)0x6001B433)                 /* [code] FUN_6001B432          */
+#define TR8_PTN_GET   ((tr8_get_fn)0x6001B737)                  /* [code] FUN_6001B736          */
+#define TR8_PTN2_GET  ((tr8_get_fn)0x6001D3FB)                  /* [code] FUN_6001D3FA          */
+
+/* Generic HMI setter: clamps to the range and writes only on change. */
+typedef void (*tr8_set_fn)(void *db, int idx, int value, int sub);
+#define TR8_HMI_SET ((tr8_set_fn)0x600186FB)                    /* [code] FUN_600186FA          */
+
+/* Setup[0] = panel mode: 0 TR-REC, 3 INST REC (others not identified). */
+#define TR8_SETUP_MODE 0                                        /* [code]                       */
+
+/* Sound parameters travel as internal MIDI control changes {0x0B, 0xB0, cc, value}.
+ * The cc numbers are the TR-8 MIDI implementation numbers (BD tune = 20, ...). */
+typedef void (*tr8_cc_fn)(void *unused, int cc, int value);
+#define TR8_SEND_CC ((tr8_cc_fn)0x60015907)                     /* [code] FUN_60015906          */
+
+/* ---------------------------------------------------------------- display and LEDs */
+
+/* Show a short string on the display (the factory test mode shows the 4-letter knob
+ * names with it). The active screen redraws the display later. */
+typedef void (*tr8_text_fn)(void *unused, const char *s);
+#define TR8_DISPLAY_TEXT ((tr8_text_fn)0x60015981)              /* [code] FUN_60015980          */
+
+/* LED control, arguments not decoded: FUN_6001A7EC(id, a, b, c). */
+typedef void (*tr8_led_fn)(int id, int a, int b, int c);
+#define TR8_LED ((tr8_led_fn)0x6001A7ED)                        /* [hyp]                        */
+
+/* ---------------------------------------------------------------- control ids */
+
+enum {
+    TR8_CTRL_VOLM = 0,  TR8_CTRL_ACLV = 1,  TR8_CTRL_GRGT = 2,  TR8_CTRL_GRLV = 3,
+    TR8_CTRL_GRTM = 4,  TR8_CTRL_SETM = 5,  TR8_CTRL_SEFB = 6,  TR8_CTRL_SELV = 7,
+    TR8_CTRL_BDTU = 8,  TR8_CTRL_BDAT = 9,  TR8_CTRL_BDCO = 10, TR8_CTRL_BDDC = 11,
+    TR8_CTRL_BDLV = 12, TR8_CTRL_SDTU = 13, TR8_CTRL_SDSN = 14, TR8_CTRL_SDCO = 15,
+    TR8_CTRL_SDDC = 16, TR8_CTRL_SDLV = 17, TR8_CTRL_LTTU = 18, TR8_CTRL_LTDC = 19,
+    TR8_CTRL_LTLV = 20, TR8_CTRL_MTTU = 21, TR8_CTRL_MTDC = 22, TR8_CTRL_MTLV = 23,
+    TR8_CTRL_HTTU = 24, TR8_CTRL_HTDC = 25, TR8_CTRL_HTLV = 26, TR8_CTRL_RSTU = 27,
+    TR8_CTRL_RSDC = 28, TR8_CTRL_RSLV = 29, TR8_CTRL_HCTU = 30, TR8_CTRL_HCDC = 31,
+    TR8_CTRL_HCLV = 32, TR8_CTRL_CHTU = 33, TR8_CTRL_CHDC = 34, TR8_CTRL_CHLV = 35,
+    TR8_CTRL_OHTU = 36, TR8_CTRL_OHDC = 37, TR8_CTRL_OHLV = 38, TR8_CTRL_CCTU = 39,
+    TR8_CTRL_CCDC = 40, TR8_CTRL_CCLV = 41, TR8_CTRL_RCTU = 42, TR8_CTRL_RCDC = 43,
+    TR8_CTRL_RCLV = 44, TR8_CTRL_SHFL = 45, TR8_CTRL_FINE = 46, TR8_CTRL_EXLV = 47,
+    TR8_CTRL_EXSC = 48,
+};
+
+#endif

@@ -1,0 +1,24 @@
+#!/bin/bash
+# Build every patch variant from an original v1.61 TR8_UPD.BIN and run all emulation tests.
+#
+#   tests/run_all.sh path/to/TR8_UPD.BIN
+#
+# Needs: Python 3 with unicorn (pip install -r requirements-dev.txt).
+# Output files go to work/ (git-ignored).
+set -euo pipefail
+[ $# -eq 1 ] || { sed -n '2,7p' "$0"; exit 1; }
+cd "$(dirname "$0")/.."
+PY=${PYTHON:-python3}
+mkdir -p work
+run() {   # patch name, output dir, test script, extra test args
+    local name=$1 dir=$2 test=$3; shift 3
+    $PY -I tools/tr8patch.py "$IN" "work/TR8_UPD_${name//-/_}.BIN" --patch "$name" > /dev/null
+    $PY -I tools/tr8fw.py extract "work/TR8_UPD_${name//-/_}.BIN" "work/$dir" > /dev/null
+    printf '%-14s ' "$name"; $PY "tests/$test" "work/$dir/appA.bin" "$@" | tail -1
+}
+IN=$1
+$PY -I tools/tr8patch.py "$IN" --check
+run motion       patched       emu_motion.py
+run motion-mode  patched_mode  emu_motion.py --mode
+run motion-diag  patched_diag  emu_motion.py --diag
+run motion-probe patched_probe emu_probe.py

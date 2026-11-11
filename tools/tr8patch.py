@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Apply feature patches to a user-supplied Roland TR-8 v1.61 TR8_UPD.BIN.
 
-  tr8patch.py TR8_UPD.BIN OUT.BIN [--patch motion]   build a patched update file
-  tr8patch.py TR8_UPD.BIN --check                    only verify that the input is supported
+  tr8patch.py TR8_UPD.BIN OUT.BIN [--patch NAME]   build a patched update file (default: motion)
+  tr8patch.py TR8_UPD.BIN --check                  only verify that the input is supported
+  tr8patch.py --list                               list the available patches
+
+Patches that use the same hook sites (all motion-* variants) cannot be combined.
 
 No Roland code is shipped here: the patcher reads the original file, checks it is exactly
 the supported version, rewrites a few instructions, adds the payload and rebuilds the
@@ -15,7 +18,6 @@ import tr8fw
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = 0x60000000
 APPA_SHA256 = "3685edab8bbeaef8752df9ef08a73a9fd2a2e69ba8210016132f6d141f6b452e"  # v1.61, decompressed
-FILE_SHA256 = None  # the container is checked module by module instead
 
 def thumb_bl(src, dst):
     off = dst - (src + 4)
@@ -97,10 +99,16 @@ def apply(app, spec):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("input"); ap.add_argument("output", nargs="?")
+    ap.add_argument("input", nargs="?"); ap.add_argument("output", nargs="?")
     ap.add_argument("--patch", action="append", choices=sorted(PATCHES), help="default: motion")
-    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--check", action="store_true", help="only verify the input file")
+    ap.add_argument("--list", action="store_true", help="list the available patches")
     a = ap.parse_args()
+    if a.list:
+        for name, spec in PATCHES.items():
+            print(f"{name:14s} {spec['doc']}")
+        return
+    if not a.input: ap.error("input file required")
     img = open(a.input, "rb").read()
     check_container(img)
     app = load_app(img)
@@ -113,7 +121,7 @@ def main():
     tr8fw.pack(img, "appA", bytes(app), a.output)
     out = open(a.output, "rb").read()
     check_container(out)
-    print(f"written {a.output}: copy it to the USB storage as TR8_UPD.BIN and run the normal update")
+    print(f"written {a.output}: rename it to TR8_UPD.BIN and flash it as described in docs/UPDATE.md")
 
 if __name__ == "__main__":
     main()

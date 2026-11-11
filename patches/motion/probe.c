@@ -9,18 +9,13 @@
  * Expected on the unit if every link works: knobs dead when stopped; start, touch one knob,
  * release it: that parameter jumps between minimum and maximum on every step.
  */
-#include <stdint.h>
+#include "tr8_v161.h"
 
-#define SEQ_RUNNING (*(volatile uint8_t  *)0x6007E102)
-#define SEQ_STEP    (*(volatile uint32_t *)0x6007E118)
-
-typedef int      (*screen_fn)(int screen, const int16_t *ev);
-typedef uint64_t (*step_fn)(void *p, int step);
-typedef void     (*post_fn)(int id, int value);
-
-#define ORIG_KNOB ((screen_fn)0x60013243)
-#define ORIG_STEP ((step_fn)0x6000978F)
-#define POST_CTRL ((post_fn)0x60000CC1)
+#define SEQ_RUNNING TR8_SEQ_RUNNING
+#define SEQ_STEP    TR8_SEQ_COUNTER
+#define ORIG_KNOB   TR8_FN_SCREEN_EVENT
+#define ORIG_STEP   TR8_FN_STEP
+#define POST_CTRL   TR8_POST_CTRL
 
 uint8_t m_last = 0xFF;      /* last step seen (dedupe: the step function runs twice per step) */
 uint8_t p_id   = 0xFF;      /* last control touched by the user */

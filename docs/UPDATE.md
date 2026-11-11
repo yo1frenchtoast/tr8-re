@@ -28,11 +28,11 @@ The procedure is Roland's official one for system v1.61 ([Roland support page](h
 6. When BD to RC and steps 1 to 16 all flash, the update is complete. Switch off the power.
 7. Check the version again. A patched file keeps the version number `161`.
 
-What the updater checks (FINDINGS 1c): the 16-byte trailer, the module names, a read-back of each written block, and after the write the byte-sum of each module. Error 6 = byte-sum mismatch. `tr8patch.py` recomputes the size and byte-sum, and verifies its output before it writes it.
+What the updater checks ([FINDINGS.md](FINDINGS.md) section 3): the 16-byte trailer, the module names, a read-back of each written block, and after the write the byte-sum of each module. Error 6 = byte-sum mismatch. `tr8patch.py` recomputes the size and byte-sum, and verifies its output before it writes it.
 
 ## Recovery
 
-The update rewrites only flash `0x30000`-`0x3DFFFF` (application and second-processor modules). The boot loader (`0x0`) and the updater (`0x8000`) are never written (FINDINGS 1b, 1c).
+The update rewrites only flash `0x30000`-`0x3DFFFF` (application and second-processor modules). The boot loader (`0x0`) and the updater (`0x8000`) are never written ([FINDINGS.md](FINDINGS.md) sections 2 and 3).
 
 If the patched firmware does not start, or behaves badly:
 
@@ -42,11 +42,11 @@ If the patched firmware does not start, or behaves badly:
 
 The only case this does not cover is a power cut while the updater writes flash. Roland says the unit then needs service.
 
-Not proven: that step button [1] is the GPIO input 12 that the boot table tests. Roland's procedure names step [1], and the boot table needs exactly one button held, so the two agree.
+Step [1] at power-on reaches the updater even when the application is modified: the boot loader tests the button (GPIO input 12) before it loads the application. This path was used for every hardware test of the motion patch.
 
 ## Test the motion patch on the unit
 
-Do these checks in this order. Note the result of each one.
+Do these checks in this order. Note the result of each one. Checks 3 to 6 passed on the test unit (MOTION.md, History 5 and 6); the others were not reported yet.
 
 | # | Action | Expected |
 |---|---|---|
@@ -63,4 +63,4 @@ Do these checks in this order. Note the result of each one.
 
 Also watch: a display popup on every replayed value, stuck or jumping parameters, timing drift, and USB backup still working (the patch removes the developer dump calls in the backup path).
 
-If something fails, note the step, the mode, the knob and what the display showed, then recover as above.
+If something fails, note the check number, the buttons held, the control and what the display showed, then recover as above.

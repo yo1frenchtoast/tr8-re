@@ -1,54 +1,42 @@
 /*
- * TR-8 v1.61 motion recording prototype (RAM only, one global motion buffer).
+ * TR-8 v1.61 motion recording (RAM only, one global motion buffer). Works on a real unit.
  *
- * Rules:
- *  - Default build (works on the unit, hardware test 5):
- *      TR-REC (button 0x11) held + sequencer running + knob moved -> value stored at the current step.
- *      CLEAR  (button 0x1C) held + knob moved (running or not)    -> that control's lane is erased.
- *  - -DMOTION_MODE: record while TR-REC mode is active (HMI Setup[0] == 0); erase = knob moved
- *    while stopped in TR-REC mode. -DMOTION_DIAG: record always; erase = knob moved while stopped.
- *  - Otherwise the knob acts as usual (live tweak), the motion is kept and still replayed.
- *  - On each step, every lane with a value at this step is replayed by posting the same
- *    event the ADC scan posts ({0x0B, id, value}), so the normal knob path applies it.
- *  - A lane is not replayed for 2 steps after the user touched its knob (no fight while recording).
- *  - Slots: 16 steps x 2 variations (A/B) per control, 49 controls.
- *  - The sequencer counter (+0x18) counts half steps: step = counter >> 1.
- *  - The per-step function runs twice per step (FUN_6000981E also calls FUN_600097DA):
- *    a lane is replayed only once per step.
- *  - No panel boot mode (0x6007E574) or knob redirect (0x6007E580) test: those belong to the
- *    FUN_6001446A path, which normal play does not use (hardware test 4, docs/MOTION.md).
+ * Rules (default build):
+ *   TR-REC held + sequencer running + control moved -> value stored at the current step.
+ *   CLEAR held + control moved (running or stopped)  -> that control's motion is erased (A and B).
+ *   No button held                                   -> live change; the motion is kept and replayed.
+ * Variants: -DMOTION_MODE records while TR-REC mode is active (Setup[0] == 0) and erases by moving
+ * a control while stopped in that mode; -DMOTION_DIAG records always (diagnostic build).
  *
- * Hooks (see docs/MOTION.md):
- *  - motion_knob replaces "bl FUN_60013242" at 0x600138C8: HMI event 10 (knob) handler, before the
- *    active screen and the global control->parameter table FUN_60013F6A see the event.
- *    (The first prototype hooked FUN_6001446A, which only some screens use: nothing was recorded.)
- *  - motion_step replaces "bl FUN_6000978e" at 0x60009862 and 0x60009808 (sequencer, once per step).
+ * Replay: on each step, every lane with a value at this step is posted as the same event the ADC
+ * scan posts ({0x0B, id, value}), so the normal knob path applies it (sound, display).
+ * A lane is not replayed for 2 steps after it was recorded, so playback does not fight the hand.
+ * Storage: 49 controls x (16 steps x 2 variations) values plus a 32-bit mask per control.
+ *
+ * Firmware facts this code depends on (docs/FINDINGS.md, docs/MOTION.md "History"):
+ *   - the sequencer counter counts half steps: step = counter >> 1;
+ *   - the per-step function usually runs twice per step: replay once per slot (m_last);
+ *   - our own replay comes back through motion_knob: the pending flag/value filters that echo.
+ *
+ * Hooks (tools/tr8patch.py):
+ *   motion_knob replaces "bl FUN_60013242" at 0x600138C8 (HMI knob event, before the active screen
+ *               and the global control -> parameter table);
+ *   motion_step replaces "bl FUN_6000978E" at 0x60009862 and 0x60009808 (once per step).
  */
-#include <stdint.h>
+#include "tr8_v161.h"
 
-#define NCTRL 49
-#define NSLOT 32
+#define NCTRL TR8_NCTRL
+#define NSLOT 32                                  /* 16 steps x 2 variations */
 
-/* Firmware addresses (v1.61 application, loaded at 0x60000000). Thumb bit set on functions. */
-#define SEQ_RUNNING   (*(volatile uint8_t  *)0x6007E102)   /* sequencer state +0x02          */
-#define SEQ_STEP      (*(volatile uint32_t *)0x6007E118)   /* sequencer state +0x18          */
-#define SEQ_VARIATION (*(volatile uint32_t *)0x6012FA74)   /* pattern state +0x10 (0 / not 0)*/
-
-typedef int      (*screen_fn)(int screen, const int16_t *ev);
-typedef uint64_t (*step_fn)(void *p, int step);
-typedef void     (*post_fn)(int id, int value);
-typedef int      (*getprm_fn)(void *db, int idx, int def);
-typedef int      (*held_fn)(unsigned id);
-
-#define ORIG_KNOB ((screen_fn)0x60013243) /* FUN_60013242: pass the event to the active screen */
-#define ORIG_STEP ((step_fn)0x6000978F)   /* FUN_6000978e: original per-step call             */
-#define POST_CTRL ((post_fn)0x60000CC1)   /* ADC change callback: posts {0x0B, id, value}     */
-#define SETUP_GET ((getprm_fn)0x6001B12F) /* FUN_6001b12e: read HMI Setup parameter           */
-#define HMI_SETUP ((void *)0x60149F38)    /* HMI Setup database object                        */
-#define MODE_TR_REC 0                     /* Setup[0]: 0 TR-REC, 3 INST REC (FUN_6001961e)    */
-#define BTN_HELD  ((held_fn)0x60013169)   /* FUN_60013168: 1 while button id is held          */
-#define BTN_TR_REC 0x11                   /* TR-REC button (confirmed, hardware test 5)       */
-#define BTN_CLEAR  0x1C                   /* CLEAR button (clear-row modifier in FUN_6001961E)*/
+#define SEQ_RUNNING   TR8_SEQ_RUNNING
+#define SEQ_STEP      TR8_SEQ_COUNTER
+#define SEQ_VARIATION TR8_SEQ_VARIATION
+#define ORIG_KNOB     TR8_FN_SCREEN_EVENT
+#define ORIG_STEP     TR8_FN_STEP
+#define POST_CTRL     TR8_POST_CTRL
+#define BTN_HELD      TR8_BTN_HELD
+#define BTN_TR_REC    TR8_BTN_TR_REC
+#define BTN_CLEAR     TR8_BTN_CLEAR
 
 /* Large table in the second cave region; everything else in the first one. */
 __attribute__((section(".cave_b"))) uint8_t m_val[NCTRL][NSLOT];
@@ -68,7 +56,7 @@ static inline int rec_on(void)
 #if defined(MOTION_DIAG)
     return 1;
 #elif defined(MOTION_MODE)
-    return SETUP_GET(HMI_SETUP, 0, 0) == MODE_TR_REC;
+    return TR8_SETUP_GET(TR8_HMI_SETUP, TR8_SETUP_MODE, 0) == 0;   /* 0 = TR-REC */
 #else
     return BTN_HELD(BTN_TR_REC);
 #endif

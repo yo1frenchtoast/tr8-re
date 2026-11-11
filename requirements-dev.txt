@@ -1,0 +1,2 @@
+# Only needed for the emulation tests (tests/). The patcher itself needs Python 3 only.
+unicorn>=2.0

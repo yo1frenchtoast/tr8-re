@@ -3,7 +3,11 @@ firmware/
 work/
 analysis/
 *.bin
+*.BIN
 *.elf
 *.zip
-__pycache__/
+# build and tool output
 *.o
+*.lst
+__pycache__/
+.venv/

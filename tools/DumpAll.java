@@ -1,3 +1,5 @@
+// Ghidra post-script: write <out>.strings (defined strings with references) and <out>.c
+// (decompiled C of every function). Argument: output path prefix.
 import ghidra.app.script.GhidraScript;
 import ghidra.app.decompiler.*;
 import ghidra.program.model.listing.*;
@@ -8,8 +10,6 @@ import java.io.*;
 public class DumpAll extends GhidraScript {
   public void run() throws Exception {
     String out = getScriptArgs()[0];
-    // create functions from vector table
-    Address base = currentProgram.getMinAddress();
     PrintWriter pw = new PrintWriter(new FileWriter(out + ".c"));
     PrintWriter sw = new PrintWriter(new FileWriter(out + ".strings"));
     for (Data d : currentProgram.getListing().getDefinedData(true)) {
