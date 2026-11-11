@@ -1,0 +1,84 @@
+/*
+ * TR-8 v1.61 motion recording prototype (RAM only, one global motion buffer).
+ *
+ * Rules:
+ *  - Sequencer running + knob moved  -> value stored at the current step of that control's lane.
+ *  - Sequencer stopped + knob moved  -> that control's lane is erased.
+ *  - On each step, every lane with a value at this step is replayed by posting the same
+ *    event the ADC scan posts ({0x0B, id, value}), so the normal knob path applies it.
+ *  - A lane is not replayed for 2 steps after the user touched its knob (no fight while recording).
+ *  - Slots: 16 steps x 2 variations (A/B) per control, 49 controls.
+ *
+ * Hooks (see docs/MOTION.md):
+ *  - motion_knob replaces "bl FUN_6001446a" at 0x60014204 (panel task, default knob handler).
+ *  - motion_step replaces "bl FUN_6000978e" at 0x60009862 and 0x60009808 (sequencer, once per step).
+ */
+#include <stdint.h>
+
+#define NCTRL 49
+#define NSLOT 32
+
+/* Firmware addresses (v1.61 application, loaded at 0x60000000). Thumb bit set on functions. */
+#define SEQ_RUNNING   (*(volatile uint8_t  *)0x6007E102)   /* sequencer state +0x02          */
+#define SEQ_STEP      (*(volatile uint32_t *)0x6007E118)   /* sequencer state +0x18          */
+#define SEQ_VARIATION (*(volatile uint32_t *)0x6012FA74)   /* pattern state +0x10 (0 / not 0)*/
+#define PANEL_MODE    (*(volatile int32_t  *)0x6007E574)   /* read by FUN_60014054           */
+#define KNOB_REDIRECT (*(volatile uint8_t  *)0x6007E580)   /* FUN_6001465c(DAT_600143c4)     */
+
+typedef void     (*knob_fn)(void *ctx, int id, int value);
+typedef uint64_t (*step_fn)(void *p, int step);
+typedef void     (*post_fn)(int id, int value);
+
+#define ORIG_KNOB ((knob_fn)0x6001446B)   /* FUN_6001446a: control id -> HMI parameter        */
+#define ORIG_STEP ((step_fn)0x6000978F)   /* FUN_6000978e: original per-step call             */
+#define POST_CTRL ((post_fn)0x60000CC1)   /* ADC change callback: posts {0x0B, id, value}     */
+
+/* Large table in the second cave region; everything else in the first one. */
+__attribute__((section(".cave_b"))) uint8_t m_val[NCTRL][NSLOT];
+uint32_t m_mask[NCTRL];
+uint8_t  m_hold[NCTRL];
+uint8_t  m_pend[NCTRL];
+uint8_t  m_pendval[NCTRL];
+
+static inline int cur_slot(void)
+{
+    return (SEQ_VARIATION ? 16 : 0) + (int)(SEQ_STEP & 15);
+}
+
+void motion_knob(void *ctx, int id, int value)
+{
+    if ((unsigned)id < NCTRL && PANEL_MODE <= 3) {
+        if (m_pend[id] && m_pendval[id] == (uint8_t)value) {
+            m_pend[id] = 0;                       /* echo of our own playback event */
+        } else {
+            m_pend[id] = 0;
+            if (SEQ_RUNNING) {
+                int s = cur_slot();
+                m_val[id][s] = (uint8_t)value;
+                m_mask[id] |= 1u << s;
+                m_hold[id] = 2;
+            } else {
+                m_mask[id] = 0;                   /* stopped: erase this lane */
+            }
+        }
+    }
+    ORIG_KNOB(ctx, id, value);
+}
+
+void motion_step(void *p, int step)
+{
+    ORIG_STEP(p, step);
+    if (!SEQ_RUNNING || KNOB_REDIRECT || PANEL_MODE > 3)
+        return;
+    uint32_t bit = 1u << cur_slot();
+    int s = cur_slot();
+    for (int id = 0; id < NCTRL; id++) {
+        if (m_hold[id]) { m_hold[id]--; continue; }
+        if (m_mask[id] & bit) {
+            uint8_t v = m_val[id][s];
+            m_pendval[id] = v;
+            m_pend[id] = 1;
+            POST_CTRL(id, v);
+        }
+    }
+}

@@ -7,6 +7,14 @@ Status: container format, boot loader and updater checks decoded; a module can b
 sequencer tick/step engine located, knob path traced from the ADC to the parameter setter. Motion record looks feasible (see FEASIBILITY).
 See [docs/FINDINGS.md](docs/FINDINGS.md) for results and [docs/FEASIBILITY.md](docs/FEASIBILITY.md) for the feature assessment.
 
+## Motion recording patch
+
+`tools/tr8patch.py` turns a user-supplied v1.61 `TR8_UPD.BIN` into a firmware with a motion recording prototype. Tested in emulation only. Read [docs/MOTION.md](docs/MOTION.md) first (backup, recovery path).
+
+```sh
+python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion.BIN
+```
+
 ## Quick start
 
 ```sh
@@ -21,6 +29,10 @@ tools/analyze.sh work/appA.elf analysis/appA                 # Ghidra headless -
 | Path | Content |
 |---|---|
 | `tools/tr8fw.py` | `info` (trailer + module checks), `extract` (LZSS decompress + ELF wrappers), `pack` (recompress a module, fix size and byte-sum). |
+| `tools/tr8patch.py` | Patcher: checks the input is v1.61, applies the patch sites and the payload, rebuilds the module. |
+| `tools/elf2payload.py` | Converts a linked payload ELF into `payload.json` for the patcher. |
+| `patches/motion/` | Motion recording payload: `motion.c`, `link.ld`, `build.sh`, generated `payload.json`. |
+| `tests/emu_motion.py` | Unicorn emulation test of the payload inside the patched image. |
 | `tools/mkelf.py` | Generic raw-binary to ARM ELF wrapper (copied from the keystep-pro-re project). |
 | `tools/analyze.sh`, `tools/*.java` | Ghidra headless run: aggressive ARM instruction finder, then dump of all decompiled functions and strings. |
 | `docs/` | Findings and feasibility notes. |

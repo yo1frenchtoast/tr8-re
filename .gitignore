@@ -6,3 +6,4 @@ analysis/
 *.elf
 *.zip
 __pycache__/
+*.o

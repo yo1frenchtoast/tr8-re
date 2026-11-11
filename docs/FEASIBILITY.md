@@ -22,6 +22,8 @@ Hard parts: 16-bit step masks everywhere (parameters, handlers, storage slots of
 
 ## B. Motion recording (current focus)
 
+A RAM-only prototype is implemented: see [MOTION.md](MOTION.md).
+
 Updated after tracing the knob path (see FINDINGS, "Knob input").
 
 ### Hook points found
