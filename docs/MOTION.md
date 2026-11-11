@@ -23,14 +23,16 @@ Before you try it:
 
 | Situation | Result |
 |---|---|
-| Sequencer running, you move a knob or fader | Its value is stored at the current step for that control |
+| TR-REC on, sequencer running, you move a knob or fader | Its value is stored at the current step for that control |
 | Next pass of the pattern | The stored values are replayed at their steps |
-| You move a control that has motion | Recording overwrites; replay of that control pauses for 2 steps after each touch |
-| Sequencer stopped, you move a control | The motion of that control is erased (A and B) |
+| TR-REC on, you move a control that has motion | Recording overwrites; replay of that control pauses for 2 steps after each touch |
+| TR-REC on, sequencer stopped, you move a control | The motion of that control is erased (A and B) |
+| Other mode (INST PLAY, INST REC, ...), you move a control | Normal live change only: nothing is recorded or erased, and the motion continues to replay |
 | Power off | All motion is lost (RAM only) |
 
 - 49 controls (36 knobs, 11 level controls, 2 others), 16 steps x 2 variations (A/B) each.
 - One global motion buffer: it is **not** stored per pattern. Changing pattern keeps the same motion.
+- Recording and erasing need TR-REC: HMI Setup parameter 0 (database object `0x60149F38`, global id `0x2A`) must be 0. The payload reads it with the firmware getter `FUN_6001B12E(0x60149F38, 0)`. Evidence: the mode buttons 0x11-0x16 in `FUN_6001961E` set it to 0-5; the step clear function `FUN_600192BA` only works in modes 0 and 3; the MIDI note input in `FUN_60004D8C` records notes into the pattern only in mode 3 (INST REC). So 0 = TR-REC, 3 = INST REC.
 - Only the default knob mode records. When a button changes what the knobs do (redirect flag) or the panel mode is above 3, nothing is recorded and nothing is replayed.
 
 ## How it works
@@ -42,12 +44,12 @@ Before you try it:
 | `0x60009808` in `FUN_600097DA` (same, other scale path) | `bl FUN_6000978E` | `bl motion_step` |
 | `0x60011E00`, `0x60011E04` in `FUN_60011DBE` | calls to the developer dump functions | `nop.w` |
 
-- The payload (`patches/motion/motion.c`) lives where the developer dump code was: code and small variables at `0x60011150`-`0x60011463` (725 of 788 bytes), the value table at `0x60011488` (1568 of 1838 bytes). The literal pool at `0x60011464`-`0x60011483` is still used by `FUN_60011054`/`FUN_600110A4` and is kept. SDRAM is read/write/execute in the MPU setup (`FUN_60010574`), so data can live there. The image size does not change.
-- Capture: `motion_knob(ctx, id, value)` records `(id, value)` at slot `variation*16 + (step & 15)`, then calls the original `FUN_6001446A`.
+- The payload (`patches/motion/motion.c`) lives where the developer dump code was: code and small variables at `0x60011150`-`0x60011463` (753 of 788 bytes), the value table at `0x60011488` (1568 of 1838 bytes). The literal pool at `0x60011464`-`0x60011483` is still used by `FUN_60011054`/`FUN_600110A4` and is kept. SDRAM is read/write/execute in the MPU setup (`FUN_60010574`), so data can live there. The image size does not change.
+- Capture: in TR-REC, `motion_knob(ctx, id, value)` records `(id, value)` at slot `variation*16 + (step & 15)`, then calls the original `FUN_6001446A`.
 - Replay: `motion_step` calls the original function, then for each control with a value at this slot it posts `{0x0B, id, value}` through the ADC change callback `0x60000CC0`. That is the same event as a real knob move. It goes through the panel FIFO, whose push is in a critical section, so posting from the sequencer task is safe. The panel task then applies it with the normal code path, and the display follows.
 - Echo filter: the replayed event comes back into `motion_knob`. A per-control "pending" flag and value lets `motion_knob` recognize it and not record it again.
 
-State read by the payload: sequencer running `0x6007E102`, step `0x6007E118`, variation `0x6012FA74`, panel mode `0x6007E574`, knob redirect `0x6007E580`.
+State read by the payload: sequencer running `0x6007E102`, step `0x6007E118`, variation `0x6012FA74`, panel boot mode `0x6007E574` (not TR-REC: it is set once at panel task start), knob redirect `0x6007E580`, Setup[0] (TR-REC mode) through `FUN_6001B12E`.
 
 ## Test
 
@@ -58,7 +60,7 @@ pip install unicorn   # in a virtualenv
 python3 tests/emu_motion.py work/patched/appA.bin
 ```
 
-`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 18 scenarios pass (record, hold, replay, echo, A/B, erase, blocked modes).
+`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 23 scenarios pass (record, hold, replay, echo, A/B, erase, blocked modes, TR-REC condition). The Setup getter is a stub that returns the mode the test selects.
 
 What the emulation does **not** prove: real timing, the exact meaning of the state addresses at run time, display behaviour, and whether replaying through the knob path has side effects in some screens.
 

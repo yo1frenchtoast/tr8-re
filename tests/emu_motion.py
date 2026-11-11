@@ -22,11 +22,16 @@ RET = 0x7000F000
 uc.mem_write(RET, b"\xfe\xe7")                 # b .
 
 calls = []
-STUBS = {0x6001446A: "orig_knob", 0x6000978E: "orig_step", 0x60000CC0: "post"}
+STUBS = {0x6001446A: "orig_knob", 0x6000978E: "orig_step", 0x60000CC0: "post", 0x6001B12E: "setup_get"}
+setup0 = [0]                                   # HMI Setup[0]: 0 = TR-REC, 2 = INST PLAY, 3 = INST REC
 def hook(uc, addr, size, _):
     if addr in STUBS:
         r = [uc.reg_read(x) for x in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2)]
-        calls.append((STUBS[addr], r))
+        if STUBS[addr] == "setup_get":
+            assert r[:2] == [0x60149F38, 0], r
+            uc.reg_write(UC_ARM_REG_R0, setup0[0])
+        else:
+            calls.append((STUBS[addr], r))
         uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR) | 1)
 uc.hook_add(UC_HOOK_CODE, hook)
 
@@ -41,7 +46,8 @@ def call(fn, *args):
 
 w8  = lambda a, v: uc.mem_write(a, bytes([v]))
 w32 = lambda a, v: uc.mem_write(a, struct.pack("<I", v & 0xFFFFFFFF))
-def state(running, step, var=0, mode=0, redirect=0):
+def state(running, step, var=0, mode=0, redirect=0, rec=0):
+    setup0[0] = rec
     w8(0x6007E102, running); w32(0x6007E118, step); w32(0x6012FA74, var)
     w32(0x6007E574, mode); w8(0x6007E580, redirect)
 knob = lambda i, v: [(n, a[:3] if n == "orig_knob" else a[:2]) for n, a in call(KNOB, 0x1234, i, v)]
@@ -80,4 +86,17 @@ state(1, 3); expect("knob while stopped erases its lane", step(), [])
 state(1, 3, var=1); expect("erase covers A and B", step(), [("post", [7, 200])])
 state(1, 3); expect("out-of-range control id passes through", knob(60, 1), [("orig_knob", [0x1234, 60, 1])])
 state(0, 3); expect("stopped: no replay", step(), [])
+# TR-REC condition (Setup[0] must be 0)
+state(1, 8, rec=2); knob(11, 77)
+state(1, 9, rec=2); step(); state(1, 10, rec=2); step()
+state(1, 8, rec=2); expect("INST PLAY: knob not recorded", step(), [])
+state(1, 3); knob(5, 100)                      # re-record lane 5 at step 3 in TR-REC
+state(1, 4); step(); state(1, 5); step()
+state(1, 3, rec=3); expect("INST REC: existing motion still replayed", step(), [("post", [5, 100])])
+state(1, 3, rec=3); knob(5, 42)
+state(1, 3, rec=3); expect("INST REC: knob neither overwrites nor holds the lane", step(), [("post", [5, 100])])
+state(0, 0, rec=2); knob(5, 1)
+state(1, 3); expect("stopped outside TR-REC: lane not erased", step(), [("post", [5, 100])])
+state(0, 0, rec=0); knob(5, 1)
+state(1, 3); expect("stopped in TR-REC: lane erased", step(), [])
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)
