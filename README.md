@@ -4,7 +4,7 @@ Reverse engineering of the Roland TR-8 firmware (system v1.61, `TR8_UPD.BIN`).
 Goal: find out whether new features (longer patterns, **motion recording**) can be added.
 
 Status: container format fully decoded, main application decompressed and loaded in Ghidra,
-sequencer tick/step engine located. The knob-to-sound path (needed for motion record) is still being traced.
+sequencer tick/step engine located, knob path traced from the ADC to the parameter setter. Motion record looks feasible (see FEASIBILITY).
 See [docs/FINDINGS.md](docs/FINDINGS.md) for results and [docs/FEASIBILITY.md](docs/FEASIBILITY.md) for the feature assessment.
 
 ## Quick start

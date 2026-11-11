@@ -58,16 +58,32 @@ State struct at `0x6007E100` (all in RAM, zero at load):
 - `FUN_60009AF8`: 32-slot x 0x14-byte delay queue (scheduled triggers, used for flam/shuffle latency).
 - Callback pointer assignment (`+0x14`) not found yet (set at runtime through a path I did not trace).
 
-### Knob input (partly traced)
+### Knob input (traced end to end)
 
-- ADC driver `driver\ad_drv2.c`: 8 multiplexers x 8 channels, 4-sample median-of-middle filter. Init at `0x60001AD4`.
-- Knob table at `0x60054718`: 13 entries x 4 bytes (`[1]` = ADC index, `[2:4]` = scaling parameter).
-- `FUN_6012B12C` (and an undeclared twin at `0x6012B054`) convert a raw ADC value to 10 bits with a 7..0x3F8 dead zone, then smooth over 8 samples. **No caller found** in the image: it may be dead BIOS code. The real knob consumer is still unknown.
+Chain from the ADC to the parameter database:
+
+1. **ADC scan.** `driver\ad_drv2.c` scans 8 mux x 8 channels. The ADC completion callbacks (`0x6000152C`, `0x60001534`, registered by `FUN_60001556` in `task_ctrl`) only set event flags 4/8 on `task_ctrl`.
+2. **Control table.** On flag 4, `task_ctrl` runs `0x60000D2A`. It walks 49 controls described at `0x600544D0` (8 bytes each: `type, index`) and calls `handler[type](index)` from `0x60054658`:
+   - type 0 at `0x60000F72`: 36 knobs (raw value from `FUN_6004B8B8`, per-knob table at `0x60054688`: control id + change threshold).
+   - type 1 at `0x60001076`: 11 faders/level controls (table at `0x60054718`).
+   - type 2 at `FUN_60001242`: 2 controls with a non-linear curve (ids 45, 46).
+   - Control ids are 0..48. Knob ids skip 12, 17, 20, 23 ... 44 (those are the type 1 controls).
+3. **Change event.** When a value moves past its threshold, the handler calls the shared callback `0x60000CC0(id, value)` (registered by `FUN_60000D06`). It builds the event `{u8 0x0B, u8 id, u16 value}` and posts it with `FUN_60001A2E` to the listener list at `0x6007DC28`.
+4. **Panel FIFO.** The `task_panel` listener (`FUN_60012D94`, 0x400-byte `pdw_fifo`) queues the event. On pop, the callback `0x60014114` -> `0x6001406C` dispatches on the event byte. Event 0x0B goes to `FUN_60013DE0(id, value)`, which pushes the HMI event `{u16 0x0A, u16 id, s16 value}` into the HMI ring (`FUN_60013B94`, 256 x 12 bytes).
+5. **Screen handler.** The active screen receives the event. The default knob handler `FUN_600141DE` calls `FUN_6001446A(ctx, id, value)` unless the screen overrides it (vtable +0x48, for example while an instrument button is held). `FUN_600143D4` blocks knobs in some panel modes (mode >= 4).
+6. **Control to parameter.** `FUN_6001446A` maps the control id to an HMI parameter id (0x06 .. 0x5E), with a rescale for ids 45 (`*101/255`) and 46 (`*21/255 - 10`). It then calls `FUN_600186FA(DAT_60014668, param, value, 0)`.
+7. **Parameter set.** `FUN_600186FA(obj, id, value, sub)` is the generic setter of the HMI parameter manager (object at `0x60149F38`): it asks the range (vtable +0x1C), clamps, reads the current value (+0x08) and writes only on change (+0x18). The same setter is used elsewhere, for example the tempo (`FUN_600089E6`: ids 0x12 and 10).
+
+Names of the controls (short-name table at `0x6007D698`): `<inst>TU` (tune), `<inst>DC` (decay), `BDAT` (BD attack), `BDCO`/`SDCO` (comp), `SDSN` (snappy), `SHFL`, `FINE`, `VOLM`, `SETM`, `GRTM`, `GRGT`, `SEFB`, `EXSC`, and the level names `ACLV`, `SELV`, `GRLV`, `EXLV`. The exact control id -> name pairing is not mapped yet.
+
+HMI parameter databases (names at `0x6007EC0C`): System, Setup, Efx, Patch, Ptn, Patch2, Ptn2, Testmode, TMP.
+
+Dead code: `FUN_6012B12C` and its twin at `0x6012B054` (a second ADC filter in the BIOS area) have no caller.
 
 ## 3. Open questions
 
-1. Who reads the knobs in normal operation, and where does a knob value become a sound-engine message (look at the `FUN_600271xx`-`FUN_600273xx` voice functions and their callers)?
+1. What does the parameter set (vtable +0x18 of the object at `0x60149F38`) do after storing the value: which task gets the notification, and how fast does it reach the sound engine?
 2. Where is the step callback (`+0x14`) installed?
-3. What exactly do `_GR` and `_SE` mean, and which parameters are the Tune/Decay knobs?
+3. Exact mapping of control id -> HMI parameter id -> knob name (`FUN_6001446A` gives the second half).
 4. Is the sequencer limited to 16 steps in the sound engine (ROM or DSP side), or only in the main application?
 5. What other integrity checks does the boot/updater perform?
