@@ -39,7 +39,7 @@ PATCHES = {
             # (address, original bytes, replacement: "nop" or a payload symbol to bl to)
             (0x60011E00, thumb_bl(0x60011E00, 0x6001114E), "nop"),          # dev dump 1 (frees the cave)
             (0x60011E04, thumb_bl(0x60011E04, 0x600113B2), "nop"),          # dev dump 2 (frees the cave)
-            (0x60014204, thumb_bl(0x60014204, 0x6001446A), "motion_knob"),  # knob -> parameter
+            (0x600138C8, thumb_bl(0x600138C8, 0x60013242), "motion_knob"),  # HMI knob event -> screen
             (0x60009862, thumb_bl(0x60009862, 0x6000978E), "motion_step"),  # per step
             (0x60009808, thumb_bl(0x60009808, 0x6000978E), "motion_step"),  # per step (other scale path)
         ],

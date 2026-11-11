@@ -16,7 +16,9 @@
  *  - Build with -DMOTION_DIAG for a diagnostic variant without any mode condition.
  *
  * Hooks (see docs/MOTION.md):
- *  - motion_knob replaces "bl FUN_6001446a" at 0x60014204 (panel task, default knob handler).
+ *  - motion_knob replaces "bl FUN_60013242" at 0x600138C8: HMI event 10 (knob) handler, before the
+ *    active screen and the global control->parameter table FUN_60013F6A see the event.
+ *    (The first prototype hooked FUN_6001446A, which only some screens use: nothing was recorded.)
  *  - motion_step replaces "bl FUN_6000978e" at 0x60009862 and 0x60009808 (sequencer, once per step).
  */
 #include <stdint.h>
@@ -31,12 +33,12 @@
 #define PANEL_MODE    (*(volatile int32_t  *)0x6007E574)   /* read by FUN_60014054           */
 #define KNOB_REDIRECT (*(volatile uint8_t  *)0x6007E580)   /* FUN_6001465c(DAT_600143c4)     */
 
-typedef void     (*knob_fn)(void *ctx, int id, int value);
+typedef int      (*screen_fn)(int screen, const int16_t *ev);
 typedef uint64_t (*step_fn)(void *p, int step);
 typedef void     (*post_fn)(int id, int value);
 typedef int      (*getprm_fn)(void *db, int idx, int def);
 
-#define ORIG_KNOB ((knob_fn)0x6001446B)   /* FUN_6001446a: control id -> HMI parameter        */
+#define ORIG_KNOB ((screen_fn)0x60013243) /* FUN_60013242: pass the event to the active screen */
 #define ORIG_STEP ((step_fn)0x6000978F)   /* FUN_6000978e: original per-step call             */
 #define POST_CTRL ((post_fn)0x60000CC1)   /* ADC change callback: posts {0x0B, id, value}     */
 #define SETUP_GET ((getprm_fn)0x6001B12F) /* FUN_6001b12e: read HMI Setup parameter           */
@@ -56,8 +58,10 @@ static inline int cur_slot(void)
     return (SEQ_VARIATION ? 16 : 0) + (int)((SEQ_STEP >> 1) & 15);
 }
 
-void motion_knob(void *ctx, int id, int value)
+/* ev = HMI event {s16 10, s16 control id, s16 value} */
+int motion_knob(int screen, const int16_t *ev)
 {
+    int id = ev[1], value = ev[2];
 #ifdef MOTION_DIAG
     if ((unsigned)id < NCTRL) {
 #else
@@ -83,7 +87,7 @@ void motion_knob(void *ctx, int id, int value)
             }
         }
     }
-    ORIG_KNOB(ctx, id, value);
+    return ORIG_KNOB(screen, ev);
 }
 
 void motion_step(void *p, int step)

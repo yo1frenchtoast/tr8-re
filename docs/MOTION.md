@@ -33,13 +33,13 @@ The patcher takes the user's own Roland file. It refuses anything other than the
 
 | Hook | Original | New |
 |---|---|---|
-| `0x60014204` in `FUN_600141DE` (panel task, default knob handler) | `bl FUN_6001446A` | `bl motion_knob` |
+| `0x600138C8` in the HMI event-10 (knob) handler at `0x60013892` | `bl FUN_60013242` (give the event to the active screen) | `bl motion_knob` |
 | `0x60009862` in `FUN_6000981E` (sequencer, once per step) | `bl FUN_6000978E` | `bl motion_step` |
 | `0x60009808` in `FUN_600097DA` (same, other scale path) | `bl FUN_6000978E` | `bl motion_step` |
 | `0x60011E00`, `0x60011E04` in `FUN_60011DBE` | calls to the developer dump functions | `nop.w` |
 
 - The payload (`patches/motion/motion.c`) lives where the developer dump code was: code and small variables at `0x60011150`-`0x60011463` (753 of 788 bytes), the value table at `0x60011488` (1568 of 1838 bytes). The literal pool at `0x60011464`-`0x60011483` is still used by `FUN_60011054`/`FUN_600110A4` and is kept. SDRAM is read/write/execute in the MPU setup (`FUN_60010574`), so data can live there. The image size does not change.
-- Capture: in TR-REC, `motion_knob(ctx, id, value)` records `(id, value)` at slot `variation*16 + ((counter >> 1) & 15)`, then calls the original `FUN_6001446A`. The sequencer counter `0x6007E118` counts **half steps**: `FUN_6000989C` calls the step function only on even values (FINDINGS 2).
+- Capture: `motion_knob(screen, ev)` gets every HMI knob event `{10, id, value}` before the active screen and the global control -> parameter table `FUN_60013F6A`. In TR-REC it records `(id, value)` at slot `variation*16 + ((counter >> 1) & 15)`, then calls the original `FUN_60013242`. The sequencer counter `0x6007E118` counts **half steps**: `FUN_6000989C` calls the step function only on even values (FINDINGS 2).
 - Replay: `motion_step` calls the original function, then for each control with a value at this slot it posts `{0x0B, id, value}` through the ADC change callback `0x60000CC0`. That is the same event as a real knob move. It goes through the panel FIFO, whose push is in a critical section, so posting from the sequencer task is safe. The panel task then applies it with the normal code path, and the display follows.
 - Once per step: `FUN_6000981E` also calls `FUN_600097DA`, so both hooked calls usually run for the same step. `motion_step` remembers the last slot (`m_last`) and replays it only once. Without this, the second echo was taken as a user move and blocked the next replays.
 - Echo filter: the replayed event comes back into `motion_knob`. A per-control "pending" flag and value lets `motion_knob` recognize it and not record it again.
@@ -55,7 +55,7 @@ pip install unicorn   # in a virtualenv
 python3 tests/emu_motion.py work/patched/appA.bin
 ```
 
-`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 28 scenarios pass for the normal build, 21 for the diagnostic build (`--diag`): record, hold, replay, echo, A/B, erase, blocked modes, TR-REC condition, half-step counter, once per step. The Setup getter is a stub that returns the mode the test selects.
+`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 29 scenarios pass for the normal build, 22 for the diagnostic build (`--diag`): record, hold, replay, echo, A/B, erase, blocked modes, TR-REC condition, half-step counter, once per step, and the firmware's own knob event handler calling the payload. The Setup getter is a stub that returns the mode the test selects.
 
 What the emulation does **not** prove: real timing, the exact meaning of the state addresses at run time, display behaviour, and whether replaying through the knob path has side effects in some screens.
 
@@ -79,7 +79,9 @@ Use it when the normal build records nothing: if the diagnostic build records, t
 
 ## History
 
-- First hardware test (normal build, before the half-step and once-per-step fixes): the unit started normally, but no motion was recorded or replayed.
+- Test 1 (first build): the unit started normally, but no motion was recorded or replayed.
+- Test 2 (diagnostic build with the half-step and once-per-step fixes): still nothing. As the diagnostic build has no mode condition, the capture hook was the problem.
+- Cause: the hook was on `FUN_6001446A`. That function is only the knob handler of some screens (`FUN_600141DE`). In normal use the event-10 handler `0x60013892` asks the active screen (`FUN_60013242`), and when the screen does not take the event it applies the parameter itself with `FUN_60013F6A`. `FUN_6001446A` is not on that path. Fix: hook the `FUN_60013242` call at `0x600138C8`, which sees all knob events. The emulation test now also runs the firmware's own event-10 handler.
 
 ## Rebuild the payload
 

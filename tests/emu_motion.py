@@ -24,12 +24,18 @@ RET = 0x7000F000
 uc.mem_write(RET, b"\xfe\xe7")                 # b .
 
 calls = []
-STUBS = {0x6001446A: "orig_knob", 0x6000978E: "orig_step", 0x60000CC0: "post", 0x6001B12E: "setup_get"}
+STUBS = {0x60013242: "orig_knob", 0x6001A27C: "modal", 0x60013F6A: "apply", 0x6000978E: "orig_step", 0x60000CC0: "post", 0x6001B12E: "setup_get"}
 setup0 = [0]                                   # HMI Setup[0]: 0 = TR-REC, 2 = INST PLAY, 3 = INST REC
 def hook(uc, addr, size, _):
     if addr in STUBS:
         r = [uc.reg_read(x) for x in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2)]
-        if STUBS[addr] == "setup_get":
+        if STUBS[addr] == "orig_knob":                      # (screen, ev*) -> log screen, id, value
+            ev = struct.unpack("<3h", uc.mem_read(r[1], 6))
+            calls.append(("orig_knob", [r[0], ev[1], ev[2]]))
+            uc.reg_write(UC_ARM_REG_R0, 0)
+        elif STUBS[addr] == "modal":                         # FUN_6001a27c: no modal state
+            uc.reg_write(UC_ARM_REG_R0, 0)
+        elif STUBS[addr] == "setup_get":
             assert r[:2] == [0x60149F38, 0], r
             uc.reg_write(UC_ARM_REG_R0, setup0[0])
         else:
@@ -53,7 +59,11 @@ def state(running, step, var=0, mode=0, redirect=0, rec=0, half=0):
     setup0[0] = rec
     w8(0x6007E102, running); w32(0x6007E118, 2 * step + half); w32(0x6012FA74, var)
     w32(0x6007E574, mode); w8(0x6007E580, redirect)
-knob = lambda i, v: [(n, a[:3] if n == "orig_knob" else a[:2]) for n, a in call(KNOB, 0x1234, i, v)]
+EV = 0x70001000
+def knob(i, v):
+    """HMI knob event {10, id, value} as the event-10 handler passes it to FUN_60013242."""
+    uc.mem_write(EV, struct.pack("<3h", 10, i, v))
+    return [(n, a[:3] if n == "orig_knob" else a[:2]) for n, a in call(KNOB, 0x1234, EV)]
 M_LAST = pay["symbols"]["m_last"]
 def step(again=False):
     """One per-step call. again=True: second call for the same step (keeps the dedupe state)."""
@@ -90,6 +100,14 @@ state(1, 3); expect("knob while stopped erases its lane", step(), [])
 state(1, 3, var=1); expect("erase covers A and B", step(), [("post", [7, 200])])
 state(1, 3); expect("out-of-range control id passes through", knob(60, 1), [("orig_knob", [0x1234, 60, 1])])
 state(0, 3); expect("stopped: no replay", step(), [])
+# Integration: run the firmware's own HMI event-10 handler (0x60013892), not the payload directly
+def hmi_knob(i, v):
+    uc.mem_write(EV, struct.pack("<3h", 10, i, v))
+    return [(n, a[:3]) for n, a in call(0x60013892, EV)]
+state(1, 9); expect("firmware knob handler -> payload -> screen -> global table",
+                    [(n, x[:2]) for n, x in hmi_knob(30, 99)], [("orig_knob", [0, 30]), ("apply", [30, 99])])
+state(1, 10); step(); state(1, 11); step()
+state(1, 9); expect("knob seen by the firmware handler is replayed", step(), [("post", [30, 99])])
 # Firmware step details
 state(1, 12, half=1); knob(20, 33)              # knob between two steps: counter is odd
 state(1, 13); step(); state(1, 14); step()       # hold
