@@ -26,7 +26,7 @@ Main flow at `0x01000B7A`:
 1. `FUN_0100038E` picks the image to start from a table at `0x01010090` (initial data at boot.bin 0x3318):
    - entry 0: no condition, image `0x03030000` (application);
    - entry 1: ADC conditions = none, GPIO conditions at `0x01010008` = input 12 must read 1 and inputs 0-11, 13-15 must read 0, image `0x03008000` (updater).
-   So holding one specific panel button at power-on starts the updater. This is Roland's normal update procedure; the button is the one their update instructions name.
+   So holding one specific panel button at power-on starts the updater. Roland's procedure holds step button [1] (see [UPDATE.md](UPDATE.md)), so GPIO input 12 is probably step [1].
 2. If the application was chosen, it first loads the module at `0x03280000` into RAM and sends it to the second processor (`FUN_01002374`: 0x40-byte header, then 0x200-byte chunks, handshake byte 0x10; on a bad handshake the boot loader stops in a loop).
 3. It loads the chosen module (`FUN_01000B3C`: LZSS decompress if the decompressed size is not 0, else a plain copy) to `0x60000000` and jumps to it.
 
@@ -117,6 +117,20 @@ Chain from the ADC to the parameter database:
 Names of the controls (short-name table at `0x6007D698`): `<inst>TU` (tune), `<inst>DC` (decay), `BDAT` (BD attack), `BDCO`/`SDCO` (comp), `SDSN` (snappy), `SHFL`, `FINE`, `VOLM`, `SETM`, `GRTM`, `GRGT`, `SEFB`, `EXSC`, and the level names `ACLV`, `SELV`, `GRLV`, `EXLV`. The exact control id -> name pairing is not mapped yet.
 
 HMI parameter databases (names at `0x6007EC0C`): System, Setup, Efx, Patch, Ptn, Patch2, Ptn2, Testmode, TMP.
+Each database has a getter that maps a local index to a global parameter id and reads it with `FUN_6000F80E`/`FUN_6000F844`. Examples: Setup `FUN_6001B12E` (index n -> global `0x2A + n`, `hmi_prm_setup.cpp`), System `FUN_6001B432`, Ptn `FUN_6001B736`, Ptn2 `FUN_6001D3FA`, Patch `FUN_6001A99A`, Patch2 `FUN_6001AD68`. The matching setters are `FUN_6001B166` (Setup) and the generic `FUN_600186FA`.
+
+### Panel mode (TR-REC, INST REC)
+
+The sequencer mode chosen with the mode buttons is **HMI Setup parameter 0** (object `0x60149F38`, global id `0x2A`). Read it with `FUN_6001B12E(0x60149F38, 0)`.
+
+- `FUN_6001961E` (panel button handler) sets it: button 0x11 -> 0, 0x12 -> 1, 0x13 -> 2 (or 8 when the function `FUN_60013168(0x11)` is on), 0x14 -> 3, 0x15 -> 4, 0x16 -> 5. Buttons 0x00-0x0F are the 16 step buttons.
+- `FUN_600192BA` (clear a step bit in `STEP_*`/`ACC_*`) returns unless the mode is 0 or 3.
+- `FUN_60004D8C` (incoming note/trigger) writes the note into the pattern (`FUN_6001912C`) only in mode 3.
+- `FUN_6000FF28` and `prm_storage_sub.cpp` code also read `0x2A` and `0x2B` (role there not analysed).
+
+Conclusion: **0 = TR-REC** (step edit), **3 = INST REC** (real-time record). Modes 1, 2, 4, 5 and 8 are not identified (one of them is INST PLAY, one is probably PATTERN SELECT). `FUN_6004D21C`, `FUN_6004D7C0` and `FUN_6004D814` seem to set 6 and 7 (the decompiler output is unclear there).
+
+Do not confuse with `0x6007E574`: that is the panel **boot mode**, written once at panel task start (setter `0x60014026`, called from `0x60012B46`). `FUN_600143D4` blocks knobs when it is above 3.
 
 Correction: `FUN_6012B12C` and `0x6012B054` are not dead. They are in the fast-code region and run from `0x0100xxxx`, so their callers are in that alias.
 
@@ -126,6 +140,7 @@ Correction: `FUN_6012B12C` and `0x6012B054` are not dead. They are in the fast-c
 2. Where is the step callback (`+0x14`) installed?
 3. Exact mapping of control id -> HMI parameter id -> knob name (`FUN_6001446A` gives the second half).
 4. Is the sequencer limited to 16 steps in the sound engine (ROM or DSP side), or only in the main application?
-5. ~~Integrity checks~~: answered in 1b/1c.
-6. Which panel button is GPIO input 12 (the updater button)?
-7. What runs on the second processor (`appB`) and over which link?
+5. Panel mode values 1, 2, 4, 5, 6, 7, 8 (only 0 = TR-REC and 3 = INST REC are identified).
+6. What runs on the second processor (`appB`) and over which link?
+
+Answered: integrity checks (1b, 1c); updater button (step [1], from Roland's procedure, 1b); TR-REC flag (2, "Panel mode").

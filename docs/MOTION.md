@@ -9,15 +9,9 @@ python3 -I tools/tr8patch.py TR8_UPD.BIN --check          # is this file support
 python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion.BIN
 ```
 
-Copy `TR8_UPD_motion.BIN` to the TR-8 update storage **renamed to `TR8_UPD.BIN`** and follow Roland's normal update procedure.
+Then flash it with Roland's normal procedure: see [UPDATE.md](UPDATE.md) (backup first, flash, recovery, and a test checklist for the unit).
 
-The patcher takes the user's own Roland file. It refuses anything other than the exact v1.61 application (SHA-256 of the decompressed module), checks the original bytes at every patched address, and rebuilds the module size and byte-sum so the official updater accepts the file.
-
-Before you try it:
-
-1. Save your patterns and kits (USB backup).
-2. Keep the original `TR8_UPD.BIN`.
-3. Make sure you know how to start the updater with the button held at power-on (Roland update instructions). The update only rewrites flash 0x30000-0x3DFFFF; the boot loader and the updater are not touched (FINDINGS 1b/1c). If the patched firmware does not start, start the updater that way and flash the original file.
+The patcher takes the user's own Roland file. It refuses anything other than the exact v1.61 application (SHA-256 of the decompressed module), checks the original bytes at every patched address, and rebuilds the module size and byte-sum so the official updater accepts the file. `--check` only verifies an original input file; a patched file fails it on purpose.
 
 ## Behaviour
 
@@ -33,7 +27,7 @@ Before you try it:
 - 49 controls (36 knobs, 11 level controls, 2 others), 16 steps x 2 variations (A/B) each.
 - One global motion buffer: it is **not** stored per pattern. Changing pattern keeps the same motion.
 - Recording and erasing need TR-REC: HMI Setup parameter 0 (database object `0x60149F38`, global id `0x2A`) must be 0. The payload reads it with the firmware getter `FUN_6001B12E(0x60149F38, 0)`. Evidence: the mode buttons 0x11-0x16 in `FUN_6001961E` set it to 0-5; the step clear function `FUN_600192BA` only works in modes 0 and 3; the MIDI note input in `FUN_60004D8C` records notes into the pattern only in mode 3 (INST REC). So 0 = TR-REC, 3 = INST REC.
-- Only the default knob mode records. When a button changes what the knobs do (redirect flag) or the panel mode is above 3, nothing is recorded and nothing is replayed.
+- Only the default knob handler records. When a button changes what the knobs do (redirect flag) or the panel boot mode (`0x6007E574`) is above 3, nothing is recorded and nothing is replayed.
 
 ## How it works
 
@@ -66,7 +60,7 @@ What the emulation does **not** prove: real timing, the exact meaning of the sta
 
 ## Known limitations and risks
 
-- Not per pattern, not saved. A real feature would add per-pattern storage (FEASIBILITY B.1).
+- Not per pattern, not saved. A real feature would add per-pattern storage (FEASIBILITY, motion plan step 1).
 - The display may show the parameter popup on every replayed value.
 - Values are 8-bit (the knob events are 0-255), so replay has the same resolution as the knobs.
 - The step slot uses `step & 15`. If the sequencer runs a single 32-step A+B pass with the step counter above 15, A and B would share slots. To check on hardware.
