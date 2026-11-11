@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Emulate the motion payload inside the patched v1.61 application (needs: pip install unicorn).
 
-  python3 tests/emu_motion.py work/patched/appA.bin
+  python3 tests/emu_motion.py work/patched/appA.bin          # normal build
+  python3 tests/emu_motion.py work/patched_diag/appA.bin --diag
 
 The firmware functions the payload calls are replaced by stubs that log their arguments.
 """
@@ -10,7 +11,8 @@ from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_HOOK_CODE
 from unicorn.arm_const import *
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-pay = json.load(open(os.path.join(ROOT, "patches/motion/payload.json")))
+DIAG = "--diag" in sys.argv
+pay = json.load(open(os.path.join(ROOT, "patches/motion/payload_diag.json" if DIAG else "patches/motion/payload.json")))
 KNOB, STEP = pay["symbols"]["motion_knob"], pay["symbols"]["motion_step"]
 app = open(sys.argv[1], "rb").read()
 
@@ -46,12 +48,18 @@ def call(fn, *args):
 
 w8  = lambda a, v: uc.mem_write(a, bytes([v]))
 w32 = lambda a, v: uc.mem_write(a, struct.pack("<I", v & 0xFFFFFFFF))
-def state(running, step, var=0, mode=0, redirect=0, rec=0):
+def state(running, step, var=0, mode=0, redirect=0, rec=0, half=0):
+    """step = pattern step; the firmware counter at +0x18 counts half steps."""
     setup0[0] = rec
-    w8(0x6007E102, running); w32(0x6007E118, step); w32(0x6012FA74, var)
+    w8(0x6007E102, running); w32(0x6007E118, 2 * step + half); w32(0x6012FA74, var)
     w32(0x6007E574, mode); w8(0x6007E580, redirect)
 knob = lambda i, v: [(n, a[:3] if n == "orig_knob" else a[:2]) for n, a in call(KNOB, 0x1234, i, v)]
-step = lambda: [(n, a[:2]) for n, a in call(STEP, 0x5678, 7) if n != "orig_step"]
+M_LAST = pay["symbols"]["m_last"]
+def step(again=False):
+    """One per-step call. again=True: second call for the same step (keeps the dedupe state)."""
+    if not again:
+        w8(M_LAST, 0xFF)
+    return [(n, a[:2]) for n, a in call(STEP, 0x5678, 7) if n != "orig_step"]
 step_calls_orig = lambda: [(n, a[:2]) for n, a in call(STEP, 0x5678, 7) if n == "orig_step"]
 
 fails = 0
@@ -77,26 +85,39 @@ state(1, 3, var=1); knob(7, 200); knob(5, 10)
 state(1, 4, var=1); step(); state(1, 5, var=1); step()
 state(1, 3, var=1); expect("two lanes replayed in B", step(), [("post", [5, 10]), ("post", [7, 200])])
 state(1, 3, var=0); expect("A slot of lane 5 still intact", step(), [("post", [5, 100])])
-state(1, 3, mode=4); expect("panel mode > 3: no replay", step(), [])
-state(1, 3, redirect=1); expect("knobs redirected (button held): no replay", step(), [])
-state(1, 6, mode=4); knob(9, 50)
-state(1, 6); expect("panel mode > 3: knob not recorded", step(), [])
 state(0, 0); knob(5, 1)
 state(1, 3); expect("knob while stopped erases its lane", step(), [])
 state(1, 3, var=1); expect("erase covers A and B", step(), [("post", [7, 200])])
 state(1, 3); expect("out-of-range control id passes through", knob(60, 1), [("orig_knob", [0x1234, 60, 1])])
 state(0, 3); expect("stopped: no replay", step(), [])
-# TR-REC condition (Setup[0] must be 0)
-state(1, 8, rec=2); knob(11, 77)
-state(1, 9, rec=2); step(); state(1, 10, rec=2); step()
-state(1, 8, rec=2); expect("INST PLAY: knob not recorded", step(), [])
-state(1, 3); knob(5, 100)                      # re-record lane 5 at step 3 in TR-REC
-state(1, 4); step(); state(1, 5); step()
-state(1, 3, rec=3); expect("INST REC: existing motion still replayed", step(), [("post", [5, 100])])
-state(1, 3, rec=3); knob(5, 42)
-state(1, 3, rec=3); expect("INST REC: knob neither overwrites nor holds the lane", step(), [("post", [5, 100])])
-state(0, 0, rec=2); knob(5, 1)
-state(1, 3); expect("stopped outside TR-REC: lane not erased", step(), [("post", [5, 100])])
-state(0, 0, rec=0); knob(5, 1)
-state(1, 3); expect("stopped in TR-REC: lane erased", step(), [])
+# Firmware step details
+state(1, 12, half=1); knob(20, 33)              # knob between two steps: counter is odd
+state(1, 13); step(); state(1, 14); step()       # hold
+state(1, 12); expect("half-step counter: recorded at step 12, replayed at 12", step(), [("post", [20, 33])])
+expect("second call for the same step does not replay again", step(again=True), [])
+state(1, 4); step()
+state(1, 12); expect("next pass replays once", step(), [("post", [20, 33])])
+state(0, 0); step(again=True); state(1, 12); expect("restart: replay at the same step after a stop", step(again=True), [("post", [20, 33])])
+if not DIAG:
+    state(1, 3, redirect=1); expect("knobs redirected (button held): no replay", step(), [])
+    state(1, 3, mode=4); expect("panel mode > 3: no replay", step(), [])
+    state(1, 6, mode=4); knob(9, 50)
+    state(1, 6); expect("panel mode > 3: knob not recorded", step(), [])
+    # TR-REC condition (Setup[0] must be 0)
+    state(1, 8, rec=2); knob(11, 77)
+    state(1, 9, rec=2); step(); state(1, 10, rec=2); step()
+    state(1, 8, rec=2); expect("INST PLAY: knob not recorded", step(), [])
+    state(1, 3); knob(5, 100)                      # re-record lane 5 at step 3 in TR-REC
+    state(1, 4); step(); state(1, 5); step()
+    state(1, 3, rec=3); expect("INST REC: existing motion still replayed", step(), [("post", [5, 100])])
+    state(1, 3, rec=3); knob(5, 42)
+    state(1, 3, rec=3); expect("INST REC: knob neither overwrites nor holds the lane", step(), [("post", [5, 100])])
+    state(0, 0, rec=2); knob(5, 1)
+    state(1, 3); expect("stopped outside TR-REC: lane not erased", step(), [("post", [5, 100])])
+    state(0, 0, rec=0); knob(5, 1)
+    state(1, 3); expect("stopped in TR-REC: lane erased", step(), [])
+else:
+    state(1, 8, rec=2, mode=4); knob(11, 77)
+    state(1, 9, rec=2, mode=4); step(); state(1, 10); step()
+    state(1, 8, rec=2, mode=4); expect("diag: records and replays in any mode", step(), [("post", [11, 77])])
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)

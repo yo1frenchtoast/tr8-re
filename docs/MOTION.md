@@ -39,8 +39,9 @@ The patcher takes the user's own Roland file. It refuses anything other than the
 | `0x60011E00`, `0x60011E04` in `FUN_60011DBE` | calls to the developer dump functions | `nop.w` |
 
 - The payload (`patches/motion/motion.c`) lives where the developer dump code was: code and small variables at `0x60011150`-`0x60011463` (753 of 788 bytes), the value table at `0x60011488` (1568 of 1838 bytes). The literal pool at `0x60011464`-`0x60011483` is still used by `FUN_60011054`/`FUN_600110A4` and is kept. SDRAM is read/write/execute in the MPU setup (`FUN_60010574`), so data can live there. The image size does not change.
-- Capture: in TR-REC, `motion_knob(ctx, id, value)` records `(id, value)` at slot `variation*16 + (step & 15)`, then calls the original `FUN_6001446A`.
+- Capture: in TR-REC, `motion_knob(ctx, id, value)` records `(id, value)` at slot `variation*16 + ((counter >> 1) & 15)`, then calls the original `FUN_6001446A`. The sequencer counter `0x6007E118` counts **half steps**: `FUN_6000989C` calls the step function only on even values (FINDINGS 2).
 - Replay: `motion_step` calls the original function, then for each control with a value at this slot it posts `{0x0B, id, value}` through the ADC change callback `0x60000CC0`. That is the same event as a real knob move. It goes through the panel FIFO, whose push is in a critical section, so posting from the sequencer task is safe. The panel task then applies it with the normal code path, and the display follows.
+- Once per step: `FUN_6000981E` also calls `FUN_600097DA`, so both hooked calls usually run for the same step. `motion_step` remembers the last slot (`m_last`) and replays it only once. Without this, the second echo was taken as a user move and blocked the next replays.
 - Echo filter: the replayed event comes back into `motion_knob`. A per-control "pending" flag and value lets `motion_knob` recognize it and not record it again.
 
 State read by the payload: sequencer running `0x6007E102`, step `0x6007E118`, variation `0x6012FA74`, panel boot mode `0x6007E574` (not TR-REC: it is set once at panel task start), knob redirect `0x6007E580`, Setup[0] (TR-REC mode) through `FUN_6001B12E`.
@@ -54,7 +55,7 @@ pip install unicorn   # in a virtualenv
 python3 tests/emu_motion.py work/patched/appA.bin
 ```
 
-`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 23 scenarios pass (record, hold, replay, echo, A/B, erase, blocked modes, TR-REC condition). The Setup getter is a stub that returns the mode the test selects.
+`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 28 scenarios pass for the normal build, 21 for the diagnostic build (`--diag`): record, hold, replay, echo, A/B, erase, blocked modes, TR-REC condition, half-step counter, once per step. The Setup getter is a stub that returns the mode the test selects.
 
 What the emulation does **not** prove: real timing, the exact meaning of the state addresses at run time, display behaviour, and whether replaying through the knob path has side effects in some screens.
 
@@ -63,9 +64,23 @@ What the emulation does **not** prove: real timing, the exact meaning of the sta
 - Not per pattern, not saved. A real feature would add per-pattern storage (FEASIBILITY, motion plan step 1).
 - The display may show the parameter popup on every replayed value.
 - Values are 8-bit (the knob events are 0-255), so replay has the same resolution as the knobs.
-- The step slot uses `step & 15`. If the sequencer runs a single 32-step A+B pass with the step counter above 15, A and B would share slots. To check on hardware.
+- The step slot uses `(counter >> 1) & 15`. With scale value `0x32` the firmware runs a step on odd counter values too; two steps then share one slot. To check on hardware.
 - If a replayed event never reaches `motion_knob` (another screen consumed it), the pending flag stays set until the next replay of that control; one real move with the same value could then be ignored.
+
+## Diagnostic build
+
+`--patch motion-diag` builds the same patch without any mode condition: it records whenever the sequencer runs, in every mode, and replays even while a button is held.
+
+```sh
+python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion_diag.BIN --patch motion-diag
+```
+
+Use it when the normal build records nothing: if the diagnostic build records, the TR-REC mode test is wrong; if it does not, the hooks or the replay path are wrong.
+
+## History
+
+- First hardware test (normal build, before the half-step and once-per-step fixes): the unit started normally, but no motion was recorded or replayed.
 
 ## Rebuild the payload
 
-`patches/motion/build.sh` (needs clang and ld.lld) compiles `motion.c` with `link.ld` and writes `payload.json` with the sections and symbols. The patcher only reads `payload.json`, so users need Python only.
+`patches/motion/build.sh` (needs clang and ld.lld) compiles `motion.c` with `link.ld` and writes `payload.json` and `payload_diag.json` with the sections and symbols. The patcher only reads `payload.json`, so users need Python only.

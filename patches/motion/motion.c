@@ -10,6 +10,10 @@
  *    event the ADC scan posts ({0x0B, id, value}), so the normal knob path applies it.
  *  - A lane is not replayed for 2 steps after the user touched its knob (no fight while recording).
  *  - Slots: 16 steps x 2 variations (A/B) per control, 49 controls.
+ *  - The sequencer counter (+0x18) counts half steps: step = counter >> 1.
+ *  - The per-step function runs twice per step (FUN_6000981E also calls FUN_600097DA):
+ *    a lane is replayed only once per step.
+ *  - Build with -DMOTION_DIAG for a diagnostic variant without any mode condition.
  *
  * Hooks (see docs/MOTION.md):
  *  - motion_knob replaces "bl FUN_6001446a" at 0x60014204 (panel task, default knob handler).
@@ -45,20 +49,29 @@ uint32_t m_mask[NCTRL];
 uint8_t  m_hold[NCTRL];
 uint8_t  m_pend[NCTRL];
 uint8_t  m_pendval[NCTRL];
+uint8_t  m_last = 0xFF;                           /* slot replayed last, 0xFF = none */
 
 static inline int cur_slot(void)
 {
-    return (SEQ_VARIATION ? 16 : 0) + (int)(SEQ_STEP & 15);
+    return (SEQ_VARIATION ? 16 : 0) + (int)((SEQ_STEP >> 1) & 15);
 }
 
 void motion_knob(void *ctx, int id, int value)
 {
+#ifdef MOTION_DIAG
+    if ((unsigned)id < NCTRL) {
+#else
     if ((unsigned)id < NCTRL && PANEL_MODE <= 3) {
+#endif
         if (m_pend[id] && m_pendval[id] == (uint8_t)value) {
             m_pend[id] = 0;                       /* echo of our own playback event */
         } else {
             m_pend[id] = 0;
+#ifdef MOTION_DIAG
+            if (0) {
+#else
             if (SETUP_GET(HMI_SETUP, 0, 0) != MODE_TR_REC) {
+#endif
                 /* not TR-REC: live tweak only, keep the motion */
             } else if (SEQ_RUNNING) {
                 int s = cur_slot();
@@ -76,10 +89,19 @@ void motion_knob(void *ctx, int id, int value)
 void motion_step(void *p, int step)
 {
     ORIG_STEP(p, step);
-    if (!SEQ_RUNNING || KNOB_REDIRECT || PANEL_MODE > 3)
+    if (!SEQ_RUNNING) {
+        m_last = 0xFF;
         return;
-    uint32_t bit = 1u << cur_slot();
+    }
     int s = cur_slot();
+    if (s == m_last)
+        return;                                   /* second call for the same step */
+    m_last = (uint8_t)s;
+#ifndef MOTION_DIAG
+    if (KNOB_REDIRECT || PANEL_MODE > 3)
+        return;
+#endif
+    uint32_t bit = 1u << s;
     for (int id = 0; id < NCTRL; id++) {
         if (m_hold[id]) { m_hold[id]--; continue; }
         if (m_mask[id] & bit) {

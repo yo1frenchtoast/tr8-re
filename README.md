@@ -12,7 +12,7 @@ This repository contains no Roland code. You download the official update from R
 | Container, compression, module checks | Decoded; a module can be rebuilt (`tr8fw.py pack`) |
 | Boot loader, updater, recovery path | Decoded; boot checks nothing, the updater is never rewritten |
 | Sequencer engine, knob path, TR-REC mode flag | Located (FINDINGS 2) |
-| Motion recording | Prototype patch, **emulation only (23/23), not yet run on a unit** |
+| Motion recording | Prototype patch; first unit test recorded nothing; fixed build + diagnostic build ready (emulation 28/28, 21/21) |
 | 32/64-step patterns | Assessed only (FEASIBILITY A): hard |
 
 ## Documents

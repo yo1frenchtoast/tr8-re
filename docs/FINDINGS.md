@@ -90,7 +90,7 @@ State struct at `0x6007E100` (all in RAM, zero at load):
 |---|---|
 | +0x02 / +0x03 / +0x04 | running / started / paused flags |
 | +0x14 | **step callback** function pointer, called as `cb(step, variation)` |
-| +0x18 | current step |
+| +0x18 | step counter in **half steps** (the step function runs on even values; with scale `0x32` on odd values too, through `FUN_600097DA`) |
 | +0x1C | last step |
 | +0x20 | tick counter inside the step |
 | +0x24, +0x2C | tick period and timing values (tempo derived, float math) |
@@ -99,7 +99,7 @@ State struct at `0x6007E100` (all in RAM, zero at load):
 
 - `FUN_6000989C(ctx)`: per-clock-tick handler. Increments `+0x20`; when it reaches `+0x30` it advances `+0x18`, wraps at `+0x1C` (`FUN_600095F0` resets), then `FUN_6000981E` calls the callback.
 - `FUN_60009746`: builds the triggers for the step, then `FUN_6000DE34(ctx, mask, levels[11], accentMask)` fires the 11 voices through `FUN_60027120`..`FUN_60027384`. Voice functions end in `thunk_EXT_FUN_01007752` (float-converted parameter message to the sound engine in ROM).
-- `FUN_6000981E` and `FUN_600097DA` (other scale path) both call `FUN_6000978E(p, step)` once per step, at `0x60009862` and `0x60009808`. These two calls are the motion patch step hooks.
+- `FUN_6000981E` and `FUN_600097DA` (other scale path) both call `FUN_6000978E(p, step)`. `FUN_6000981E` also calls `FUN_600097DA` first when `+0x04` is 0, so the call usually runs twice per step, at `0x60009862` and `0x60009808`. These two calls are the motion patch step hooks.
 - Pattern struct at `0x6012FA64`: `+0x10` = current variation (0 = A, other = B), read at `0x6012FA74`.
 - `FUN_60009AF8`: 32-slot x 0x14-byte delay queue (scheduled triggers, used for flam/shuffle latency).
 - Callback pointer assignment (`+0x14`) not found yet (set at runtime through a path I did not trace).

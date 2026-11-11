@@ -15,11 +15,11 @@ Disassembly of section .text:
 60011164: 6800         	ldr	r0, [r0]
 60011166: 2803         	cmp	r0, #0x3
 60011168: dc47         	bgt	0x600111fa <motion_knob+0xaa> @ imm = #0x8e
-6001116a: f241 20e8    	movw	r0, #0x12e8
+6001116a: f241 20f8    	movw	r0, #0x12f8
 6001116e: f2c6 0001    	movt	r0, #0x6001
 60011172: 5d41         	ldrb	r1, [r0, r5]
 60011174: b149         	cbz	r1, 0x6001118a <motion_knob+0x3a> @ imm = #0x12
-60011176: f241 3119    	movw	r1, #0x1319
+60011176: f241 3129    	movw	r1, #0x1329
 6001117a: f2c6 0101    	movt	r1, #0x6001
 6001117e: 5d49         	ldrb	r1, [r1, r5]
 60011180: b2e2         	uxtb	r2, r4
@@ -47,8 +47,8 @@ Disassembly of section .text:
 600111be: 2900         	cmp	r1, #0x0
 600111c0: f241 4188    	movw	r1, #0x1488
 600111c4: f2c6 0101    	movt	r1, #0x6001
-600111c8: f241 324c    	movw	r2, #0x134c
-600111cc: f000 000f    	and	r0, r0, #0xf
+600111c8: f241 325c    	movw	r2, #0x135c
+600111cc: f3c0 0043    	ubfx	r0, r0, #0x1, #0x4
 600111d0: eb01 1145    	add.w	r1, r1, r5, lsl #5
 600111d4: f2c6 0201    	movt	r2, #0x6001
 600111d8: bf18         	it	ne
@@ -59,7 +59,7 @@ Disassembly of section .text:
 600111e4: fa01 f000    	lsl.w	r0, r1, r0
 600111e8: 4318         	orrs	r0, r3
 600111ea: f842 0025    	str.w	r0, [r2, r5, lsl #2]
-600111ee: f241 4010    	movw	r0, #0x1410
+600111ee: f241 4020    	movw	r0, #0x1420
 600111f2: f2c6 0001    	movt	r0, #0x6001
 600111f6: 2102         	movs	r1, #0x2
 600111f8: 5541         	strb	r1, [r0, r5]
@@ -70,7 +70,7 @@ Disassembly of section .text:
 60011206: 4622         	mov	r2, r4
 60011208: e8bd 4070    	pop.w	{r4, r5, r6, lr}
 6001120c: 4718         	bx	r3
-6001120e: f241 304c    	movw	r0, #0x134c
+6001120e: f241 305c    	movw	r0, #0x135c
 60011212: f2c6 0001    	movt	r0, #0x6001
 60011216: 2100         	movs	r1, #0x0
 60011218: f840 1025    	str.w	r1, [r0, r5, lsl #2]
@@ -87,39 +87,39 @@ Disassembly of section .text:
 60011236: 4790         	blx	r2
 60011238: 7820         	ldrb	r0, [r4]
 6001123a: 2800         	cmp	r0, #0x0
-6001123c: d051         	beq	0x600112e2 <motion_step+0xc2> @ imm = #0xa2
-6001123e: f24e 5074    	movw	r0, #0xe574
-60011242: f2c6 0007    	movt	r0, #0x6007
-60011246: 7b01         	ldrb	r1, [r0, #0xc]
-60011248: 2900         	cmp	r1, #0x0
-6001124a: d14a         	bne	0x600112e2 <motion_step+0xc2> @ imm = #0x94
-6001124c: 6800         	ldr	r0, [r0]
-6001124e: 2803         	cmp	r0, #0x3
-60011250: dc47         	bgt	0x600112e2 <motion_step+0xc2> @ imm = #0x8e
-60011252: f64f 2074    	movw	r0, #0xfa74
-60011256: f2c6 0012    	movt	r0, #0x6012
-6001125a: 6801         	ldr	r1, [r0]
-6001125c: f8d4 2016    	ldr.w	r2, [r4, #0x16]
-60011260: 2900         	cmp	r1, #0x0
-60011262: f002 020f    	and	r2, r2, #0xf
-60011266: bf18         	it	ne
-60011268: 3210         	addne	r2, #0x10
-6001126a: 2301         	movs	r3, #0x1
-6001126c: 6800         	ldr	r0, [r0]
-6001126e: f8d4 1016    	ldr.w	r1, [r4, #0x16]
-60011272: fa03 f602    	lsl.w	r6, r3, r2
-60011276: f241 4288    	movw	r2, #0x1488
-6001127a: f001 010f    	and	r1, r1, #0xf
-6001127e: f2c6 0201    	movt	r2, #0x6001
-60011282: f241 4510    	movw	r5, #0x1410
-60011286: f241 394c    	movw	r9, #0x134c
-6001128a: f241 3a19    	movw	r10, #0x1319
-6001128e: f241 2be8    	movw	r11, #0x12e8
-60011292: f640 48c1    	movw	r8, #0xcc1
-60011296: 2800         	cmp	r0, #0x0
-60011298: bf18         	it	ne
-6001129a: 3210         	addne	r2, #0x10
-6001129c: 1857         	adds	r7, r2, r1
+6001123c: d052         	beq	0x600112e4 <motion_step+0xc4> @ imm = #0xa4
+6001123e: f64f 2074    	movw	r0, #0xfa74
+60011242: f2c6 0012    	movt	r0, #0x6012
+60011246: 6801         	ldr	r1, [r0]
+60011248: f8d4 0016    	ldr.w	r0, [r4, #0x16]
+6001124c: 2900         	cmp	r1, #0x0
+6001124e: f241 21f6    	movw	r1, #0x12f6
+60011252: f2c6 0101    	movt	r1, #0x6001
+60011256: 780a         	ldrb	r2, [r1]
+60011258: f3c0 0043    	ubfx	r0, r0, #0x1, #0x4
+6001125c: bf18         	it	ne
+6001125e: 3010         	addne	r0, #0x10
+60011260: 4290         	cmp	r0, r2
+60011262: d045         	beq	0x600112f0 <motion_step+0xd0> @ imm = #0x8a
+60011264: f24e 5274    	movw	r2, #0xe574
+60011268: f2c6 0207    	movt	r2, #0x6007
+6001126c: 7008         	strb	r0, [r1]
+6001126e: 7b11         	ldrb	r1, [r2, #0xc]
+60011270: 2900         	cmp	r1, #0x0
+60011272: d13d         	bne	0x600112f0 <motion_step+0xd0> @ imm = #0x7a
+60011274: 6811         	ldr	r1, [r2]
+60011276: 2903         	cmp	r1, #0x3
+60011278: dc3a         	bgt	0x600112f0 <motion_step+0xd0> @ imm = #0x74
+6001127a: 2101         	movs	r1, #0x1
+6001127c: fa01 f600    	lsl.w	r6, r1, r0
+60011280: f241 4188    	movw	r1, #0x1488
+60011284: f2c6 0101    	movt	r1, #0x6001
+60011288: f241 4520    	movw	r5, #0x1420
+6001128c: f241 395c    	movw	r9, #0x135c
+60011290: f241 3a29    	movw	r10, #0x1329
+60011294: f241 2bf8    	movw	r11, #0x12f8
+60011298: f640 48c1    	movw	r8, #0xcc1
+6001129c: 180f         	adds	r7, r1, r0
 6001129e: 2400         	movs	r4, #0x0
 600112a0: f2c6 0501    	movt	r5, #0x6001
 600112a4: f2c6 0901    	movt	r9, #0x6001
@@ -145,5 +145,10 @@ Disassembly of section .text:
 600112da: 2c31         	cmp	r4, #0x31
 600112dc: f107 0720    	add.w	r7, r7, #0x20
 600112e0: d1e8         	bne	0x600112b4 <motion_step+0x94> @ imm = #-0x30
-600112e2: b001         	add	sp, #0x4
-600112e4: e8bd 8ff0    	pop.w	{r4, r5, r6, r7, r8, r9, r10, r11, pc}
+600112e2: e005         	b	0x600112f0 <motion_step+0xd0> @ imm = #0xa
+600112e4: f241 20f6    	movw	r0, #0x12f6
+600112e8: f2c6 0001    	movt	r0, #0x6001
+600112ec: 21ff         	movs	r1, #0xff
+600112ee: 7001         	strb	r1, [r0]
+600112f0: b001         	add	sp, #0x4
+600112f2: e8bd 8ff0    	pop.w	{r4, r5, r6, r7, r8, r9, r10, r11, pc}
