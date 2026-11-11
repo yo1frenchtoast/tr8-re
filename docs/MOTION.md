@@ -13,21 +13,31 @@ Then flash it with Roland's normal procedure: see [UPDATE.md](UPDATE.md) (backup
 
 The patcher takes the user's own Roland file. It refuses anything other than the exact v1.61 application (SHA-256 of the decompressed module), checks the original bytes at every patched address, and rebuilds the module size and byte-sum so the official updater accepts the file. `--check` only verifies an original input file; a patched file fails it on purpose.
 
+## Builds
+
+| `--patch` | "Record on" means | Status on the unit |
+|---|---|---|
+| `motion` (default) | TR-REC mode is active (HMI Setup[0] == 0) | Test 5 pending |
+| `motion-hold` | The TR-REC button (id 0x11) is **held** (`FUN_60013168(0x11)`) | Test 5 pending |
+| `motion-diag` | Always | Works (test 4) |
+| `motion-probe` | No motion: audible test of each link | Not needed so far |
+
 ## Behaviour
 
 | Situation | Result |
 |---|---|
-| TR-REC on, sequencer running, you move a knob or fader | Its value is stored at the current step for that control |
+| Record on, sequencer running, you move a knob or fader | Its value is stored at the current step for that control |
 | Next pass of the pattern | The stored values are replayed at their steps |
-| TR-REC on, you move a control that has motion | Recording overwrites; replay of that control pauses for 2 steps after each touch |
-| TR-REC on, sequencer stopped, you move a control | The motion of that control is erased (A and B) |
-| Other mode (INST PLAY, INST REC, ...), you move a control | Normal live change only: nothing is recorded or erased, and the motion continues to replay |
+| Record on, you move a control that has motion | Recording overwrites; replay of that control pauses for 2 steps after each touch |
+| Record on, sequencer stopped, you move a control | The motion of that control is erased (A and B) |
+| Record off, you move a control | Normal live change only: nothing is recorded or erased, and the motion continues to replay |
 | Power off | All motion is lost (RAM only) |
 
 - 49 controls (36 knobs, 11 level controls, 2 others), 16 steps x 2 variations (A/B) each.
 - One global motion buffer: it is **not** stored per pattern. Changing pattern keeps the same motion.
-- Recording and erasing need TR-REC: HMI Setup parameter 0 (database object `0x60149F38`, global id `0x2A`) must be 0. The payload reads it with the firmware getter `FUN_6001B12E(0x60149F38, 0)`. Evidence: the mode buttons 0x11-0x16 in `FUN_6001961E` set it to 0-5; the step clear function `FUN_600192BA` only works in modes 0 and 3; the MIDI note input in `FUN_60004D8C` records notes into the pattern only in mode 3 (INST REC). So 0 = TR-REC, 3 = INST REC.
-- Only the default knob handler records. When a button changes what the knobs do (redirect flag) or the panel boot mode (`0x6007E574`) is above 3, nothing is recorded and nothing is replayed.
+- Default build: "record on" = HMI Setup parameter 0 (database object `0x60149F38`, global id `0x2A`) must be 0. The payload reads it with the firmware getter `FUN_6001B12E(0x60149F38, 0)`. Evidence: the mode buttons 0x11-0x16 in `FUN_6001961E` set it to 0-5; the step clear function `FUN_600192BA` only works in modes 0 and 3; the MIDI note input in `FUN_60004D8C` records notes into the pattern only in mode 3 (INST REC). So 0 = TR-REC, 3 = INST REC.
+- Hold build: "record on" = `FUN_60013168(0x11)`, the button-held bitmap (FINDINGS, "Panel buttons"). Not proven: that 0x11 is the TR-REC button (it is the button that sets Setup[0] = 0).
+- Since test 4 the panel boot mode (`0x6007E574`) and the knob redirect flag (`0x6007E580`) are not tested any more: they belong to the `FUN_6001446A` path, which normal play does not use. So motion also replays while an instrument button is held.
 
 ## How it works
 
@@ -39,12 +49,12 @@ The patcher takes the user's own Roland file. It refuses anything other than the
 | `0x60011E00`, `0x60011E04` in `FUN_60011DBE` | calls to the developer dump functions | `nop.w` |
 
 - The payload (`patches/motion/motion.c`) lives where the developer dump code was: code and small variables at `0x60011150`-`0x60011463` (753 of 788 bytes), the value table at `0x60011488` (1568 of 1838 bytes). The literal pool at `0x60011464`-`0x60011483` is still used by `FUN_60011054`/`FUN_600110A4` and is kept. SDRAM is read/write/execute in the MPU setup (`FUN_60010574`), so data can live there. The image size does not change.
-- Capture: `motion_knob(screen, ev)` gets every HMI knob event `{10, id, value}` before the active screen and the global control -> parameter table `FUN_60013F6A`. In TR-REC it records `(id, value)` at slot `variation*16 + ((counter >> 1) & 15)`, then calls the original `FUN_60013242`. The sequencer counter `0x6007E118` counts **half steps**: `FUN_6000989C` calls the step function only on even values (FINDINGS 2).
+- Capture: `motion_knob(screen, ev)` gets every HMI knob event `{10, id, value}` before the active screen and the global control -> parameter table `FUN_60013F6A`. When record is on it records `(id, value)` at slot `variation*16 + ((counter >> 1) & 15)`, then calls the original `FUN_60013242`. The sequencer counter `0x6007E118` counts **half steps**: `FUN_6000989C` calls the step function only on even values (FINDINGS 2).
 - Replay: `motion_step` calls the original function, then for each control with a value at this slot it posts `{0x0B, id, value}` through the ADC change callback `0x60000CC0`. That is the same event as a real knob move. It goes through the panel FIFO, whose push is in a critical section, so posting from the sequencer task is safe. The panel task then applies it with the normal code path, and the display follows.
 - Once per step: `FUN_6000981E` also calls `FUN_600097DA`, so both hooked calls usually run for the same step. `motion_step` remembers the last slot (`m_last`) and replays it only once. Without this, the second echo was taken as a user move and blocked the next replays.
 - Echo filter: the replayed event comes back into `motion_knob`. A per-control "pending" flag and value lets `motion_knob` recognize it and not record it again.
 
-State read by the payload: sequencer running `0x6007E102`, step `0x6007E118`, variation `0x6012FA74`, panel boot mode `0x6007E574` (not TR-REC: it is set once at panel task start), knob redirect `0x6007E580`, Setup[0] (TR-REC mode) through `FUN_6001B12E`.
+State read by the payload: sequencer running `0x6007E102`, step `0x6007E118`, variation `0x6012FA74`, and the record condition: Setup[0] through `FUN_6001B12E` (default build) or the TR-REC button state through `FUN_60013168` (hold build).
 
 ## Test
 
@@ -55,7 +65,7 @@ pip install unicorn   # in a virtualenv
 python3 tests/emu_motion.py work/patched/appA.bin
 ```
 
-`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 29 scenarios pass for the normal build, 22 for the diagnostic build (`--diag`): record, hold, replay, echo, A/B, erase, blocked modes, TR-REC condition, half-step counter, once per step, and the firmware's own knob event handler calling the payload. The Setup getter is a stub that returns the mode the test selects.
+`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 27 scenarios pass for the default build, 27 for the hold build (`--hold`), 22 for the diagnostic build (`--diag`): record, hold, replay, echo, A/B, erase, record condition, half-step counter, once per step, and the firmware's own knob event handler calling the payload. The Setup getter and the button-held function are stubs that return the state the test selects.
 
 What the emulation does **not** prove: real timing, the exact meaning of the state addresses at run time, display behaviour, and whether replaying through the knob path has side effects in some screens.
 
@@ -98,6 +108,7 @@ python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion_probe.BIN --patch motion
 - Cause: the hook was on `FUN_6001446A`. That function is only the knob handler of some screens (`FUN_600141DE`). In normal use the event-10 handler `0x60013892` asks the active screen (`FUN_60013242`), and when the screen does not take the event it applies the parameter itself with `FUN_60013F6A`. `FUN_6001446A` is not on that path. Fix: hook the `FUN_60013242` call at `0x600138C8`, which sees all knob events. The emulation test now also runs the firmware's own event-10 handler.
 - Test 3 (normal build `8dc6187`, hook at `0x600138C8`, TR-REC, BD TUNE turned during one bar while running): still nothing recorded or replayed.
 - Test 4 (diagnostic build `8dc6187`, no mode conditions): **motion is recorded and replayed.** The whole chain works on the unit: capture hook `0x600138C8`, running flag, half-step counter, step hooks, replay through `0x60000CC0`. So one of the conditions of the normal build is wrong: the TR-REC test (Setup[0] == 0), the panel boot mode test (`0x6007E574` <= 3) or the knob redirect test (`0x6007E580`).
+- After test 4: boot mode and redirect tests removed (wrong path, see Behaviour). Two builds for test 5: `motion` (TR-REC mode) and `motion-hold` (TR-REC held, the user's proposal). If `motion` records now, one of the removed tests was the cause; if only `motion-hold` records, the Setup[0] value is wrong.
 
 ## Rebuild the payload
 

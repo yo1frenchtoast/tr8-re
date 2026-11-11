@@ -3,6 +3,7 @@
 
   python3 tests/emu_motion.py work/patched/appA.bin          # normal build
   python3 tests/emu_motion.py work/patched_diag/appA.bin --diag
+  python3 tests/emu_motion.py work/patched_hold/appA.bin --hold
 
 The firmware functions the payload calls are replaced by stubs that log their arguments.
 """
@@ -12,7 +13,8 @@ from unicorn.arm_const import *
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIAG = "--diag" in sys.argv
-pay = json.load(open(os.path.join(ROOT, "patches/motion/payload_diag.json" if DIAG else "patches/motion/payload.json")))
+HOLD = "--hold" in sys.argv
+pay = json.load(open(os.path.join(ROOT, "patches/motion/payload%s.json" % ("_diag" if DIAG else "_hold" if HOLD else ""))))
 KNOB, STEP = pay["symbols"]["motion_knob"], pay["symbols"]["motion_step"]
 app = open(sys.argv[1], "rb").read()
 
@@ -24,8 +26,9 @@ RET = 0x7000F000
 uc.mem_write(RET, b"\xfe\xe7")                 # b .
 
 calls = []
-STUBS = {0x60013242: "orig_knob", 0x6001A27C: "modal", 0x60013F6A: "apply", 0x6000978E: "orig_step", 0x60000CC0: "post", 0x6001B12E: "setup_get"}
-setup0 = [0]                                   # HMI Setup[0]: 0 = TR-REC, 2 = INST PLAY, 3 = INST REC
+STUBS = {0x60013242: "orig_knob", 0x6001A27C: "modal", 0x60013F6A: "apply", 0x60013168: "held", 0x6000978E: "orig_step", 0x60000CC0: "post", 0x6001B12E: "setup_get"}
+setup0 = [0]
+held = [1]                                     # TR-REC button held (hold build)                                   # HMI Setup[0]: 0 = TR-REC, 2 = INST PLAY, 3 = INST REC
 def hook(uc, addr, size, _):
     if addr in STUBS:
         r = [uc.reg_read(x) for x in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2)]
@@ -35,6 +38,9 @@ def hook(uc, addr, size, _):
             uc.reg_write(UC_ARM_REG_R0, 0)
         elif STUBS[addr] == "modal":                         # FUN_6001a27c: no modal state
             uc.reg_write(UC_ARM_REG_R0, 0)
+        elif STUBS[addr] == "held":                          # FUN_60013168(button id)
+            assert r[0] == 0x11, r
+            uc.reg_write(UC_ARM_REG_R0, held[0])
         elif STUBS[addr] == "setup_get":
             assert r[:2] == [0x60149F38, 0], r
             uc.reg_write(UC_ARM_REG_R0, setup0[0])
@@ -55,8 +61,10 @@ def call(fn, *args):
 w8  = lambda a, v: uc.mem_write(a, bytes([v]))
 w32 = lambda a, v: uc.mem_write(a, struct.pack("<I", v & 0xFFFFFFFF))
 def state(running, step, var=0, mode=0, redirect=0, rec=0, half=0):
-    """step = pattern step; the firmware counter at +0x18 counts half steps."""
+    """step = pattern step; the firmware counter at +0x18 counts half steps.
+    rec = Setup[0] (0 = TR-REC); in the hold build rec != 0 means "TR-REC not held"."""
     setup0[0] = rec
+    held[0] = 1 if rec == 0 else 0
     w8(0x6007E102, running); w32(0x6007E118, 2 * step + half); w32(0x6012FA74, var)
     w32(0x6007E574, mode); w8(0x6007E580, redirect)
 EV = 0x70001000
@@ -117,23 +125,20 @@ state(1, 4); step()
 state(1, 12); expect("next pass replays once", step(), [("post", [20, 33])])
 state(0, 0); step(again=True); state(1, 12); expect("restart: replay at the same step after a stop", step(again=True), [("post", [20, 33])])
 if not DIAG:
-    state(1, 3, redirect=1); expect("knobs redirected (button held): no replay", step(), [])
-    state(1, 3, mode=4); expect("panel mode > 3: no replay", step(), [])
-    state(1, 6, mode=4); knob(9, 50)
-    state(1, 6); expect("panel mode > 3: knob not recorded", step(), [])
-    # TR-REC condition (Setup[0] must be 0)
+    # record condition: TR-REC mode (default build) or TR-REC held (hold build)
     state(1, 8, rec=2); knob(11, 77)
     state(1, 9, rec=2); step(); state(1, 10, rec=2); step()
-    state(1, 8, rec=2); expect("INST PLAY: knob not recorded", step(), [])
+    state(1, 8, rec=2); expect("record off (other mode / TR-REC not held): knob not recorded", step(), [])
     state(1, 3); knob(5, 100)                      # re-record lane 5 at step 3 in TR-REC
     state(1, 4); step(); state(1, 5); step()
-    state(1, 3, rec=3); expect("INST REC: existing motion still replayed", step(), [("post", [5, 100])])
+    state(1, 3, mode=4, redirect=1); expect("boot mode and redirect flag are not tested any more", step(), [("post", [5, 100])])
+    state(1, 3, rec=3); expect("record off: existing motion still replayed", step(), [("post", [5, 100])])
     state(1, 3, rec=3); knob(5, 42)
-    state(1, 3, rec=3); expect("INST REC: knob neither overwrites nor holds the lane", step(), [("post", [5, 100])])
+    state(1, 3, rec=3); expect("record off: knob neither overwrites nor holds the lane", step(), [("post", [5, 100])])
     state(0, 0, rec=2); knob(5, 1)
-    state(1, 3); expect("stopped outside TR-REC: lane not erased", step(), [("post", [5, 100])])
+    state(1, 3); expect("stopped, record off: lane not erased", step(), [("post", [5, 100])])
     state(0, 0, rec=0); knob(5, 1)
-    state(1, 3); expect("stopped in TR-REC: lane erased", step(), [])
+    state(1, 3); expect("stopped, record on: lane erased", step(), [])
 else:
     state(1, 8, rec=2, mode=4); knob(11, 77)
     state(1, 9, rec=2, mode=4); step(); state(1, 10); step()
