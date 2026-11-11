@@ -3,7 +3,7 @@
 Reverse engineering of the Roland TR-8 firmware (system v1.61, `TR8_UPD.BIN`).
 Goal: find out whether new features (longer patterns, **motion recording**) can be added.
 
-Status: container format fully decoded, main application decompressed and loaded in Ghidra,
+Status: container format, boot loader and updater checks decoded; a module can be rebuilt (`tr8fw.py pack`), main application decompressed and loaded in Ghidra,
 sequencer tick/step engine located, knob path traced from the ADC to the parameter setter. Motion record looks feasible (see FEASIBILITY).
 See [docs/FINDINGS.md](docs/FINDINGS.md) for results and [docs/FEASIBILITY.md](docs/FEASIBILITY.md) for the feature assessment.
 
@@ -20,7 +20,7 @@ tools/analyze.sh work/appA.elf analysis/appA                 # Ghidra headless -
 
 | Path | Content |
 |---|---|
-| `tools/tr8fw.py` | Parse the container, verify checksums, decompress (LZSS), build ELF wrappers. Also contains a LZSS compressor (round-trip tested only, slow). |
+| `tools/tr8fw.py` | `info` (trailer + module checks), `extract` (LZSS decompress + ELF wrappers), `pack` (recompress a module, fix size and byte-sum). |
 | `tools/mkelf.py` | Generic raw-binary to ARM ELF wrapper (copied from the keystep-pro-re project). |
 | `tools/analyze.sh`, `tools/*.java` | Ghidra headless run: aggressive ARM instruction finder, then dump of all decompiled functions and strings. |
 | `docs/` | Findings and feasibility notes. |

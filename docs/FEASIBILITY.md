@@ -1,12 +1,20 @@
 # Feasibility of new features
 
-Nothing here was tested on hardware. The risk of bricking a unit is real: only try on a unit you accept to lose, and find out the recovery procedure first.
+Nothing here was tested on hardware.
 
-## Common good news
+## Flashing safety
 
-- No encryption or signature found; the only integrity value found for the application is a byte-sum in the module header.
-- Modified modules can be recompressed (`tr8fw.py` has a compressor, round-trip tested) and the sum recomputed. A module slot is 2.3 MB, the application is 1.2 MB, so there is room.
-- The application is in RAM, so code size growth is possible; free flash is large.
+- No encryption or signature. The boot loader checks nothing; the updater checks the trailer, the module names and, after writing, the module byte-sums.
+- `tr8fw.py pack` rebuilds a module (compress, size, byte-sum). Round trip on the unmodified application: identical after decompression, all checks OK.
+- **Recovery path**: the update only rewrites flash 0x30000-0x3DFFFF. The boot loader and the updater stay untouched, and the updater starts when its button is held at power-on (boot table, FINDINGS 1b). A modified application that crashes can then be replaced by the original `TR8_UPD.BIN`.
+- Remaining risks: a hardware fault during the flash itself (power cut), and a patched application that damages the user area (patterns/kits): make a backup first. Do not modify `appB` (second processor): a bad handshake stops the boot before the application starts. It is still recoverable through the updater, but there is no reason to touch it.
+
+## Space for new code and data
+
+- **RAM for data**: plenty. The RTOS memory pool is about 29.5 MB above the bss. The cleanest option is to grow the bss: add N bytes to the zero-fill length at `0x60000158` and move the pool base literal (`0x60280988`, used at `0x600104A8` and in the fast-code region) by the same amount.
+- **Code**: appending code after the image does not work directly, because the bss zero-fill starts inside the loaded image (`0x601264EC`). Options:
+  1. Code cave: `FUN_6001114E` + `FUN_600113B2` (about 2.6 KB) are only used by a developer branch of the USB backup (`FUN_60011DBE`, when the flag set by `FUN_60011F48` is on). Turn that branch into a no-op and reuse the space. Enough for a motion record prototype.
+  2. Grow the image and move the bss: more work (scatter table, pool base), but no size limit.
 
 ## A. Longer patterns (32 or 64 steps)
 

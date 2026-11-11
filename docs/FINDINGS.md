@@ -2,22 +2,62 @@
 
 ## 1. Container (`TR8_UPD.BIN`, 4,194,320 bytes)
 
-A 0x10-byte prefix, then a 4 MiB flash image. Offsets below are file offsets (flash offset + 0x10 in the prefix case is already included).
+A raw 4 MiB flash image (file offset = flash offset, flash mapped at `0x03000000`), followed by a 16-byte trailer.
 
-| Offset | Content |
+| Flash offset | Content |
 |---|---|
-| 0x0000 / 0x4000 | Boot image "ESC91.000", plaintext. Vector table at +0x30 (SP `0x01011718`, reset `0x01000BD9`). Code base `0x01000000`. Contains the LZSS decompressor (function at `0x01000C76`). |
+| 0x0000 | Boot loader "ESC91.000" (0x33AC bytes), plaintext. Vector table at +0x30 (SP `0x01011718`, reset `0x01000BD9`), runs at `0x01000000`. Contains the LZSS decompressor (`0x01000C76`). |
+| 0x4000 | Second "ESC91.000" image (0x103C bytes), plaintext. Not analysed. |
 | 0x8000 | `TR-8:Updater 12-0801` (compressed), 180 KB decompressed |
 | 0x30000 | `TR-8:Appli 18-0926_11:19:43` = v1.61 main application (compressed), 1,243,616 bytes decompressed |
-| 0x280000 | Second `TR-8:Appli` module, 1,074,732 bytes. Contains `BSSESC2` strings: probably the build for the ESC2 hardware revision (hypothesis). |
-| 0x2F8010 - end | 0xFF fill |
+| 0x280000 | Second `TR-8:Appli` module, 1,074,732 bytes: firmware of a **second processor** (see boot flow). Contains `BSSESC2` strings. |
+| 0x2F8000 - end | 0xFF fill |
+| trailer | `{0x30, 0x3DF, 0x1000, 0x400000}` = first block, last block, block size, image size |
 
 Module header (0x40 bytes): name (0x28), load address `0x60000000`, header size, compressed size, **byte-sum32 of the compressed payload**, destination address, decompressed size.
-All three checksums verified. Compression is Okumura LZSS: 4096-byte ring, initial position `0xFEE`, flag bit 1 = literal, match = 12-bit absolute ring position + 4-bit length (+3). The ring starts zeroed.
+Compression is Okumura LZSS: 4096-byte ring, initial position `0xFEE`, flag bit 1 = literal, match = 12-bit absolute ring position + 4-bit length (+3). The ring starts zeroed.
 
-CPU: ARMv7-M class (Thumb-2, `msr basepri`). The application runs from RAM at `0x60000000`. RTOS calls (`thunk_EXT_FUN_01000xxx`, `...01007752`) go to a mask ROM at `0x01000000+` that is not in the image.
+CPU: ARMv7-M class (Thumb-2, `msr basepri`).
 
-Integrity: only the module byte-sum was found. The boot code may check more (not analysed in depth). No signature or encryption seen.
+## 1b. Boot loader (flash 0x0, runs at 0x01000000)
+
+Main flow at `0x01000B7A`:
+
+1. `FUN_0100038E` picks the image to start from a table at `0x01010090` (initial data at boot.bin 0x3318):
+   - entry 0: no condition, image `0x03030000` (application);
+   - entry 1: ADC conditions = none, GPIO conditions at `0x01010008` = input 12 must read 1 and inputs 0-11, 13-15 must read 0, image `0x03008000` (updater).
+   So holding one specific panel button at power-on starts the updater. This is Roland's normal update procedure; the button is the one their update instructions name.
+2. If the application was chosen, it first loads the module at `0x03280000` into RAM and sends it to the second processor (`FUN_01002374`: 0x40-byte header, then 0x200-byte chunks, handshake byte 0x10; on a bad handshake the boot loader stops in a loop).
+3. It loads the chosen module (`FUN_01000B3C`: LZSS decompress if the decompressed size is not 0, else a plain copy) to `0x60000000` and jumps to it.
+
+**The boot loader checks no checksum or signature.** It only reads the header sizes.
+
+## 1c. Updater (flash 0x8000)
+
+`FUN_600053C0` (`writer\force_updater.cpp`) looks on USB storage for `TR8_ROM.BIN`, then `BSSESC2.BIN`, then `TR8_UPD.BIN`. For `TR8_UPD.BIN`:
+
+1. Trailer check (`FUN_6000530A`): file size - 16 = trailer image size, last block >= first block, block size not 0. File size >= (last+1) x block size.
+2. Name check (`FUN_60005078`): the first 16 bytes at file offsets 0x8000, 0x30000, 0x280000 must be `"TR-8:Updater    "`, `"TR-8:Appli      "`, `"TR-8:Appli      "`.
+3. Write (`FUN_60005152`): blocks first..last (flash 0x30000-0x3DFFFF in v1.61), each block read back and compared.
+4. After the write (`FUN_60004F3E`): it re-reads the three modules from flash and recomputes each byte-sum against header +0x34. A mismatch gives error 6. The sums are shown on the display.
+
+Consequence: a `TR8_UPD.BIN` with the original trailer **never rewrites the boot loader (0x0) or the updater (0x8000)**. If a modified application does not start, the button-at-power-on path still reaches the untouched updater, which can flash the original file again.
+
+## 1d. Application memory map (scatter table at `0x60000000`)
+
+| Region | Content |
+|---|---|
+| `0x60000000`-`0x601264EB` | Code and constants (run in SDRAM) |
+| `0x601264EC`-`0x6013085F` (load) -> `0x01000300`-`0x0100A673` (run) | "Fast" code copied to internal RAM: RTOS kernel and drivers. All `thunk_EXT_FUN_0100xxxx` calls go here. An address `0x0100xxxx` in this range = image address `xxxx - 0x300 + 0x601264EC`. |
+| `0x01010000`-`0x01015273` | Internal RAM data + bss |
+| `0x01020000`-`0x01027FFF` | Internal RAM, zeroed (stacks, probably) |
+| `0x20000000`-`0x2000624F` | Tightly coupled RAM data + bss |
+| `0x601264EC`-`0x60280987` | Main bss (1.4 MB, zeroed after the fast-code copy) |
+| `0x60280988`-`0x61FFFFFF` | RTOS memory pool (`FUN_60010430`, about 29.5 MB). SDRAM is 32 MB. |
+
+Free internal RAM (hypothesis): `0x0100A674`-`0x0100FFFF` (about 22 KB) is not covered by the scatter table.
+
+Ghidra note: the ELF built by `tr8fw.py` maps only `0x60000000`. To follow `thunk_EXT_*` calls, add a second memory block at `0x01000300` from image offset `0x1264EC` (length `0xA374`).
 
 ## 2. Application structure
 
@@ -78,7 +118,7 @@ Names of the controls (short-name table at `0x6007D698`): `<inst>TU` (tune), `<i
 
 HMI parameter databases (names at `0x6007EC0C`): System, Setup, Efx, Patch, Ptn, Patch2, Ptn2, Testmode, TMP.
 
-Dead code: `FUN_6012B12C` and its twin at `0x6012B054` (a second ADC filter in the BIOS area) have no caller.
+Correction: `FUN_6012B12C` and `0x6012B054` are not dead. They are in the fast-code region and run from `0x0100xxxx`, so their callers are in that alias.
 
 ## 3. Open questions
 
@@ -86,4 +126,6 @@ Dead code: `FUN_6012B12C` and its twin at `0x6012B054` (a second ADC filter in t
 2. Where is the step callback (`+0x14`) installed?
 3. Exact mapping of control id -> HMI parameter id -> knob name (`FUN_6001446A` gives the second half).
 4. Is the sequencer limited to 16 steps in the sound engine (ROM or DSP side), or only in the main application?
-5. What other integrity checks does the boot/updater perform?
+5. ~~Integrity checks~~: answered in 1b/1c.
+6. Which panel button is GPIO input 12 (the updater button)?
+7. What runs on the second processor (`appB`) and over which link?
