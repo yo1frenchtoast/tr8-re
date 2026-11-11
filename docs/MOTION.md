@@ -17,8 +17,8 @@ The patcher takes the user's own Roland file. It refuses anything other than the
 
 | `--patch` | "Record on" means | Status on the unit |
 |---|---|---|
-| `motion` (default) | TR-REC mode is active (HMI Setup[0] == 0) | Test 5 pending |
-| `motion-hold` | The TR-REC button (id 0x11) is **held** (`FUN_60013168(0x11)`) | Test 5 pending |
+| `motion` (default) | TR-REC mode is active (HMI Setup[0] == 0) | Not tested since the hook fix |
+| `motion-hold` | The TR-REC button (id 0x11) is **held** (`FUN_60013168(0x11)`) | **Works (test 5)** |
 | `motion-diag` | Always | Works (test 4) |
 | `motion-probe` | No motion: audible test of each link | Not needed so far |
 
@@ -36,7 +36,7 @@ The patcher takes the user's own Roland file. It refuses anything other than the
 - 49 controls (36 knobs, 11 level controls, 2 others), 16 steps x 2 variations (A/B) each.
 - One global motion buffer: it is **not** stored per pattern. Changing pattern keeps the same motion.
 - Default build: "record on" = HMI Setup parameter 0 (database object `0x60149F38`, global id `0x2A`) must be 0. The payload reads it with the firmware getter `FUN_6001B12E(0x60149F38, 0)`. Evidence: the mode buttons 0x11-0x16 in `FUN_6001961E` set it to 0-5; the step clear function `FUN_600192BA` only works in modes 0 and 3; the MIDI note input in `FUN_60004D8C` records notes into the pattern only in mode 3 (INST REC). So 0 = TR-REC, 3 = INST REC.
-- Hold build: "record on" = `FUN_60013168(0x11)`, the button-held bitmap (FINDINGS, "Panel buttons"). Not proven: that 0x11 is the TR-REC button (it is the button that sets Setup[0] = 0).
+- Hold build: "record on" = `FUN_60013168(0x11)`, the button-held bitmap (FINDINGS, "Panel buttons"). Test 5 confirmed that 0x11 is the TR-REC button.
 - Since test 4 the panel boot mode (`0x6007E574`) and the knob redirect flag (`0x6007E580`) are not tested any more: they belong to the `FUN_6001446A` path, which normal play does not use. So motion also replays while an instrument button is held.
 
 ## How it works
@@ -109,6 +109,7 @@ python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion_probe.BIN --patch motion
 - Test 3 (normal build `8dc6187`, hook at `0x600138C8`, TR-REC, BD TUNE turned during one bar while running): still nothing recorded or replayed.
 - Test 4 (diagnostic build `8dc6187`, no mode conditions): **motion is recorded and replayed.** The whole chain works on the unit: capture hook `0x600138C8`, running flag, half-step counter, step hooks, replay through `0x60000CC0`. So one of the conditions of the normal build is wrong: the TR-REC test (Setup[0] == 0), the panel boot mode test (`0x6007E574` <= 3) or the knob redirect test (`0x6007E580`).
 - After test 4: boot mode and redirect tests removed (wrong path, see Behaviour). Two builds for test 5: `motion` (TR-REC mode) and `motion-hold` (TR-REC held, the user's proposal). If `motion` records now, one of the removed tests was the cause; if only `motion-hold` records, the Setup[0] value is wrong.
+- Test 5 (`motion-hold`, `e7c4ca4`): **works perfectly** according to the user: record while TR-REC is held, live tweak otherwise. This also proves that button id 0x11 is TR-REC and that `FUN_60013168` is the button-held state. (`motion` not reported.)
 
 ## Rebuild the payload
 

@@ -141,7 +141,7 @@ Panel button events have types 1 and 2, dispatched by `0x6001406C` to `FUN_60013
 
 Ids above 0x1B are not mapped yet.
 
-**Button held state:** `FUN_60013168(id)` returns 1 while button `id` is held. It reads a bitmap at `0x6014893C` (`0x60148924 + 0x18`, one bit per button id). Case 5 of the HMI dispatcher `FUN_60013C3E` sets the bit on press; case 6 probably clears it on release (not checked). The firmware uses it for combinations, for example `FUN_60013168(0x11)` in `FUN_6001961E` (button 0x13 with button 0x11 held gives mode 8). A "record only while TR-REC is held" rule would test `FUN_60013168(0x11)`, if 0x11 is the TR-REC button.
+**Button held state:** `FUN_60013168(id)` returns 1 while button `id` is held. It reads a bitmap at `0x6014893C` (`0x60148924 + 0x18`, one bit per button id). Case 5 of the HMI dispatcher `FUN_60013C3E` sets the bit on press; case 6 probably clears it on release (not checked). The firmware uses it for combinations, for example `FUN_60013168(0x11)` in `FUN_6001961E` (button 0x13 with button 0x11 held gives mode 8). Confirmed on the unit (motion test 5): 0x11 is the **TR-REC** button and `FUN_60013168(0x11)` is 1 while it is held.
 
 ### Panel mode (TR-REC, INST REC)
 
