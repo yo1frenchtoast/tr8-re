@@ -1,0 +1,8 @@
+# Roland firmware and anything derived from it must not be committed
+firmware/
+work/
+analysis/
+*.bin
+*.elf
+*.zip
+__pycache__/
