@@ -76,3 +76,9 @@ tests/run_all.sh "$F"                                # build every patch, run al
 
 `firmware/`, `work/` and `analysis/` are git-ignored: they hold Roland code or output derived from
 it and must never be committed.
+
+## License
+
+MIT, see [LICENSE](LICENSE). This covers the code and documentation in this repository only.
+Roland's firmware is not included and is not covered by this license; "Roland" and "TR-8" are
+trademarks of Roland Corporation.
