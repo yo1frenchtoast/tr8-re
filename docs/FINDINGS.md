@@ -138,6 +138,8 @@ Panel button events have types 1 and 2, dispatched by `0x6001406C` to `FUN_60013
 | 0x17, 0x18 | Write Ptn parameter 0 (`VARI`) = 0/1/2: variation A, B, A+B | Hypothesis from the values |
 | 0x19 | Cycles Ptn parameter 1 (`SCALE`) 0..3 | Code |
 | 0x1B | Toggles Setup 0x15 and may call the sequencer (`FUN_600099B6`) | Role unclear |
+| 0x1C | **CLEAR** (held state used as a modifier): with 0x1C held, an instrument button calls `FUN_600193E0` (clear that row); `FUN_600192BA` (clear a step) also needs it | Code; unit test pending |
+| 0x1D-0x2B | Instrument buttons (row select); with CLEAR held they clear the row | Code |
 
 Ids above 0x1B are not mapped yet.
 
