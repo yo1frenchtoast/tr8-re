@@ -55,6 +55,10 @@ Consequence: a `TR8_UPD.BIN` with the original trailer **never rewrites the boot
 | `0x601264EC`-`0x60280987` | Main bss (1.4 MB, zeroed after the fast-code copy) |
 | `0x60280988`-`0x61FFFFFF` | RTOS memory pool (`FUN_60010430`, about 29.5 MB). SDRAM is 32 MB. |
 
+MPU (`FUN_60010574`): SDRAM `0x60000000` is read/write/execute, so patched code and its data can both live in the image or the pool. Internal RAM `0x01000000`-`0x0101FFFF` is read-only except its data regions (the fast code cannot be patched at run time).
+
+Reference image: the decompressed v1.61 application has SHA-256 `3685edab8bbeaef8752df9ef08a73a9fd2a2e69ba8210016132f6d141f6b452e` (checked by `tr8patch.py`).
+
 Free internal RAM (hypothesis): `0x0100A674`-`0x0100FFFF` (about 22 KB) is not covered by the scatter table.
 
 Ghidra note: the ELF built by `tr8fw.py` maps only `0x60000000`. To follow `thunk_EXT_*` calls, add a second memory block at `0x01000300` from image offset `0x1264EC` (length `0xA374`).
@@ -95,6 +99,8 @@ State struct at `0x6007E100` (all in RAM, zero at load):
 
 - `FUN_6000989C(ctx)`: per-clock-tick handler. Increments `+0x20`; when it reaches `+0x30` it advances `+0x18`, wraps at `+0x1C` (`FUN_600095F0` resets), then `FUN_6000981E` calls the callback.
 - `FUN_60009746`: builds the triggers for the step, then `FUN_6000DE34(ctx, mask, levels[11], accentMask)` fires the 11 voices through `FUN_60027120`..`FUN_60027384`. Voice functions end in `thunk_EXT_FUN_01007752` (float-converted parameter message to the sound engine in ROM).
+- `FUN_6000981E` and `FUN_600097DA` (other scale path) both call `FUN_6000978E(p, step)` once per step, at `0x60009862` and `0x60009808`. These two calls are the motion patch step hooks.
+- Pattern struct at `0x6012FA64`: `+0x10` = current variation (0 = A, other = B), read at `0x6012FA74`.
 - `FUN_60009AF8`: 32-slot x 0x14-byte delay queue (scheduled triggers, used for flam/shuffle latency).
 - Callback pointer assignment (`+0x14`) not found yet (set at runtime through a path I did not trace).
 
@@ -109,8 +115,9 @@ Chain from the ADC to the parameter database:
    - type 2 at `FUN_60001242`: 2 controls with a non-linear curve (ids 45, 46).
    - Control ids are 0..48. Knob ids skip 12, 17, 20, 23 ... 44 (those are the type 1 controls).
 3. **Change event.** When a value moves past its threshold, the handler calls the shared callback `0x60000CC0(id, value)` (registered by `FUN_60000D06`). It builds the event `{u8 0x0B, u8 id, u16 value}` and posts it with `FUN_60001A2E` to the listener list at `0x6007DC28`.
-4. **Panel FIFO.** The `task_panel` listener (`FUN_60012D94`, 0x400-byte `pdw_fifo`) queues the event. On pop, the callback `0x60014114` -> `0x6001406C` dispatches on the event byte. Event 0x0B goes to `FUN_60013DE0(id, value)`, which pushes the HMI event `{u16 0x0A, u16 id, s16 value}` into the HMI ring (`FUN_60013B94`, 256 x 12 bytes).
-5. **Screen handler.** The active screen receives the event. The default knob handler `FUN_600141DE` calls `FUN_6001446A(ctx, id, value)` unless the screen overrides it (vtable +0x48, for example while an instrument button is held). `FUN_600143D4` blocks knobs in some panel modes (mode >= 4).
+4. **Panel FIFO.** The `task_panel` listener (`FUN_60012D94`, 0x400-byte `pdw_fifo`) queues the event. The push (`FUN_60001930` / `FUN_600017E4`) runs inside a critical section (`0x6004B87C` enter, `0x6004B886` leave), so another task (the sequencer) can post the same event safely. On pop, the callback `0x60014114` -> `0x6001406C` dispatches on the event byte. Event 0x0B goes to `FUN_60013DE0(id, value)`, which pushes the HMI event `{u16 0x0A, u16 id, s16 value}` into the HMI ring (`FUN_60013B94`, 256 x 12 bytes).
+5. **Screen handler.** The active screen receives the event. Screen manager state is at `0x6007E510` (`+0x06` and `+0x2E` = screen ids compared by `FUN_60013242`, which calls the active screen's handler).
+   **Knob redirect:** byte `0x6007E580`, read by `FUN_6001465C(DAT_600143C4)`. Not 0 while a button changes what the knobs do (for example an instrument button held); the knob event then goes to the screen override, not to `FUN_6001446A`. The default knob handler `FUN_600141DE` calls `FUN_6001446A(ctx, id, value)` unless the screen overrides it (vtable +0x48, for example while an instrument button is held). `FUN_600143D4` blocks knobs in some panel modes (mode >= 4).
 6. **Control to parameter.** `FUN_6001446A` maps the control id to an HMI parameter id (0x06 .. 0x5E), with a rescale for ids 45 (`*101/255`) and 46 (`*21/255 - 10`). It then calls `FUN_600186FA(DAT_60014668, param, value, 0)`.
 7. **Parameter set.** `FUN_600186FA(obj, id, value, sub)` is the generic setter of the HMI parameter manager (object at `0x60149F38`): it asks the range (vtable +0x1C), clamps, reads the current value (+0x08) and writes only on change (+0x18). The same setter is used elsewhere, for example the tempo (`FUN_600089E6`: ids 0x12 and 10).
 
@@ -118,6 +125,20 @@ Names of the controls (short-name table at `0x6007D698`): `<inst>TU` (tune), `<i
 
 HMI parameter databases (names at `0x6007EC0C`): System, Setup, Efx, Patch, Ptn, Patch2, Ptn2, Testmode, TMP.
 Each database has a getter that maps a local index to a global parameter id and reads it with `FUN_6000F80E`/`FUN_6000F844`. Examples: Setup `FUN_6001B12E` (index n -> global `0x2A + n`, `hmi_prm_setup.cpp`), System `FUN_6001B432`, Ptn `FUN_6001B736`, Ptn2 `FUN_6001D3FA`, Patch `FUN_6001A99A`, Patch2 `FUN_6001AD68`. The matching setters are `FUN_6001B166` (Setup) and the generic `FUN_600186FA`.
+
+### Panel buttons
+
+Panel button events have types 1 and 2, dispatched by `0x6001406C` to `FUN_60013BC2` and `FUN_60013CE0` (hypothesis: press and release). The main button handler `FUN_6001961E` uses these button ids:
+
+| Id | Action | Confidence |
+|---|---|---|
+| 0x00-0x0F | Step buttons 1-16; in step mode they call `FUN_6001B8D6`, which writes through the Ptn database | Code |
+| 0x11-0x16 | Mode buttons: write Setup[0] = 0..5 (see Panel mode) | Code |
+| 0x17, 0x18 | Write Ptn parameter 0 (`VARI`) = 0/1/2: variation A, B, A+B | Hypothesis from the values |
+| 0x19 | Cycles Ptn parameter 1 (`SCALE`) 0..3 | Code |
+| 0x1B | Toggles Setup 0x15 and may call the sequencer (`FUN_600099B6`) | Role unclear |
+
+Ids above 0x1B are not mapped yet.
 
 ### Panel mode (TR-REC, INST REC)
 
