@@ -77,6 +77,20 @@ python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion_diag.BIN --patch motion-
 
 Use it when the normal build records nothing: if the diagnostic build records, the TR-REC mode test is wrong; if it does not, the hooks or the replay path are wrong.
 
+## Hardware probe
+
+`--patch motion-probe` (source `patches/motion/probe.c`, test `tests/emu_probe.py`) uses the same hook sites but no motion. Each link of the chain gives an effect you can hear:
+
+| Check on the unit | If yes | If no |
+|---|---|---|
+| Sequencer stopped: knobs do nothing | Capture hook runs, and the "running" flag `0x6007E102` reads 0 when stopped | Hook not reached (or the flashed file is not the probe) |
+| Sequencer running: knobs work | "Running" flag reads 1 | Running flag wrong |
+| Running: touch one knob, release it: its parameter jumps min/max on every step | Step hook runs and posting from the sequencer reaches the parameter | Step hook not reached, or posting from the sequencer context does not work |
+
+```sh
+python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion_probe.BIN --patch motion-probe
+```
+
 ## History
 
 - Test 1 (first build): the unit started normally, but no motion was recorded or replayed.

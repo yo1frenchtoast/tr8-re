@@ -12,7 +12,7 @@ This repository contains no Roland code. You download the official update from R
 | Container, compression, module checks | Decoded; a module can be rebuilt (`tr8fw.py pack`) |
 | Boot loader, updater, recovery path | Decoded; boot checks nothing, the updater is never rewritten |
 | Sequencer engine, knob path, TR-REC mode flag | Located (FINDINGS 2) |
-| Motion recording | Prototype patch; unit tests 1-2 recorded nothing (wrong capture hook, fixed); new build ready (emulation 29/29, diag 22/22) |
+| Motion recording | Prototype patch; unit tests 1-3 recorded nothing; hardware probe build ready to locate the broken link |
 | 32/64-step patterns | Assessed only (FEASIBILITY A): hard |
 
 ## Documents
@@ -60,8 +60,8 @@ python3 tests/emu_motion.py work/patched/appA.bin
 | `tools/tr8fw.py` | `info` (trailer + module checks), `extract` (LZSS decompress + ELF wrappers), `pack` (recompress a module, fix size and byte-sum). |
 | `tools/tr8patch.py` | Patcher: checks the input is v1.61, applies the patch sites and the payload, rebuilds the module, verifies the output. |
 | `tools/elf2payload.py` | Converts a linked payload ELF into `payload.json` for the patcher. |
-| `patches/motion/` | Motion recording payload: `motion.c`, `link.ld`, `build.sh`, generated `payload.json` and `motion.lst`. |
-| `tests/emu_motion.py` | Unicorn emulation test of the payload inside the patched image. |
+| `patches/motion/` | Motion recording payload `motion.c`, hardware probe `probe.c`, `link.ld`, `build.sh`, generated `payload*.json` and `motion.lst`. |
+| `tests/emu_motion.py`, `tests/emu_probe.py` | Unicorn emulation tests of the motion payload and of the hardware probe inside the patched image. |
 | `tools/mkelf.py` | Generic raw-binary to ARM ELF wrapper. |
 | `tools/analyze.sh`, `tools/*.java` | Ghidra headless run: aggressive ARM instruction finder, then dump of all decompiled functions and strings. |
 

@@ -48,6 +48,9 @@ PATCHES = {
 # Diagnostic variant: same sites, payload built with -DMOTION_DIAG (records whatever the mode).
 PATCHES["motion-diag"] = dict(PATCHES["motion"], doc="Motion recording, diagnostic build without mode conditions",
                               payload="patches/motion/payload_diag.json")
+# Hardware probe: same sites, audible test of each link (patches/motion/probe.c, docs/MOTION.md).
+PATCHES["motion-probe"] = dict(PATCHES["motion"], doc="Motion hooks hardware probe (no motion, audible test)",
+                               payload="patches/motion/payload_probe.json")
 
 def load_app(img):
     m = tr8fw.parse(img, dict(tr8fw.MODULES)["appA"])
