@@ -97,6 +97,7 @@ python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion_probe.BIN --patch motion
 - Test 2 (diagnostic build with the half-step and once-per-step fixes): still nothing. As the diagnostic build has no mode condition, the capture hook was the problem.
 - Cause: the hook was on `FUN_6001446A`. That function is only the knob handler of some screens (`FUN_600141DE`). In normal use the event-10 handler `0x60013892` asks the active screen (`FUN_60013242`), and when the screen does not take the event it applies the parameter itself with `FUN_60013F6A`. `FUN_6001446A` is not on that path. Fix: hook the `FUN_60013242` call at `0x600138C8`, which sees all knob events. The emulation test now also runs the firmware's own event-10 handler.
 - Test 3 (normal build `8dc6187`, hook at `0x600138C8`, TR-REC, BD TUNE turned during one bar while running): still nothing recorded or replayed.
+- Test 4 (diagnostic build `8dc6187`, no mode conditions): **motion is recorded and replayed.** The whole chain works on the unit: capture hook `0x600138C8`, running flag, half-step counter, step hooks, replay through `0x60000CC0`. So one of the conditions of the normal build is wrong: the TR-REC test (Setup[0] == 0), the panel boot mode test (`0x6007E574` <= 3) or the knob redirect test (`0x6007E580`).
 
 ## Rebuild the payload
 
