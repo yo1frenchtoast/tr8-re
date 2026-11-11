@@ -82,6 +82,7 @@ Use it when the normal build records nothing: if the diagnostic build records, t
 - Test 1 (first build): the unit started normally, but no motion was recorded or replayed.
 - Test 2 (diagnostic build with the half-step and once-per-step fixes): still nothing. As the diagnostic build has no mode condition, the capture hook was the problem.
 - Cause: the hook was on `FUN_6001446A`. That function is only the knob handler of some screens (`FUN_600141DE`). In normal use the event-10 handler `0x60013892` asks the active screen (`FUN_60013242`), and when the screen does not take the event it applies the parameter itself with `FUN_60013F6A`. `FUN_6001446A` is not on that path. Fix: hook the `FUN_60013242` call at `0x600138C8`, which sees all knob events. The emulation test now also runs the firmware's own event-10 handler.
+- Test 3 (normal build `8dc6187`, hook at `0x600138C8`, TR-REC, BD TUNE turned during one bar while running): still nothing recorded or replayed.
 
 ## Rebuild the payload
 
