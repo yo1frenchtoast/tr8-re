@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Emulate the motion payload inside the patched v1.61 application (needs: pip install unicorn).
 
-  python3 tests/emu_motion.py work/patched/appA.bin          # normal build
+  python3 tests/emu_motion.py work/patched/appA.bin          # default build: hold TR-REC / CLEAR
+  python3 tests/emu_motion.py work/patched_mode/appA.bin --mode
   python3 tests/emu_motion.py work/patched_diag/appA.bin --diag
-  python3 tests/emu_motion.py work/patched_hold/appA.bin --hold
 
 The firmware functions the payload calls are replaced by stubs that log their arguments.
 """
@@ -13,8 +13,9 @@ from unicorn.arm_const import *
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIAG = "--diag" in sys.argv
-HOLD = "--hold" in sys.argv
-pay = json.load(open(os.path.join(ROOT, "patches/motion/payload%s.json" % ("_diag" if DIAG else "_hold" if HOLD else ""))))
+MODE = "--mode" in sys.argv
+HOLD = not (DIAG or MODE)                      # default build
+pay = json.load(open(os.path.join(ROOT, "patches/motion/payload%s.json" % ("_diag" if DIAG else "_mode" if MODE else ""))))
 KNOB, STEP = pay["symbols"]["motion_knob"], pay["symbols"]["motion_step"]
 app = open(sys.argv[1], "rb").read()
 
@@ -28,7 +29,7 @@ uc.mem_write(RET, b"\xfe\xe7")                 # b .
 calls = []
 STUBS = {0x60013242: "orig_knob", 0x6001A27C: "modal", 0x60013F6A: "apply", 0x60013168: "held", 0x6000978E: "orig_step", 0x60000CC0: "post", 0x6001B12E: "setup_get"}
 setup0 = [0]
-held = [1]                                     # TR-REC button held (hold build)                                   # HMI Setup[0]: 0 = TR-REC, 2 = INST PLAY, 3 = INST REC
+held = {0x11: 1, 0x1C: 0}                      # buttons held: TR-REC, CLEAR (default build)                                   # HMI Setup[0]: 0 = TR-REC, 2 = INST PLAY, 3 = INST REC
 def hook(uc, addr, size, _):
     if addr in STUBS:
         r = [uc.reg_read(x) for x in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2)]
@@ -39,8 +40,8 @@ def hook(uc, addr, size, _):
         elif STUBS[addr] == "modal":                         # FUN_6001a27c: no modal state
             uc.reg_write(UC_ARM_REG_R0, 0)
         elif STUBS[addr] == "held":                          # FUN_60013168(button id)
-            assert r[0] == 0x11, r
-            uc.reg_write(UC_ARM_REG_R0, held[0])
+            assert r[0] in held, r
+            uc.reg_write(UC_ARM_REG_R0, held[r[0]])
         elif STUBS[addr] == "setup_get":
             assert r[:2] == [0x60149F38, 0], r
             uc.reg_write(UC_ARM_REG_R0, setup0[0])
@@ -60,11 +61,13 @@ def call(fn, *args):
 
 w8  = lambda a, v: uc.mem_write(a, bytes([v]))
 w32 = lambda a, v: uc.mem_write(a, struct.pack("<I", v & 0xFFFFFFFF))
-def state(running, step, var=0, mode=0, redirect=0, rec=0, half=0):
+def state(running, step, var=0, mode=0, redirect=0, rec=0, half=0, clear=0):
     """step = pattern step; the firmware counter at +0x18 counts half steps.
-    rec = Setup[0] (0 = TR-REC); in the hold build rec != 0 means "TR-REC not held"."""
+    rec = Setup[0] (0 = TR-REC); in the default build rec != 0 means "TR-REC not held".
+    clear = CLEAR button held (default build)."""
     setup0[0] = rec
-    held[0] = 1 if rec == 0 else 0
+    held[0x11] = 1 if rec == 0 else 0
+    held[0x1C] = clear
     w8(0x6007E102, running); w32(0x6007E118, 2 * step + half); w32(0x6012FA74, var)
     w32(0x6007E574, mode); w8(0x6007E580, redirect)
 EV = 0x70001000
@@ -103,8 +106,13 @@ state(1, 3, var=1); knob(7, 200); knob(5, 10)
 state(1, 4, var=1); step(); state(1, 5, var=1); step()
 state(1, 3, var=1); expect("two lanes replayed in B", step(), [("post", [5, 10]), ("post", [7, 200])])
 state(1, 3, var=0); expect("A slot of lane 5 still intact", step(), [("post", [5, 100])])
-state(0, 0); knob(5, 1)
-state(1, 3); expect("knob while stopped erases its lane", step(), [])
+def erase(i):
+    """The erase gesture of the build: CLEAR held + knob (default), knob while stopped (mode, diag)."""
+    if HOLD: state(1, 7, rec=2, clear=1)
+    else:    state(0, 0)
+    knob(i, 1)
+erase(5)
+state(1, 3); expect("erase gesture erases the lane", step(), [])
 state(1, 3, var=1); expect("erase covers A and B", step(), [("post", [7, 200])])
 state(1, 3); expect("out-of-range control id passes through", knob(60, 1), [("orig_knob", [0x1234, 60, 1])])
 state(0, 3); expect("stopped: no replay", step(), [])
@@ -137,8 +145,18 @@ if not DIAG:
     state(1, 3, rec=3); expect("record off: knob neither overwrites nor holds the lane", step(), [("post", [5, 100])])
     state(0, 0, rec=2); knob(5, 1)
     state(1, 3); expect("stopped, record off: lane not erased", step(), [("post", [5, 100])])
-    state(0, 0, rec=0); knob(5, 1)
-    state(1, 3); expect("stopped, record on: lane erased", step(), [])
+    if HOLD:
+        state(0, 0, rec=0); knob(5, 1)
+        state(1, 3); expect("stopped, TR-REC held: lane not erased (erase is CLEAR)", step(), [("post", [5, 100])])
+        state(1, 6, rec=0, clear=1); knob(5, 1)
+        state(1, 3); expect("CLEAR held while running: lane erased, nothing recorded", step(), [])
+        state(1, 6); step(); state(1, 3); expect("... and nothing recorded at step 6 either", step(), [])
+        state(1, 3); knob(5, 100); state(1, 4); step(); state(1, 5); step()
+        state(0, 0, rec=2, clear=1); knob(5, 1)
+        state(1, 3); expect("CLEAR held while stopped: lane erased", step(), [])
+    else:
+        state(0, 0, rec=0); knob(5, 1)
+        state(1, 3); expect("stopped, record on: lane erased", step(), [])
 else:
     state(1, 8, rec=2, mode=4); knob(11, 77)
     state(1, 9, rec=2, mode=4); step(); state(1, 10); step()

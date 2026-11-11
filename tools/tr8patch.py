@@ -30,7 +30,7 @@ NOP_W = bytes.fromhex("aff30080")
 
 PATCHES = {
     "motion": {
-        "doc": "Motion recording prototype (docs/MOTION.md)",
+        "doc": "Motion recording: hold TR-REC to record, hold CLEAR to erase (docs/MOTION.md)",
         "payload": "patches/motion/payload.json",
         # free regions the payload may use, and ranges that must stay untouched
         "allowed": [(0x60011150, 0x60011464), (0x60011488, 0x60011BB6)],
@@ -48,9 +48,9 @@ PATCHES = {
 # Diagnostic variant: same sites, payload built with -DMOTION_DIAG (records whatever the mode).
 PATCHES["motion-diag"] = dict(PATCHES["motion"], doc="Motion recording, diagnostic build without mode conditions",
                               payload="patches/motion/payload_diag.json")
-# Record only while the TR-REC button is held.
-PATCHES["motion-hold"] = dict(PATCHES["motion"], doc="Motion recording, record while TR-REC is held",
-                              payload="patches/motion/payload_hold.json")
+# Older rule: record while TR-REC mode is active, erase by turning a knob while stopped.
+PATCHES["motion-mode"] = dict(PATCHES["motion"], doc="Motion recording, record in TR-REC mode (older rule)",
+                              payload="patches/motion/payload_mode.json")
 # Hardware probe: same sites, audible test of each link (patches/motion/probe.c, docs/MOTION.md).
 PATCHES["motion-probe"] = dict(PATCHES["motion"], doc="Motion hooks hardware probe (no motion, audible test)",
                                payload="patches/motion/payload_probe.json")

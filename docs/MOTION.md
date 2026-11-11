@@ -1,6 +1,6 @@
 # Motion recording patch (prototype)
 
-Status: **built and tested in emulation only. Never run on a real TR-8.**
+Status: **works on a real TR-8** (record while TR-REC is held, hardware test 5). Erase with CLEAR held: test 6 pending. RAM only, one global buffer.
 
 ## Use
 
@@ -15,28 +15,32 @@ The patcher takes the user's own Roland file. It refuses anything other than the
 
 ## Builds
 
-| `--patch` | "Record on" means | Status on the unit |
-|---|---|---|
-| `motion` (default) | TR-REC mode is active (HMI Setup[0] == 0) | Not tested since the hook fix |
-| `motion-hold` | The TR-REC button (id 0x11) is **held** (`FUN_60013168(0x11)`) | **Works (test 5)** |
-| `motion-diag` | Always | Works (test 4) |
-| `motion-probe` | No motion: audible test of each link | Not needed so far |
+| `--patch` | Record | Erase | Status on the unit |
+|---|---|---|---|
+| `motion` (default) | **TR-REC held** while running (`FUN_60013168(0x11)`) | **CLEAR held** + knob, running or stopped (`FUN_60013168(0x1C)`) | Record works (test 5, was `motion-hold`); CLEAR erase: test 6 pending |
+| `motion-mode` | TR-REC mode active (HMI Setup[0] == 0) while running | Knob while stopped in TR-REC mode | Not tested since the hook fix |
+| `motion-diag` | Always while running | Knob while stopped | Works (test 4) |
+| `motion-probe` | No motion: audible test of each link | - | Not needed so far |
 
 ## Behaviour
 
 | Situation | Result |
 |---|---|
-| Record on, sequencer running, you move a knob or fader | Its value is stored at the current step for that control |
+Default build (`motion`):
+
+| Situation | Result |
+|---|---|
+| Hold TR-REC, sequencer running, move a knob or fader | Its value is stored at the current step for that control |
 | Next pass of the pattern | The stored values are replayed at their steps |
-| Record on, you move a control that has motion | Recording overwrites; replay of that control pauses for 2 steps after each touch |
-| Record on, sequencer stopped, you move a control | The motion of that control is erased (A and B) |
-| Record off, you move a control | Normal live change only: nothing is recorded or erased, and the motion continues to replay |
+| Hold TR-REC, move a control that has motion | Recording overwrites; replay of that control pauses for 2 steps after each touch |
+| Hold CLEAR, move a control (running or stopped) | The motion of that control is erased (A and B). The knob still changes the sound. CLEAR wins if both buttons are held |
+| No button held, move a control | Normal live change only: nothing is recorded or erased, and the motion continues to replay |
 | Power off | All motion is lost (RAM only) |
 
 - 49 controls (36 knobs, 11 level controls, 2 others), 16 steps x 2 variations (A/B) each.
 - One global motion buffer: it is **not** stored per pattern. Changing pattern keeps the same motion.
-- Default build: "record on" = HMI Setup parameter 0 (database object `0x60149F38`, global id `0x2A`) must be 0. The payload reads it with the firmware getter `FUN_6001B12E(0x60149F38, 0)`. Evidence: the mode buttons 0x11-0x16 in `FUN_6001961E` set it to 0-5; the step clear function `FUN_600192BA` only works in modes 0 and 3; the MIDI note input in `FUN_60004D8C` records notes into the pattern only in mode 3 (INST REC). So 0 = TR-REC, 3 = INST REC.
-- Hold build: "record on" = `FUN_60013168(0x11)`, the button-held bitmap (FINDINGS, "Panel buttons"). Test 5 confirmed that 0x11 is the TR-REC button.
+- `motion-mode` build: "record on" = HMI Setup parameter 0 (database object `0x60149F38`, global id `0x2A`) must be 0. The payload reads it with the firmware getter `FUN_6001B12E(0x60149F38, 0)`. Evidence: the mode buttons 0x11-0x16 in `FUN_6001961E` set it to 0-5; the step clear function `FUN_600192BA` only works in modes 0 and 3; the MIDI note input in `FUN_60004D8C` records notes into the pattern only in mode 3 (INST REC). So 0 = TR-REC, 3 = INST REC.
+- Default build: record = `FUN_60013168(0x11)`, erase = `FUN_60013168(0x1C)`: the button-held bitmap (FINDINGS, "Panel buttons"). Test 5 confirmed that 0x11 is TR-REC. 0x1C = CLEAR comes from the code (CLEAR + instrument button clears a row); test 6 will confirm it.
 - Since test 4 the panel boot mode (`0x6007E574`) and the knob redirect flag (`0x6007E580`) are not tested any more: they belong to the `FUN_6001446A` path, which normal play does not use. So motion also replays while an instrument button is held.
 
 ## How it works
@@ -54,7 +58,7 @@ The patcher takes the user's own Roland file. It refuses anything other than the
 - Once per step: `FUN_6000981E` also calls `FUN_600097DA`, so both hooked calls usually run for the same step. `motion_step` remembers the last slot (`m_last`) and replays it only once. Without this, the second echo was taken as a user move and blocked the next replays.
 - Echo filter: the replayed event comes back into `motion_knob`. A per-control "pending" flag and value lets `motion_knob` recognize it and not record it again.
 
-State read by the payload: sequencer running `0x6007E102`, step `0x6007E118`, variation `0x6012FA74`, and the record condition: Setup[0] through `FUN_6001B12E` (default build) or the TR-REC button state through `FUN_60013168` (hold build).
+State read by the payload: sequencer running `0x6007E102`, step `0x6007E118`, variation `0x6012FA74`, and the record/erase condition: TR-REC and CLEAR button state through `FUN_60013168` (default build) or Setup[0] through `FUN_6001B12E` (`motion-mode`).
 
 ## Test
 
@@ -65,7 +69,7 @@ pip install unicorn   # in a virtualenv
 python3 tests/emu_motion.py work/patched/appA.bin
 ```
 
-`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 27 scenarios pass for the default build, 27 for the hold build (`--hold`), 22 for the diagnostic build (`--diag`): record, hold, replay, echo, A/B, erase, record condition, half-step counter, once per step, and the firmware's own knob event handler calling the payload. The Setup getter and the button-held function are stubs that return the state the test selects.
+`tests/emu_motion.py` runs the payload inside the patched application image with Unicorn. The firmware functions are stubs. 30 scenarios pass for the default build, 27 for `motion-mode` (`--mode`), 22 for the diagnostic build (`--diag`): record, hold, replay, echo, A/B, erase (CLEAR held, running or stopped), record condition, half-step counter, once per step, and the firmware's own knob event handler calling the payload. The Setup getter and the button-held function are stubs that return the state the test selects.
 
 What the emulation does **not** prove: real timing, the exact meaning of the state addresses at run time, display behaviour, and whether replaying through the knob path has side effects in some screens.
 
@@ -110,7 +114,8 @@ python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion_probe.BIN --patch motion
 - Test 4 (diagnostic build `8dc6187`, no mode conditions): **motion is recorded and replayed.** The whole chain works on the unit: capture hook `0x600138C8`, running flag, half-step counter, step hooks, replay through `0x60000CC0`. So one of the conditions of the normal build is wrong: the TR-REC test (Setup[0] == 0), the panel boot mode test (`0x6007E574` <= 3) or the knob redirect test (`0x6007E580`).
 - After test 4: boot mode and redirect tests removed (wrong path, see Behaviour). Two builds for test 5: `motion` (TR-REC mode) and `motion-hold` (TR-REC held, the user's proposal). If `motion` records now, one of the removed tests was the cause; if only `motion-hold` records, the Setup[0] value is wrong.
 - Test 5 (`motion-hold`, `e7c4ca4`): **works perfectly** according to the user: record while TR-REC is held, live tweak otherwise. This also proves that button id 0x11 is TR-REC and that `FUN_60013168` is the button-held state. (`motion` not reported.)
+- After test 5, at the user's request: erase = hold **CLEAR** (0x1C) and turn the knob, running or stopped. The hold rule became the default build `motion`; the old Setup[0] rule is now `motion-mode`; `motion-hold` was removed.
 
 ## Rebuild the payload
 
-`patches/motion/build.sh` (needs clang and ld.lld) compiles `motion.c` with `link.ld` and writes `payload.json` and `payload_diag.json` with the sections and symbols. The patcher only reads `payload.json`, so users need Python only.
+`patches/motion/build.sh` (needs clang and ld.lld) compiles `motion.c` with `link.ld` and writes `payload.json` (default), `payload_mode.json`, `payload_diag.json` and `payload_probe.json` (from `probe.c`) with the sections and symbols. The patcher only reads `payload.json`, so users need Python only.

@@ -12,7 +12,7 @@ This repository contains no Roland code. You download the official update from R
 | Container, compression, module checks | Decoded; a module can be rebuilt (`tr8fw.py pack`) |
 | Boot loader, updater, recovery path | Decoded; boot checks nothing, the updater is never rewritten |
 | Sequencer engine, knob path, TR-REC mode flag | Located (FINDINGS 2) |
-| Motion recording | Prototype patch; **diagnostic build records and replays on the unit (test 4)**; **`motion-hold` (record while TR-REC is held) works on the unit (test 5)** |
+| Motion recording | Prototype patch; **diagnostic build records and replays on the unit (test 4)**; **works on the unit: hold TR-REC to record (test 5)**; hold CLEAR to erase: test 6 pending |
 | 32/64-step patterns | Assessed only (FEASIBILITY A): hard |
 
 ## Documents
@@ -33,7 +33,7 @@ python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_motion.BIN
 
 Then follow [docs/UPDATE.md](docs/UPDATE.md): back up, rename the output to `TR8_UPD.BIN`, flash with step [1] held at power-on. Only Python 3 is needed.
 
-In TR-REC, with the pattern running, knob and fader moves are recorded per step (16 steps x A/B) and replayed. In TR-REC with the sequencer stopped, moving a control erases its motion. Motion is kept in RAM only.
+Hold TR-REC while the pattern runs: knob and fader moves are recorded per step (16 steps x A/B) and replayed. Hold CLEAR and turn a control: its motion is erased. Motion is kept in RAM only.
 
 ## Analysis quick start
 

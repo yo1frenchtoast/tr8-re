@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rebuild payload.json, payload_diag.json (no mode conditions), payload_hold.json (TR-REC held) and payload_probe.json (hardware probe, probe.c).
+# Rebuild payload.json, payload_diag.json (no mode conditions), payload_mode.json (record in TR-REC mode) and payload_probe.json (hardware probe, probe.c).
 # Needs clang + ld.lld (LLVM). The patcher itself does not.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -13,8 +13,8 @@ build() {   # $1 = output suffix, $2 = source, $3.. = extra clang flags
 }
 build "" motion.c
 build _diag motion.c -DMOTION_DIAG
-build _hold motion.c -DMOTION_HOLD
+build _mode motion.c -DMOTION_MODE
 build _probe probe.c
 llvm-objdump -d --triple=thumbv7m motion.elf > motion.lst
 rm -f motion*.o
-echo "payload.json, payload_diag.json, payload_hold.json, payload_probe.json updated"
+echo "payload.json, payload_diag.json, payload_mode.json, payload_probe.json updated"

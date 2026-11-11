@@ -52,12 +52,12 @@ Do these checks in this order. Note the result of each one.
 |---|---|---|
 | 1 | Switch on after the update | Normal start, patterns and kits present |
 | 2 | Play a pattern, do not touch knobs | Normal sound and timing |
-| 3 | TR-REC on, pattern running, turn one knob (for example BD decay) during a few steps, then release it | On the next passes the knob movement is replayed at the same steps |
-| 4 | Turn the same knob again while running | New values overwrite the old ones at those steps |
-| 5 | Stop, turn that knob | Its motion is erased; next play has no motion on it |
-| 6 | Record motion, switch to another mode (INST PLAY, INST REC), turn the knob | Live change only; the motion continues to play and is not changed |
+| 3 | Pattern running, hold TR-REC, turn one knob (for example BD decay) during a few steps, then release both | On the next passes the knob movement is replayed at the same steps |
+| 4 | Hold TR-REC and turn the same knob again while running | New values overwrite the old ones at those steps |
+| 5 | Hold CLEAR and turn that knob (running or stopped) | Its motion is erased; other knobs keep theirs |
+| 6 | Turn a knob that has motion without holding any button | Live change only; the motion continues to play and is not changed |
 | 7 | Record on variation A, then play B | B has its own motion (empty at first) |
-| 8 | Hold an instrument button and turn a knob | Normal behaviour (nothing recorded, no replay while held) |
+| 8 | Hold an instrument button and turn a knob | Normal behaviour of that combination; nothing recorded |
 | 9 | Change pattern | The motion stays (one global buffer, by design) |
 | 10 | Switch off and on | The motion is gone (RAM only, by design) |
 

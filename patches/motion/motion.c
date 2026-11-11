@@ -2,13 +2,12 @@
  * TR-8 v1.61 motion recording prototype (RAM only, one global motion buffer).
  *
  * Rules:
- *  - "Record on" depends on the build:
- *      default        TR-REC mode is active (HMI Setup parameter 0 == 0)
- *      -DMOTION_HOLD  the TR-REC button (id 0x11) is held (FUN_60013168)
- *      -DMOTION_DIAG  always (diagnostic build)
- *  - Record on, sequencer running + knob moved  -> value stored at the current step of that lane.
- *  - Record on, sequencer stopped + knob moved  -> that control's lane is erased.
- *  - Record off: the knob acts as usual (live tweak), the motion is kept and still replayed.
+ *  - Default build (works on the unit, hardware test 5):
+ *      TR-REC (button 0x11) held + sequencer running + knob moved -> value stored at the current step.
+ *      CLEAR  (button 0x1C) held + knob moved (running or not)    -> that control's lane is erased.
+ *  - -DMOTION_MODE: record while TR-REC mode is active (HMI Setup[0] == 0); erase = knob moved
+ *    while stopped in TR-REC mode. -DMOTION_DIAG: record always; erase = knob moved while stopped.
+ *  - Otherwise the knob acts as usual (live tweak), the motion is kept and still replayed.
  *  - On each step, every lane with a value at this step is replayed by posting the same
  *    event the ADC scan posts ({0x0B, id, value}), so the normal knob path applies it.
  *  - A lane is not replayed for 2 steps after the user touched its knob (no fight while recording).
@@ -48,7 +47,8 @@ typedef int      (*held_fn)(unsigned id);
 #define HMI_SETUP ((void *)0x60149F38)    /* HMI Setup database object                        */
 #define MODE_TR_REC 0                     /* Setup[0]: 0 TR-REC, 3 INST REC (FUN_6001961e)    */
 #define BTN_HELD  ((held_fn)0x60013169)   /* FUN_60013168: 1 while button id is held          */
-#define BTN_TR_REC 0x11                   /* button that sets Setup[0] = 0                    */
+#define BTN_TR_REC 0x11                   /* TR-REC button (confirmed, hardware test 5)       */
+#define BTN_CLEAR  0x1C                   /* CLEAR button (clear-row modifier in FUN_6001961E)*/
 
 /* Large table in the second cave region; everything else in the first one. */
 __attribute__((section(".cave_b"))) uint8_t m_val[NCTRL][NSLOT];
@@ -67,10 +67,19 @@ static inline int rec_on(void)
 {
 #if defined(MOTION_DIAG)
     return 1;
-#elif defined(MOTION_HOLD)
-    return BTN_HELD(BTN_TR_REC);
-#else
+#elif defined(MOTION_MODE)
     return SETUP_GET(HMI_SETUP, 0, 0) == MODE_TR_REC;
+#else
+    return BTN_HELD(BTN_TR_REC);
+#endif
+}
+
+static inline int erase_on(void)
+{
+#if defined(MOTION_DIAG) || defined(MOTION_MODE)
+    return !SEQ_RUNNING && rec_on();
+#else
+    return BTN_HELD(BTN_CLEAR);
 #endif
 }
 
@@ -83,16 +92,14 @@ int motion_knob(int screen, const int16_t *ev)
             m_pend[id] = 0;                       /* echo of our own playback event */
         } else {
             m_pend[id] = 0;
-            if (!rec_on()) {
-                /* record off: live tweak only, keep the motion */
-            } else if (SEQ_RUNNING) {
+            if (erase_on()) {
+                m_mask[id] = 0;                   /* erase this lane (A and B) */
+            } else if (SEQ_RUNNING && rec_on()) {
                 int s = cur_slot();
                 m_val[id][s] = (uint8_t)value;
                 m_mask[id] |= 1u << s;
                 m_hold[id] = 2;
-            } else {
-                m_mask[id] = 0;                   /* stopped: erase this lane */
-            }
+            }                                     /* else live tweak only, keep the motion */
         }
     }
     return ORIG_KNOB(screen, ev);
