@@ -4,8 +4,8 @@ Give each instrument its own last step, like the polyrhythm mode of some other d
 An instrument with length L plays its steps 1..L in a loop, independent of the pattern length.
 
 Status: **works on a real TR-8**: playback (hardware test 1), the panel gesture (hardware
-test 2) and the step LEDs (hardware test 3). New: the lengths are saved with each pattern
-(hardware test 4 to do). To get motion as well, use the `motion-poly` patch
+test 2), the step LEDs (hardware test 3) and the lengths saved with each pattern (hardware
+test 4). To get motion as well, use the `motion-poly` patch
 ([COMBO.md](COMBO.md)).
 
 ## Use
@@ -140,7 +140,7 @@ Set CH to 3 steps (LAST STEP + CH + pad 3).
 | 4 | Hold LAST STEP + CH, press pad 6 | CH length 6: steps 1-6 green |
 | 5 | Release CH, keep LAST STEP | Back to the pattern view (at the next redraw) [hyp] |
 
-## Hardware test 4 (lengths saved per pattern): to do
+## Hardware test 4 (lengths saved per pattern): passed
 
 Use a pattern you can change (for example pattern 16). Flash the build, then:
 
@@ -177,4 +177,6 @@ Use a pattern you can change (for example pattern 16). Flash the build, then:
   red; 0x2A is green, 0 blinks while playing). Then simplified to the firmware's own look: all
   steps of the length green, no red step.
 - Lengths saved per pattern in unused Ptn2 parameters (ids `0x12B`-`0x135`), emulation tests
-  pass. Hardware test 4 to do.
+  pass.
+- Hardware test 4 (2026-11-12, saved lengths): passed. Lengths follow the pattern on pattern
+  change, survive power off, LOFF is saved too, flams and weak accent unchanged.

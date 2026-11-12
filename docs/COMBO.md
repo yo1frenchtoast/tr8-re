@@ -59,7 +59,7 @@ the next features.
 | 4 | Poly test 2 (gesture) and test 3 (step LEDs) of [POLY.md](POLY.md) | As with the poly patch |
 | 5 | CH at 3 steps + record a BD decay motion | Both at the same time, no interference |
 | 6 | Save a pattern (TR-REC, write), USB backup | Works (the memory pool is 64 KB smaller) |
-| 7 | Switch off and on | Motion gone (RAM only), lengths kept with their pattern ([POLY.md](POLY.md) test 4), unit starts normally |
+| 7 | Switch off and on | Motion gone (RAM only), lengths kept with their pattern (tested, [POLY.md](POLY.md) test 4), unit starts normally |
 
 If the unit does not start at all, the pool move is the first suspect: recover with step [1] at
 power-on and the official file.
