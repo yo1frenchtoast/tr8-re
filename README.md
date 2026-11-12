@@ -31,8 +31,8 @@ accepts.
 
 ## Use a patch
 
-The easiest way is the [web flasher](https://yo1frenchtoast.github.io/tr8-re/). To get both
-features, use the `motion-poly` patch. With Python 3 instead:
+The easiest way is the [web flasher](https://yo1frenchtoast.github.io/tr8-re/): tick one mod or
+both. When you tick both, it builds the `motion-poly` patch. With Python 3 instead:
 
 1. Download the TR-8 system program v1.61 from Roland and unzip it (`tr8_sys_v161/TR8_UPD.BIN`).
 2. Build the patched file:

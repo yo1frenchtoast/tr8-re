@@ -5,6 +5,9 @@
  "patches": {
   "motion": {
    "group": "cave",
+   "provides": [
+    "motion"
+   ],
    "status": "tested",
    "doc": "docs/MOTION.md",
    "title": {
@@ -89,6 +92,9 @@
   },
   "poly": {
    "group": "cave",
+   "provides": [
+    "poly"
+   ],
    "status": "tested",
    "doc": "docs/POLY.md",
    "title": {
@@ -193,6 +199,10 @@
   },
   "motion-poly": {
    "group": "combo",
+   "provides": [
+    "motion",
+    "poly"
+   ],
    "status": "tested",
    "doc": "docs/COMBO.md",
    "title": {

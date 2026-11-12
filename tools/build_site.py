@@ -15,24 +15,27 @@ import tr8patch
 
 ROOT = tr8patch.ROOT
 
-# What the site shows. Patches not listed here are left out of the site.
+# What the site offers. Patches not listed here are left out of the site.
+# provides: the features a patch gives. The site shows one checkbox per feature
+# (the patches that give one feature) and builds the patch whose features are
+# exactly the selected ones (motion + poly -> motion-poly).
 # group: patches of the same group cannot be combined (same free region).
 SHOWN = {
-    "motion": dict(group="cave", status="tested", doc="docs/MOTION.md",
+    "motion": dict(group="cave", provides=["motion"], status="tested", doc="docs/MOTION.md",
                    title={"en": "Motion recording", "fr": "Enregistrement de motion"},
                    text={"en": "Hold TR-REC and move a knob or fader while the pattern plays: the moves are "
                                "replayed on each pass. Hold CLEAR and move a control to erase it. RAM only.",
                          "fr": "Maintenir TR-REC et tourner un potentiomètre ou un fader pendant la lecture : "
                                "les mouvements sont rejoués à chaque passage. Maintenir CLEAR et tourner pour "
                                "effacer. En RAM uniquement."}),
-    "poly": dict(group="cave", status="tested", doc="docs/POLY.md",
+    "poly": dict(group="cave", provides=["poly"], status="tested", doc="docs/POLY.md",
                  title={"en": "Per-instrument length (polyrhythm)", "fr": "Longueur par instrument (polyrythme)"},
                  text={"en": "Hold LAST STEP + an instrument button and press a pad: that instrument loops over "
                              "that many steps. The same gesture again goes back to the pattern length. RAM only.",
                        "fr": "Maintenir LAST STEP + un bouton d'instrument et appuyer sur un pad : l'instrument "
                              "boucle sur ce nombre de pas. Le même geste à nouveau revient à la longueur du "
                              "pattern. En RAM uniquement."}),
-    "motion-poly": dict(group="combo", status="tested", doc="docs/COMBO.md",
+    "motion-poly": dict(group="combo", provides=["motion", "poly"], status="tested", doc="docs/COMBO.md",
                         title={"en": "Motion + polyrhythm", "fr": "Motion + polyrythme"},
                         text={"en": "Both mods in one firmware. Their tables move to 64 KB of RAM taken from the "
                                     "system memory pool, which frees the code space. RAM only.",

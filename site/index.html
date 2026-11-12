@@ -28,15 +28,15 @@
   <section class="hero">
     <p class="kicker" data-i18n="hero.kicker">Rhythm performer · system v1.61</p>
     <h1 data-i18n="hero.title">New features for your TR-8</h1>
-    <p class="lede" data-i18n="hero.lede">Pick a mod, drop the official update file from Roland, and get a patched TR8_UPD.BIN to install with the normal update procedure. Everything happens in your browser.</p>
+    <p class="lede" data-i18n="hero.lede">Pick your mods, drop the official update file from Roland, and get a patched TR8_UPD.BIN to install with the normal update procedure. Everything happens in your browser.</p>
     <div class="steps" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
   </section>
 
   <ol class="flow">
     <li class="panel" id="step-mod">
-      <h2><span class="num">1</span><span data-i18n="mod.title">Choose a mod</span></h2>
-      <p class="hint" data-i18n="mod.hint">To get both features, pick Motion + polyrhythm.</p>
-      <div class="mods" id="mods" role="radiogroup"></div>
+      <h2><span class="num">1</span><span data-i18n="mod.title">Choose your mods</span></h2>
+      <p class="hint" data-i18n="mod.hint">Tick one mod or both: both together give one firmware that contains the two.</p>
+      <div class="mods" id="mods" role="group"></div>
     </li>
 
     <li class="panel" id="step-file">
@@ -92,7 +92,7 @@
 
 <template id="mod-card">
   <label class="mod">
-    <input type="radio" name="mod">
+    <input type="checkbox" name="mod">
     <span class="mod-head"><span class="mod-title"></span><span class="tag"></span></span>
     <span class="mod-text"></span>
     <a class="mod-doc" target="_blank" rel="noopener"></a>

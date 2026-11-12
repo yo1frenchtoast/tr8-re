@@ -4,9 +4,9 @@ const FR = {
   "nav.github": "Source",
   "hero.kicker": "Rhythm performer · système v1.61",
   "hero.title": "De nouvelles fonctions pour votre TR-8",
-  "hero.lede": "Choisissez un mod, déposez le fichier de mise à jour officiel de Roland, et récupérez un TR8_UPD.BIN modifié à installer avec la procédure de mise à jour habituelle. Tout se passe dans votre navigateur.",
-  "mod.title": "Choisir un mod",
-  "mod.hint": "Pour avoir les deux fonctions, choisissez Motion + polyrythme.",
+  "hero.lede": "Choisissez vos mods, déposez le fichier de mise à jour officiel de Roland, et récupérez un TR8_UPD.BIN modifié à installer avec la procédure de mise à jour habituelle. Tout se passe dans votre navigateur.",
+  "mod.title": "Choisir les mods",
+  "mod.hint": "Cochez un mod ou les deux : les deux ensemble donnent un seul firmware qui contient les deux.",
   "file.title": "Charger la mise à jour officielle",
   "file.hint1": "Téléchargez",
   "file.hint2": "depuis",
@@ -67,16 +67,33 @@ function setLang(l) {
   if (input) $("drop-text").textContent = `${fileName} · ${MSG[lang].loaded}`;
 }
 
+// One card per feature (patches that give a single feature). The build uses the
+// patch whose features are exactly the checked ones (motion + poly -> motion-poly).
+function features() {
+  return Object.entries(manifest.patches).filter(([, p]) => p.provides.length === 1);
+}
+
+function checked() {
+  return [...$("mods").querySelectorAll("input:checked")].map((i) => i.value);
+}
+
+function pickPatch() {
+  const want = checked().sort().join("+");
+  if (!want) return null;
+  const hit = Object.entries(manifest.patches).find(([, p]) => [...p.provides].sort().join("+") === want);
+  return hit ? hit[0] : null;
+}
+
 function renderMods() {
   if (!manifest) return;
-  const box = $("mods"), sel = box.querySelector("input:checked")?.value;
+  const box = $("mods"), sel = box.children.length ? checked() : features().map(([, p]) => p.provides[0]);
   box.replaceChildren();
-  for (const [name, p] of Object.entries(manifest.patches)) {
+  for (const [, p] of features()) {
     const card = $("mod-card").content.firstElementChild.cloneNode(true);
-    const radio = card.querySelector("input");
-    radio.value = name;
-    radio.checked = sel ? sel === name : box.children.length === 0;
-    radio.addEventListener("change", refresh);
+    const cb = card.querySelector("input");
+    cb.value = p.provides[0];
+    cb.checked = sel.includes(cb.value);
+    cb.addEventListener("change", refresh);
     card.querySelector(".mod-title").textContent = p.title[lang];
     card.querySelector(".mod-text").textContent = p.text[lang];
     const tag = card.querySelector(".tag");
@@ -100,7 +117,8 @@ function log(text, cls) {
 function refresh() {
   output = null;
   $("download").hidden = true;
-  $("build").disabled = !(manifest && input && $("accept").checked && $("mods").querySelector("input:checked"));
+  const name = manifest && pickPatch();
+  $("build").disabled = !(name && input && $("accept").checked);
 }
 
 async function takeFile(file) {
@@ -121,12 +139,12 @@ async function takeFile(file) {
 }
 
 async function run() {
-  const name = $("mods").querySelector("input:checked").value;
+  const name = pickPatch();
   $("build").disabled = true;
   $("log").replaceChildren();
   $("meter").hidden = false;
   $("meter-bar").style.width = "0";
-  log(MSG[lang].building);
+  log(`${MSG[lang].building} ${manifest.patches[name].provides.join(" + ")}`);
   try {
     await new Promise((r) => setTimeout(r, 30));            // let the page repaint first
     output = await build(input, manifest, [name], {

@@ -147,3 +147,8 @@ details p { color: var(--muted); margin: 8px 0 0; }
   .panel { padding: 18px 16px; }
   .steps { gap: 4px; }
 }
+
+/* checkbox mark on the mod cards (several mods can be ticked) */
+.mod-title { display: flex; align-items: center; gap: 10px; }
+.mod-title::before { content: ""; flex: none; width: 16px; height: 16px; border: 1px solid #4a5156; border-radius: 2px; background: #0b0d0e; }
+.mod:has(input:checked) .mod-title::before { background: var(--green) center/12px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5l2.5 2.5L10 3.5' fill='none' stroke='%230b0d07' stroke-width='2'/%3E%3C/svg%3E"); border-color: var(--green); }
