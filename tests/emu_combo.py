@@ -44,7 +44,7 @@ def expect(name, got, want):
 lo, hi = ram["addr"], ram["addr"] + ram["size"]
 expect("patch RAM is between the firmware bss and the moved pool", 0x60280988 <= lo and hi <= 0x60290988, True)
 expect("motion table and poly state are in patch RAM",
-       all(lo <= S[n] < hi for n in ("poly_len", "poly_pos")), True)
+       all(lo <= S[n] < hi for n in ("poly_pos",)), True)
 uc.mem_write(lo - 16, b"\xAA" * (hi - lo + 32))  # junk, as SDRAM after power-on
 # run the firmware's own boot function 0x6001047C up to the pool setup and our hook
 uc.reg_write(UC_ARM_REG_SP, 0x7000E000)

@@ -6,7 +6,10 @@
 poly_trig calls the firmware's real step trigger FUN_600262F2; only its far callees (sound
 engine thunks, message queue, float helpers) are stubs. Its return value (bit i = instrument i
 fired) shows which instruments play at each step.
-The LAST STEP gesture is tested through the firmware's own button handler FUN_6001961E.
+The LAST STEP gesture is tested through the firmware's own button handler FUN_6001961E, and
+the length is written by the firmware's own Ptn2 setter FUN_6001D432 (parameter context,
+range check, write, change notification); only the message post and the observer call at
+the end are stubs, and the test checks that the notification is the one of a flam edit.
 """
 import struct, sys, json, os
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_HOOK_CODE
@@ -23,6 +26,7 @@ uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.mem_map(0x60000000, 0x00400000)
 uc.mem_write(0x60000000, app)
 uc.mem_map(0x70000000, 0x10000)
+uc.mem_map(0x20000000, 0x10000)                # on-chip RAM: tick counter read by FUN_60010166
 RET = 0x7000F000
 uc.mem_write(RET, b"\xfe\xe7")
 
@@ -37,8 +41,8 @@ pr = lambda i: r32(P + 4 * i)
 log = []
 held = set()                                   # buttons held (FUN_60013168)
 STUBS = {0x6001774E: "led", 0x6001B736: "ptn_get", 0x6001B280: "f", 0x60013168: "held", 0x6001B8D6: "set_last", 0x60015980: "text", 0x6001B12E: "setup_get",
-         0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6000F9E0: "msg", 0x6000FA2C: "msg",
-         0x6000FA20: "msg", 0x60053F38: "f", 0x60053B40: "f", 0x600522E4: "range", 0x600521E8: "f"}
+         0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6004FB34: "f", 0x6000066E: "f",
+         0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f", 0x600522E4: "range", 0x600521E8: "f"}
 during = []                                    # callbacks run at the first engine call
 def hook(uc, addr, size, _):
     if addr in STUBS:
@@ -57,6 +61,8 @@ def hook(uc, addr, size, _):
             ret = 15                               # pattern LAST = step 16
         elif name == "set_last":
             log.append(("set_last", r1))
+        elif name == "notify":                     # FUN_60010148(observers, {2, group})
+            log.append(("notify", tuple(uc.mem_read(r1, 2))))
         elif name == "text":
             log.append(("text", bytes(uc.mem_read(r1, 4)).decode()))
         uc.reg_write(UC_ARM_REG_R0, ret)
@@ -100,7 +106,10 @@ def play(n, flam=0):
 def fired(masks, inst):
     return [t for t, m in enumerate(masks) if m >> inst & 1]
 
-expect("no length set at boot", list(uc.mem_read(S["poly_len"], 11)), [0] * 11)
+# Lengths live in the current pattern's Ptn2 values (bank 0 slot 0), index 4 + i = id 0x12B + i
+PTN2 = 0x60146930
+lens = lambda: [r32(PTN2 + 4 * (4 + i)) for i in range(11)]
+expect("no length set at boot", lens(), [0] * 11)
 
 # LAST STEP gesture through the firmware button handler FUN_6001961E(ctx, button id)
 LASTSTEP = 0x1A
@@ -112,15 +121,15 @@ def pad(n, *buttons):
     call(0x6001961E, 0x70002000, n - 1)
     held.clear()
     return list(log)
-lens = lambda: list(uc.mem_read(S["poly_len"], 11))
+NOTE = ("notify", (2, 0x21))                   # change notification of group 0x21 (flams)
 expect("LAST STEP + pad: pattern last step, as before", pad(12, LASTSTEP), [("set_last", 11)])
 expect("pad alone: nothing set", pad(12), [])
-expect("LAST STEP + CH + pad 3: CH length 3, shown", pad(3, LASTSTEP, INSTBTN(CH)), [("text", "L  3")])
+expect("LAST STEP + CH + pad 3: CH length 3, shown", pad(3, LASTSTEP, INSTBTN(CH)), [NOTE, ("text", "L  3")])
 expect("... pattern last step untouched, lengths", lens(), [0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0])
-expect("LAST STEP + RS + pad 5", pad(5, LASTSTEP, INSTBTN(RS)), [("text", "L  5")])
+expect("LAST STEP + RS + pad 5", pad(5, LASTSTEP, INSTBTN(RS)), [NOTE, ("text", "L  5")])
 expect("RS button is 0x27 (hardware test 2)", (INSTBTN(RS), lens()[RS], lens()[HC]), (0x27, 5, 0))
-expect("LAST STEP + BD + SD + pad 12: both set", pad(12, LASTSTEP, INSTBTN(BD), INSTBTN(SD)), [("text", "L 12")])
-expect("same gesture again: back to the pattern length", pad(12, LASTSTEP, INSTBTN(BD), INSTBTN(SD)), [("text", "LOFF")])
+expect("LAST STEP + BD + SD + pad 12: both set", pad(12, LASTSTEP, INSTBTN(BD), INSTBTN(SD)), [NOTE, NOTE, ("text", "L 12")])
+expect("same gesture again: back to the pattern length", pad(12, LASTSTEP, INSTBTN(BD), INSTBTN(SD)), [NOTE, NOTE, ("text", "LOFF")])
 expect("lengths after the gestures", lens(), [0, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0])
 
 # Step LEDs of the LAST STEP view, through the firmware's own FUN_60016386
@@ -197,5 +206,19 @@ expect("flam at step 3: CH flam follows its own head", mm >> CH & 1, 1)
 mm = call(S["poly_trig"], P, 3, 1)
 expect("flam does not advance the heads", mm >> CH & 1, 1)
 expect("flam does not move the firmware position", pr(POS), 3)
+
+# Pattern change: the firmware copies the new pattern's values into slot 0; the player follows
+setup()
+w32(PTN2 + 4 * (4 + CH), 0); w32(PTN2 + 4 * (4 + RS), 0); w32(PTN2 + 4 * (4 + BD), 3)
+pw(POS, 15)
+m = play(12)
+expect("other pattern (BD 3, CH/RS off): BD every 3 steps", fired(m, BD), [0, 3, 6, 9])
+expect("other pattern: CH follows the pattern", fired(m, CH), [0])
+w32(PTN2 + 4 * (4 + BD), 0xFFFF)
+m = play(16)
+expect("value out of 1..16 (0xFFFF): follows the pattern (steps 12..27)", fired(m, BD), [0, 4, 8, 12])
+w32(PTN2 + 4 * (4 + BD), 0)
+expect("no other Ptn2 value touched (weak accent, flams, other spare ids)",
+       [r32(PTN2 + 4 * k) for k in list(range(4)) + list(range(15, 40))], [0] * 29)
 
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)

@@ -34,7 +34,7 @@ const FR = {
   "faq.q3": "La mise à jour s'arrête sur l'erreur 6",
   "faq.a3": "Le fichier sur le lecteur n'est pas celui construit ici (somme de contrôle). Reconstruisez-le, recopiez-le, et vérifiez qu'il n'y a rien d'autre sur le lecteur.",
   "faq.q4": "Où sont mes mouvements ou mes longueurs après un redémarrage ?",
-  "faq.a4": "Pour l'instant, les deux mods gardent leurs données en RAM uniquement : elles sont perdues à l'extinction.",
+  "faq.a4": "Les longueurs sont sauvegardées avec chaque pattern. Les mouvements de motion restent en RAM pour l'instant : ils sont perdus à l'extinction.",
   "foot.affil": "Projet non officiel, sans lien avec Roland Corporation ni approuvé par elle. TR-8 est une marque de Roland Corporation.",
   "foot.license": "Licence MIT. Aucun code Roland n'est inclus : la page modifie le fichier que vous fournissez.",
   "foot.docs": "Documentation et source",

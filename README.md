@@ -24,7 +24,7 @@ accepts.
 | Boot loader, updater, recovery path | Decoded; recovery confirmed in use |
 | Sequencer, controls, buttons, panel mode, sound parameter path | Mapped ([docs/FINDINGS.md](docs/FINDINGS.md)) |
 | **Motion recording** | **Works on a real TR-8**: hold TR-REC to record, hold CLEAR to erase. RAM only, one global buffer |
-| **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. RAM only ([docs/POLY.md](docs/POLY.md)) |
+| **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. Saved with each pattern (hardware test pending) ([docs/POLY.md](docs/POLY.md)) |
 | **Motion + per-instrument length together** | **Works on a real TR-8** ([docs/COMBO.md](docs/COMBO.md)) |
 | Web flasher | Same output as `tr8patch.py`, byte for byte (`tests/site_check.mjs`) |
 | Per-pattern saved motion, 32/64-step patterns | Assessed ([docs/FEASIBILITY.md](docs/FEASIBILITY.md)) |

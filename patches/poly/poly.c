@@ -1,5 +1,5 @@
 /*
- * TR-8 v1.61 per-instrument pattern length ("polyrhythm"), RAM only.
+ * TR-8 v1.61 per-instrument pattern length ("polyrhythm"), saved with each pattern.
  *
  * Panel: hold LAST STEP + an instrument button and press step pad n -> that instrument loops
  * over n steps. The same gesture with the same pad again -> back to the pattern length.
@@ -28,15 +28,27 @@
  *   poly_last replaces "bl FUN_6001B8D6" at 0x60019A10 (step pad pressed with LAST STEP held);
  *   poly_led  replaces "bl FUN_6001774E" at 0x60016438 (step LED loop of the LAST STEP view).
  *
+ * Storage: the length of instrument i is the Ptn2 parameter of index TR8_PTN2_SPARE + i
+ * (global id 0x12B + i), one of the unnamed pattern parameters that the firmware stores
+ * with every pattern but never uses. The gesture writes it with the firmware's own Ptn2
+ * setter, so the pattern is saved like after any edit; the player reads the current
+ * pattern's value from RAM. Values outside 1..16 mean "follow the pattern".
+ *
  * Instrument order: BD SD LT MT HT RS HC CH OH CC RC.
  */
 #include "tr8_v161.h"
 
 #define NI 11
 
-uint8_t poly_len[NI];                             /* 0 = follow the pattern, else 1..16 */
 uint8_t poly_pos[NI];
 uint8_t poly_reset = 1;
+
+/* Length of instrument i in the current pattern: 0 = follow the pattern, else 1..16. */
+static int len(int i)
+{
+    uint32_t v = TR8_PTN2_CUR[TR8_PTN2_SPARE + i];
+    return v <= 16 ? (int)v : 0;
+}
 
 static const uint8_t rows[3] = { TR8_PL_INST, TR8_PL_ACC, TR8_PL_FLAM };
 
@@ -45,7 +57,7 @@ static const uint8_t rows[3] = { TR8_PL_INST, TR8_PL_ACC, TR8_PL_FLAM };
 static void swap(volatile uint32_t *p, int s, uint32_t *saved, int back)
 {
     for (int i = 0; i < NI; i++) {
-        if (!poly_len[i])
+        if (!len(i))
             continue;
         for (int k = 0; k < 3; k++) {
             volatile uint32_t *m = &p[rows[k] + i];
@@ -69,7 +81,8 @@ void poly_last(void *obj, int pad)
     for (int i = 0; i < NI; i++) {
         if (TR8_BTN_HELD(TR8_BTN_INST(i)) != 1)
             continue;
-        l = poly_len[i] = (poly_len[i] == n) ? 0 : n;
+        l = (len(i) == n) ? 0 : n;
+        TR8_PTN2_SET(0, TR8_PTN2_SPARE + i, l);
     }
     if (l < 0) {                                  /* no instrument held: pattern last step */
         TR8_FN_SET_LAST(obj, pad);
@@ -85,7 +98,7 @@ void poly_last(void *obj, int pad)
 void poly_led(int led, unsigned colour)
 {
     for (int i = 0; i < NI; i++) {
-        int l = poly_len[i];
+        int l = len(i);
         if (!l || TR8_BTN_HELD(TR8_BTN_INST(i)) != 1)
             continue;
         int u = led - TR8_LED_STEP(0);
@@ -112,7 +125,7 @@ uint32_t poly_trig(volatile uint32_t *p, int step, int flam)
             s = (s >= (int)p[TR8_PL_LAST]) ? 0 : s + 1;   /* what the firmware will do */
             for (i = 0; i < NI; i++) {
                 int n = poly_pos[i] + 1;
-                poly_pos[i] = (poly_reset || n >= poly_len[i]) ? 0 : n;
+                poly_pos[i] = (poly_reset || n >= len(i)) ? 0 : n;
             }
             poly_reset = 0;
         }

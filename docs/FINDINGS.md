@@ -149,8 +149,33 @@ Parameter descriptors: 0x1C-byte records at `0x6005EF4E` (148 entries):
 
 A pattern stores 16-bit step masks only: **no per-step parameter data**.
 
-Storage: `TR8_PTN` = 16 slots x 0x50 bytes, `TR8_KIT` = 16 slots x 0x42 bytes, in a 128 KB user
-area (`TR8_USERAREA.BIN`; USB backup/restore at `0x60011DBE` / `0x60011E2E`). `FUN_600113B2`
+USB backup: `TR8_PTN` = 16 patterns x 0x50 named parameters, `TR8_KIT` = 16 kits x 0x42 named
+parameters, written as text (`name=value`) by `FUN_600110A4` from the descriptor table; unnamed
+ids are not in it. The user flash is a 128 KB area (`TR8_USERAREA.BIN`; USB backup/restore at
+`0x60011DBE` / `0x60011E2E`).
+
+Parameter areas (`prm_mgr`; area table `0x6005EB0C`, 16 bytes each: first id, count, slots, ?):
+
+| Area | Ids | Content | Bank 0 (RAM) | Bank 1 (factory, ROM) |
+|---|---|---|---|---|
+| 0 | 0x00-0x29 | | `0x60143C6C`, 2 slots | |
+| 1 | 0x2A-0x88 | Setup / system | `0x60143DBC`, 1 slot | |
+| 2 | 0x89-0x8B | | `0x60143F38`, 17 slots | `0x600556E4` |
+| 3 | 0x8C-0xC2 | Kit | `0x60144004`, 17 slots | `0x60055864` |
+| 4 | 0xC3-0xFA | Ptn | `0x60144EA0`, 17 slots | `0x600581A4` |
+| 5 | 0xFB-0x126 | Levels, 0x106-0x11B per-instrument values, 0x11C-0x126 unused (range -1) | `0x60145D80`, 17 slots | `0x60059DA4` |
+| 6 | 0x127-0x14E | Ptn2: weak accent, flams, 16 unnamed ids | `0x60146930`, 17 slots | `0x6005BEA4` |
+
+Bank table `0x6005D2A4` (bank x 0x40 + area x 8: base, slots). A value is a 32-bit word at
+`base + 4 * (count * slot + id - first)`. Slot 0 is the current pattern or kit; the handlers read
+it with `FUN_6000F80E(ctx, area, 0)` + `FUN_6000F844(ctx, id, &v)`. Setters (`FUN_6000F9E0` init,
+`FUN_6000FA2C` -> `FUN_6000F920` write, `FUN_6000FA20` commit) check the range in the parameter
+table `0x6005D3EC` (16 bytes per id: min, max, default, flags; flags byte 2 = change group), mark
+the group and notify (`FUN_60010148`), which leads to the save. `prm_storage_sub.cpp`
+(`FUN_6000FD28`, `FUN_6000FE80`) copies whole areas between slots and to flash
+(`FUN_60010E92`; `storage\sf_bios.cpp` stores RAM ranges in 256-byte journaled pages).
+Ptn2 unnamed ids `0x127`, `0x128`, `0x12B`-`0x138` are read by no code and are 0 in all factory
+patterns; the poly patch uses `0x12B`-`0x135` (docs/POLY.md "Storage"). `FUN_600113B2`
 dumps the factory patterns as C text (`data_fact_ptn.inc`), a developer function.
 
 Low-level access: `FUN_6000F80E(ctx, area, n)` then `FUN_6000F844(ctx, id, &out)` reads a value by

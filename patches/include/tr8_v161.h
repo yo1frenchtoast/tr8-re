@@ -110,6 +110,20 @@ typedef int (*tr8_get_fn)(void *db, int idx, int def);
 typedef void (*tr8_set_fn)(void *db, int idx, int value, int sub);
 #define TR8_HMI_SET ((tr8_set_fn)0x600186FB)                    /* [code] FUN_600186FA          */
 
+/* Ptn2 database (area 6, global ids 0x127..0x14E, FINDINGS section 6): weak accent, flams,
+ * and 16 unnamed ids that no code reads (0x127, 0x128, 0x12B..0x138; 0 in all factory
+ * patterns). Each pattern stores the whole area in the user flash, so these ids are saved
+ * with the pattern. Index n = global id 0x127 + n.
+ * Values of the current pattern (RAM, bank 0 slot 0; the firmware copies a pattern in and
+ * out of this slot when it changes patterns): */
+#define TR8_PTN2_CUR   ((volatile uint32_t *)0x60146930)        /* [code] table 0x6005D2A4      */
+/* Set Ptn2 index idx of the current pattern like a panel edit: range check, then the
+ * pattern is marked changed and saved by the firmware. Asserts (hangs) if out of range
+ * (0..65535 for the unnamed ids). db is not used. */
+typedef void (*tr8_ptn2_set_fn)(void *db, int idx, int value);
+#define TR8_PTN2_SET   ((tr8_ptn2_set_fn)0x6001D433)            /* [code] FUN_6001D432          */
+#define TR8_PTN2_SPARE 4      /* [code] first unnamed index after WEAK_ACC1/2: ids 0x12B..0x138 */
+
 /* Setup[0] = panel mode: 0 TR-REC, 3 INST REC (others not identified). */
 #define TR8_SETUP_MODE 0                                        /* [code]                       */
 

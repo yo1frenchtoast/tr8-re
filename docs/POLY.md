@@ -3,9 +3,10 @@
 Give each instrument its own last step, like the polyrhythm mode of some other drum machines.
 An instrument with length L plays its steps 1..L in a loop, independent of the pattern length.
 
-Status: **works on a real TR-8**: playback (hardware test 1) and the panel gesture (hardware
-test 2). RAM only: the
-lengths are lost at power off. Cannot be combined with the motion patch (same free region).
+Status: **works on a real TR-8**: playback (hardware test 1), the panel gesture (hardware
+test 2) and the step LEDs (hardware test 3). New: the lengths are saved with each pattern
+(hardware test 4 to do). To get motion as well, use the `motion-poly` patch
+([COMBO.md](COMBO.md)).
 
 ## Use
 
@@ -22,9 +23,11 @@ Flash as described in [UPDATE.md](UPDATE.md) (back up first).
 | Hold LAST STEP + several instrument buttons, press a pad | All of them get that length |
 | Hold LAST STEP, press a pad (no instrument button) | Normal: sets the pattern length |
 | Hold LAST STEP + an instrument that has a length | The step LEDs show that instrument like the pattern-length view: steps inside its length green, its play position blinking while playing, the other steps off |
-| Power off | All lengths are lost (all instruments follow the pattern again) |
+| Change pattern | The lengths of that pattern apply |
+| Power off and on | The lengths are kept |
 
-The lengths are global, not per pattern: changing pattern keeps them.
+Each pattern has its own lengths. They are saved like any other edit of the pattern (the TR-8
+saves pattern edits automatically). A pattern that was never given a length plays as before.
 
 ## Behaviour
 
@@ -65,9 +68,32 @@ call; else it sets the lengths and shows the result with `FUN_60015980`.
 position (blinks), 0x2A = inside the length (green, the pattern-length colour), 0x2D = off. The firmware redraws the step LEDs
 when an instrument button or a pad is pressed (flag bit 0x4).
 
-Code: `patches/poly/poly.c`, about 660 bytes in `0x60011150`-`0x60011464`.
-Emulation test: `tests/emu_poly.py` runs the firmware's own `FUN_600262F2` through the hook, and
-the gesture through the firmware's own button handler `FUN_6001961E`.
+### Storage
+
+A pattern is a set of parameters in three areas (FINDINGS section 6). Area 6, "Ptn2", has 40
+ids `0x127`-`0x14E`: weak accent, flams, and 16 ids without a name (`0x127`, `0x128`,
+`0x12B`-`0x138`). No code reads these 16 ids (they appear only in the Ptn2 index table
+`FUN_6001D2CA` and as assert line numbers), and they are 0 in all 16 factory patterns. The
+firmware copies and saves whole areas, so these ids are kept in the user flash with each
+pattern.
+
+The length of instrument i is id `0x12B + i` (Ptn2 index `4 + i`). Values outside 1..16 mean
+"follow the pattern", so 0 (factory, cleared pattern) changes nothing.
+
+- Write: `poly_last` calls the firmware's Ptn2 setter `FUN_6001D432(db, 4 + i, n)`, the function
+  the panel uses for a flam edit. It checks the range (0..65535), writes the current pattern
+  slot and sends the change notification of group 0x21 (flams), which leads to the normal save.
+- Read: the player reads the value of the current pattern in RAM: bank 0, slot 0 of area 6, at
+  `0x60146930 + 4 * (id - 0x127)` (table `0x6005D2A4`). The firmware copies a pattern into this
+  slot when it changes patterns.
+- The USB backup (`TR8_PTN`) writes named parameters only, so it does not contain the lengths
+  [code].
+
+Code: `patches/poly/poly.c`, about 700 bytes in `0x60011150`-`0x60011464`.
+Emulation test: `tests/emu_poly.py` runs the firmware's own `FUN_600262F2` through the hook,
+the gesture through the firmware's own button handler `FUN_6001961E`, and the write through
+the firmware's own setter (only the message post and the observer call are stubs; the test
+checks that the notification is the flam one).
 
 ## Hardware test 1 (fixed lengths RS 5, CH 3): all checks as expected
 
@@ -114,12 +140,26 @@ Set CH to 3 steps (LAST STEP + CH + pad 3).
 | 4 | Hold LAST STEP + CH, press pad 6 | CH length 6: steps 1-6 green |
 | 5 | Release CH, keep LAST STEP | Back to the pattern view (at the next redraw) [hyp] |
 
+## Hardware test 4 (lengths saved per pattern): to do
+
+Use a pattern you can change (for example pattern 16). Flash the build, then:
+
+| # | Action | Expected |
+|---|---|---|
+| 1 | Select a pattern. Set CH to 3 (LAST STEP + CH + pad 3). Play | CH every 3 steps, as before |
+| 2 | Select another pattern | Its instruments follow the pattern (no length) |
+| 3 | Select the first pattern again | CH every 3 steps again |
+| 4 | Wait a few seconds, switch off, switch on, select that pattern | CH every 3 steps |
+| 5 | LAST STEP + CH: step LEDs | Steps 1-3 green |
+| 6 | LAST STEP + CH + pad 3 (off), switch off and on | CH follows the pattern |
+| 7 | Flams and weak accent of that pattern | Unchanged |
+| 8 | Optional: USB backup then restore | Patterns OK. Lengths after restore: note what you see |
+
 ## Limitations and next steps
 
-1. Save the lengths per pattern (11 bytes; same storage problem as motion).
-2. More code space, to combine with motion.
-3. The step LEDs show the pattern position, not the head of the selected instrument.
-4. Flam timing: the delayed flam hit uses the heads of the last advance, which is right if it
+1. The USB backup (`TR8_PTN`) does not contain the lengths [code].
+2. The step LEDs show the pattern position, not the head of the selected instrument.
+3. Flam timing: the delayed flam hit uses the heads of the last advance, which is right if it
    always lands before the next step [hyp].
 
 ## History
@@ -136,3 +176,5 @@ Set CH to 3 steps (LAST STEP + CH + pad 3).
 - Hardware test 3 (2026-11-12, step LEDs): passed with the last step in red (colour 1, confirmed
   red; 0x2A is green, 0 blinks while playing). Then simplified to the firmware's own look: all
   steps of the length green, no red step.
+- Lengths saved per pattern in unused Ptn2 parameters (ids `0x12B`-`0x135`), emulation tests
+  pass. Hardware test 4 to do.

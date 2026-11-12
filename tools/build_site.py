@@ -31,17 +31,19 @@ SHOWN = {
     "poly": dict(group="cave", provides=["poly"], status="tested", doc="docs/POLY.md",
                  title={"en": "Per-instrument length (polyrhythm)", "fr": "Longueur par instrument (polyrythme)"},
                  text={"en": "Hold LAST STEP + an instrument button and press a pad: that instrument loops over "
-                             "that many steps. The same gesture again goes back to the pattern length. RAM only.",
+                             "that many steps. The same gesture again goes back to the pattern length. Saved with "
+                             "each pattern.",
                        "fr": "Maintenir LAST STEP + un bouton d'instrument et appuyer sur un pad : l'instrument "
                              "boucle sur ce nombre de pas. Le même geste à nouveau revient à la longueur du "
-                             "pattern. En RAM uniquement."}),
+                             "pattern. Sauvegardé avec chaque pattern."}),
     "motion-poly": dict(group="combo", provides=["motion", "poly"], status="tested", doc="docs/COMBO.md",
                         title={"en": "Motion + polyrhythm", "fr": "Motion + polyrythme"},
                         text={"en": "Both mods in one firmware. Their tables move to 64 KB of RAM taken from the "
-                                    "system memory pool, which frees the code space. RAM only.",
+                                    "system memory pool, which frees the code space. Lengths saved with each pattern, "
+                                    "motion in RAM only.",
                               "fr": "Les deux mods dans un seul firmware. Leurs tables passent dans 64 Ko de RAM "
-                                    "pris au pool mémoire du système, ce qui libère la place pour le code. En "
-                                    "RAM uniquement."}),
+                                    "pris au pool mémoire du système, ce qui libère la place pour le code. Les "
+                                    "longueurs sont sauvegardées avec chaque pattern, motion en RAM uniquement."}),
 }
 
 def main():

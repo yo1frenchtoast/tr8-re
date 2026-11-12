@@ -21,7 +21,7 @@ space is zero-initialised data, which does not need to be in the image at all.
 |---|---|---|
 | Motion code + `.data` | `0x60011150`-`0x60011463` (region A) | about 340 bytes |
 | Poly code + RAM init + `.data` | `0x60011488`-`0x60011BB5` (region B) | about 670 bytes |
-| All zero-initialised data (motion table, masks, poly lengths and heads) | **patch RAM** `0x60280A00` | 1936 bytes |
+| All zero-initialised data (motion table, masks, poly heads) | **patch RAM** `0x60280A00` | 1936 bytes |
 
 **Patch RAM.** The RTOS memory pool starts right after the firmware bss, at `0x60280988`. The
 patch moves its start to `0x60290988` (literal at `0x600104A8`), so the 64 KB below it belong to
@@ -59,7 +59,7 @@ the next features.
 | 4 | Poly test 2 (gesture) and test 3 (step LEDs) of [POLY.md](POLY.md) | As with the poly patch |
 | 5 | CH at 3 steps + record a BD decay motion | Both at the same time, no interference |
 | 6 | Save a pattern (TR-REC, write), USB backup | Works (the memory pool is 64 KB smaller) |
-| 7 | Switch off and on | Motion and lengths gone (RAM only), unit starts normally |
+| 7 | Switch off and on | Motion gone (RAM only), lengths kept with their pattern ([POLY.md](POLY.md) test 4), unit starts normally |
 
 If the unit does not start at all, the pool move is the first suspect: recover with step [1] at
 power-on and the official file.
