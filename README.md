@@ -1,8 +1,12 @@
 # tr8-re
 
 Reverse engineering of the Roland TR-8 firmware (system program v1.61) and a patcher that adds
-new features to it. The first feature is **motion recording**: hold TR-REC and turn a knob, and
-the TR-8 plays the movement back with the pattern.
+new features to it: **motion recording** (hold TR-REC and turn a knob: the TR-8 plays the
+movement back with the pattern) and **per-instrument length** (each instrument loops over its
+own number of steps, for polyrhythms).
+
+**Web flasher: <https://yo1frenchtoast.github.io/tr8-re/>**. Pick a mod, drop Roland's official
+update, download the patched `TR8_UPD.BIN`. Everything runs in the browser.
 
 This repository contains **no Roland code**. You download the official update from Roland; the
 patcher checks that it is exactly v1.61 and writes a modified copy that the TR-8's own updater
@@ -20,20 +24,24 @@ accepts.
 | Boot loader, updater, recovery path | Decoded; recovery confirmed in use |
 | Sequencer, controls, buttons, panel mode, sound parameter path | Mapped ([docs/FINDINGS.md](docs/FINDINGS.md)) |
 | **Motion recording** | **Works on a real TR-8**: hold TR-REC to record, hold CLEAR to erase. RAM only, one global buffer |
+| **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. RAM only ([docs/POLY.md](docs/POLY.md)) |
+| Web flasher | Same output as `tr8patch.py`, byte for byte (`tests/site_check.mjs`) |
 | Per-pattern saved motion, 32/64-step patterns | Assessed ([docs/FEASIBILITY.md](docs/FEASIBILITY.md)) |
 
-## Use the motion patch
+## Use a patch
 
-Needs Python 3 only.
+The easiest way is the [web flasher](https://yo1frenchtoast.github.io/tr8-re/). The two patches
+cannot be combined yet (they use the same free memory). With Python 3 instead:
 
 1. Download the TR-8 system program v1.61 from Roland and unzip it (`tr8_sys_v161/TR8_UPD.BIN`).
 2. Build the patched file:
    ```sh
-   python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_motion.BIN
+   python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_motion.BIN               # motion
+   python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_poly.BIN --patch poly   # lengths
    ```
 3. Back up your patterns and kits, then flash `TR8_UPD_motion.BIN` renamed to `TR8_UPD.BIN`
    with Roland's normal procedure: [docs/UPDATE.md](docs/UPDATE.md).
-4. How to use it: [docs/MOTION.md](docs/MOTION.md).
+4. How to use them: [docs/MOTION.md](docs/MOTION.md), [docs/POLY.md](docs/POLY.md).
 
 ## Write your own feature
 

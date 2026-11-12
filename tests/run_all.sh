@@ -23,3 +23,9 @@ run motion-mode  patched_mode  emu_motion.py --mode
 run motion-diag  patched_diag  emu_motion.py --diag
 run motion-probe patched_probe emu_probe.py
 run poly       patched_poly  emu_poly.py
+# Web flasher: same output as tr8patch.py (needs Node 18+; skipped without it)
+if command -v node > /dev/null; then
+    $PY -I tools/build_site.py > /dev/null
+    git diff --quiet site/patches.json 2> /dev/null || echo "note: site/patches.json changed, commit it with the payloads"
+    printf '%-14s ' "site"; node tests/site_check.mjs "$IN" work/TR8_UPD_motion.BIN work/TR8_UPD_poly.BIN | tail -1
+fi

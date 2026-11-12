@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TR-8 Mod Flasher</title>
+<meta name="description" content="Add features to the Roland TR-8 v1.61 firmware in your browser. Unofficial, your file never leaves your computer.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23111'/%3E%3Crect x='6' y='13' width='4' height='6' fill='%23e5322d'/%3E%3Crect x='12' y='13' width='4' height='6' fill='%23f08a24'/%3E%3Crect x='18' y='13' width='4' height='6' fill='%23f2d230'/%3E%3Crect x='24' y='13' width='4' height='6' fill='%23a6f20f'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-row">
+    <a class="brand" href="./"><span class="brand-mark" aria-hidden="true"></span>TR-8 <b>MOD</b> FLASHER</a>
+    <nav>
+      <a href="https://github.com/yo1frenchtoast/tr8-re" data-i18n="nav.github">Source</a>
+      <div class="lang" role="group" aria-label="Language">
+        <button type="button" data-lang="en">EN</button><button type="button" data-lang="fr">FR</button>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <p class="kicker" data-i18n="hero.kicker">Rhythm performer · system v1.61</p>
+    <h1 data-i18n="hero.title">New features for your TR-8</h1>
+    <p class="lede" data-i18n="hero.lede">Pick a mod, drop the official update file from Roland, and get a patched TR8_UPD.BIN to install with the normal update procedure. Everything happens in your browser.</p>
+    <div class="steps" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  </section>
+
+  <ol class="flow">
+    <li class="panel" id="step-mod">
+      <h2><span class="num">1</span><span data-i18n="mod.title">Choose a mod</span></h2>
+      <p class="hint" data-i18n="mod.hint">One mod at a time: both use the same free memory in the firmware.</p>
+      <div class="mods" id="mods" role="radiogroup"></div>
+    </li>
+
+    <li class="panel" id="step-file">
+      <h2><span class="num">2</span><span data-i18n="file.title">Load the official update</span></h2>
+      <p class="hint"><span data-i18n="file.hint1">Download</span> <code>tr8_sys_v161.zip</code> <span data-i18n="file.hint2">from</span> <a href="https://www.roland.com/us/support/by_product/tr-8/updates_drivers/9d8e26ad-8810-479e-84d7-13d3f1362497/" data-i18n="file.roland">Roland's TR-8 support page</a><span data-i18n="file.hint3">, then drop the zip or the TR8_UPD.BIN inside it here.</span></p>
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept=".zip,.bin,.BIN">
+        <span class="drop-main" id="drop-text" data-i18n="file.drop">Drop tr8_sys_v161.zip or TR8_UPD.BIN, or click to browse</span>
+        <span class="drop-sub" data-i18n="file.privacy">The file is read on this page only. Nothing is uploaded and no Roland firmware is provided here.</span>
+      </label>
+    </li>
+
+    <li class="panel" id="step-build">
+      <h2><span class="num">3</span><span data-i18n="build.title">Build</span></h2>
+      <label class="check"><input type="checkbox" id="accept"><span data-i18n="build.accept">I backed up my patterns and kits (USB backup), I keep the official file to go back, and I flash at my own risk.</span></label>
+      <div class="actions">
+        <button type="button" class="btn primary" id="build" disabled data-i18n="build.button">Build TR8_UPD.BIN</button>
+        <button type="button" class="btn" id="download" hidden data-i18n="build.download">Download TR8_UPD.BIN</button>
+      </div>
+      <div class="meter" id="meter" hidden><div id="meter-bar"></div></div>
+      <pre class="log" id="log" aria-live="polite"></pre>
+    </li>
+
+    <li class="panel" id="step-install">
+      <h2><span class="num">4</span><span data-i18n="install.title">Install on the TR-8</span></h2>
+      <ol class="howto">
+        <li data-i18n="install.s1">Hold step pad [1] and switch the TR-8 on. The instrument buttons BD to RC flash.</li>
+        <li data-i18n="install.s2">Connect the USB cable. A drive named TR-8 appears.</li>
+        <li data-i18n="install.s3">Copy only TR8_UPD.BIN to the root of the drive (the name must be exactly TR8_UPD.BIN).</li>
+        <li data-i18n="install.s4">Eject the drive, then unplug the USB cable. SD and step [2] flash.</li>
+        <li data-i18n="install.s5">Press step pad [2]. Do not switch off while it writes.</li>
+        <li data-i18n="install.s6">When BD to RC and all step pads flash, it is done: switch off and on again.</li>
+      </ol>
+      <p class="note" data-i18n="install.back">To go back, do the same with the official TR8_UPD.BIN from the zip.</p>
+    </li>
+  </ol>
+
+  <section class="faq">
+    <h2 data-i18n="faq.title">Something went wrong?</h2>
+    <details><summary data-i18n="faq.q1">The page refuses my file</summary><p data-i18n="faq.a1">Only the official system v1.61 is supported, unmodified. Download the zip again from Roland. A file already patched by this page is refused on purpose: always start from the official file.</p></details>
+    <details><summary data-i18n="faq.q2">The TR-8 does not start, or behaves badly</summary><p data-i18n="faq.a2">Hold step pad [1] while you switch on: the updater starts before the firmware, even a modified one. Install the official TR8_UPD.BIN, then restore your backup if needed.</p></details>
+    <details><summary data-i18n="faq.q3">The update stops with error 6</summary><p data-i18n="faq.a3">The file on the drive is not the one built here (checksum). Build it again, copy it again, and check that nothing else is on the drive.</p></details>
+    <details><summary data-i18n="faq.q4">Where are my motion moves or lengths after a restart?</summary><p data-i18n="faq.a4">Both mods keep their data in RAM only for now: it is lost at power off.</p></details>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p data-i18n="foot.affil">Unofficial project, not affiliated with or endorsed by Roland Corporation. TR-8 is a trademark of Roland Corporation.</p>
+    <p><span data-i18n="foot.license">MIT licence. No Roland code is included: the page patches the file you provide.</span> <a href="https://github.com/yo1frenchtoast/tr8-re" data-i18n="foot.docs">Documentation and source</a></p>
+  </div>
+</footer>
+
+<template id="mod-card">
+  <label class="mod">
+    <input type="radio" name="mod">
+    <span class="mod-head"><span class="mod-title"></span><span class="tag"></span></span>
+    <span class="mod-text"></span>
+    <a class="mod-doc" target="_blank" rel="noopener"></a>
+  </label>
+</template>
+<script type="module" src="app.js"></script>
+</body>
+</html>

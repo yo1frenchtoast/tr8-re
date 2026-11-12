@@ -194,3 +194,7 @@ Two kinds of tests are needed:
 4. Write `tests/emu_<name>.py` with unit and integration scenarios; add it to `tests/run_all.sh`.
 5. Write `docs/<NAME>.md`: use, behaviour, how it works, limitations, history.
 6. Flash, test, record the result.
+7. To offer it on the web flasher, add it to `SHOWN` in `tools/build_site.py`, run
+   `python3 -I tools/build_site.py` and commit `site/patches.json`. `tests/run_all.sh` checks that
+   the site builds the same file as `tr8patch.py` (needs Node). Pushing `site/` to `main`
+   publishes it (`.github/workflows/pages.yml`).
