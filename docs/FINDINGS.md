@@ -248,6 +248,9 @@ sends (section 10).
 | 48 | EXSC | External input side-chain | 0 | 13 |
 
 The control meanings come from the names and the TR-8 panel; the CC column comes from the code.
+All CC numbers in this table agree with the official Roland TR-8 MIDI Implementation Chart
+(v1.11, Nov. 18, 2014). The chart also lists CC 68, 69, 70 (SCATTER TYPE, DEPTH, SW) as receive
+only; the scatter controls are not in these 49 ids [open: where the firmware reads them].
 BD tune (id 8) is [unit] (used in the motion tests).
 
 ### Control path (normal play)
