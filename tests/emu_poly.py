@@ -6,6 +6,7 @@
 poly_trig calls the firmware's real step trigger FUN_600262F2; only its far callees (sound
 engine thunks, message queue, float helpers) are stubs. Its return value (bit i = instrument i
 fired) shows which instruments play at each step.
+The LAST STEP gesture is tested through the firmware's own button handler FUN_6001961E.
 """
 import struct, sys, json, os
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_HOOK_CODE
@@ -31,14 +32,28 @@ w32 = lambda a, v: uc.mem_write(a, struct.pack("<I", v & 0xFFFFFFFF))
 pw = lambda i, v: w32(P + 4 * i, v)
 pr = lambda i: r32(P + 4 * i)
 
-STUBS = {0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6000F9E0: "msg", 0x6000FA2C: "msg",
+log = []
+held = set()                                   # buttons held (FUN_60013168)
+STUBS = {0x60013168: "held", 0x6001B8D6: "set_last", 0x60015980: "text", 0x6001B12E: "setup_get",
+         0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6000F9E0: "msg", 0x6000FA2C: "msg",
          0x6000FA20: "msg", 0x60053F38: "f", 0x60053B40: "f", 0x600522E4: "range", 0x600521E8: "f"}
 during = []                                    # callbacks run at the first engine call
 def hook(uc, addr, size, _):
     if addr in STUBS:
-        if STUBS[addr] == "engine" and during:
+        name = STUBS[addr]
+        r0, r1 = uc.reg_read(UC_ARM_REG_R0), uc.reg_read(UC_ARM_REG_R1)
+        ret = 0
+        if name == "engine" and during:
             during.pop(0)()
-        uc.reg_write(UC_ARM_REG_R0, 0)
+        elif name == "held":
+            ret = 1 if r0 in held else 0
+        elif name == "setup_get":
+            ret = 0xFFFFFFFF if r1 == 3 else 0     # Setup[3] == -1: the firmware's own pad condition
+        elif name == "set_last":
+            log.append(("set_last", r1))
+        elif name == "text":
+            log.append(("text", bytes(uc.mem_read(r1, 4)).decode()))
+        uc.reg_write(UC_ARM_REG_R0, ret)
         uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR) | 1)
 uc.hook_add(UC_HOOK_CODE, hook)
 
@@ -79,7 +94,28 @@ def play(n, flam=0):
 def fired(masks, inst):
     return [t for t, m in enumerate(masks) if m >> inst & 1]
 
-expect("lengths in the test build", list(uc.mem_read(S["poly_len"], 11)), [0, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0])
+expect("no length set at boot", list(uc.mem_read(S["poly_len"], 11)), [0] * 11)
+
+# LAST STEP gesture through the firmware button handler FUN_6001961E(ctx, button id)
+LASTSTEP = 0x1A
+INSTBTN = lambda i: 0x21 + {RS: HC, HC: RS}.get(i, i)   # buttons 0x26 = HC, 0x27 = RS [unit]
+def pad(n, *buttons):
+    """Press step pad n (1..16) with these buttons held; returns what the stubs logged."""
+    held.clear(); held.update(buttons); log.clear()
+    w32(0x6007ECE8 + 0xC, 0)
+    call(0x6001961E, 0x70002000, n - 1)
+    held.clear()
+    return list(log)
+lens = lambda: list(uc.mem_read(S["poly_len"], 11))
+expect("LAST STEP + pad: pattern last step, as before", pad(12, LASTSTEP), [("set_last", 11)])
+expect("pad alone: nothing set", pad(12), [])
+expect("LAST STEP + CH + pad 3: CH length 3, shown", pad(3, LASTSTEP, INSTBTN(CH)), [("text", "L  3")])
+expect("... pattern last step untouched, lengths", lens(), [0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0])
+expect("LAST STEP + RS + pad 5", pad(5, LASTSTEP, INSTBTN(RS)), [("text", "L  5")])
+expect("RS button is 0x27 (hardware test 2)", (INSTBTN(RS), lens()[RS], lens()[HC]), (0x27, 5, 0))
+expect("LAST STEP + BD + SD + pad 12: both set", pad(12, LASTSTEP, INSTBTN(BD), INSTBTN(SD)), [("text", "L 12")])
+expect("same gesture again: back to the pattern length", pad(12, LASTSTEP, INSTBTN(BD), INSTBTN(SD)), [("text", "LOFF")])
+expect("lengths after the gestures", lens(), [0, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0])
 
 setup()
 pw(POS, 15)                                    # as after a stop: the next advance plays step 0

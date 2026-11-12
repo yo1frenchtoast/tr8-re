@@ -85,7 +85,16 @@ typedef int (*tr8_held_fn)(unsigned id);
 #define TR8_BTN_STEP(n)   ((n) - 1)   /* [code] step buttons 1..16 = ids 0x00..0x0F            */
 #define TR8_BTN_TR_REC    0x11        /* [unit]                                                */
 #define TR8_BTN_CLEAR     0x1C        /* [unit]                                                */
-#define TR8_BTN_INST_FIRST 0x1D       /* [code] instrument buttons 0x1D..0x2B                  */
+#define TR8_BTN_INST_FIRST 0x1D       /* [code] row buttons 0x1D..0x2B: AC RV EC SC, then 11 instruments */
+/* Button of instrument i (player order BD SD LT MT HT RS HC CH OH CC RC). The buttons are
+ * 0x21..0x2B in the same order except RS and HC, which are swapped: 0x26 = HC, 0x27 = RS [unit]. */
+#define TR8_BTN_INST(i)   (0x21 + ((i) == 5 ? 6 : (i) == 6 ? 5 : (i)))
+#define TR8_BTN_LAST_STEP 0x1A        /* [unit] held + step pad -> FUN_6001B8D6 sets LAST_A/B  */
+
+/* Set the pattern's last step (Ptn index 2 + variation) to pad 0..15. Called only from the
+ * button handler FUN_6001961E at 0x60019A10, when a step pad is pressed with LAST STEP held. */
+typedef void (*tr8_set_last_fn)(void *obj, int pad);
+#define TR8_FN_SET_LAST ((tr8_set_last_fn)0x6001B8D7)            /* [code] FUN_6001B8D6          */
 
 /* ---------------------------------------------------------------- parameters */
 

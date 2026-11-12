@@ -1,5 +1,9 @@
 /*
- * TR-8 v1.61 per-instrument pattern length ("polyrhythm"), test build: fixed lengths, RAM only.
+ * TR-8 v1.61 per-instrument pattern length ("polyrhythm"), RAM only.
+ *
+ * Panel: hold LAST STEP + an instrument button and press step pad n -> that instrument loops
+ * over n steps. The same gesture with the same pad again -> back to the pattern length.
+ * LAST STEP + pad without an instrument button keeps its normal meaning (pattern length).
  *
  * Each instrument with a length L != 0 has its own play head that advances once per step and
  * wraps after L steps, independent of the pattern's last step. Instruments with L = 0 follow
@@ -17,7 +21,8 @@
  * Hooks (tools/tr8patch.py):
  *   poly_trig replaces "bl FUN_600262F2" at 0x60009800, 0x6000985A, 0x60009884 (step advance)
  *             and 0x60009A50 (delayed flam trigger);
- *   poly_run  replaces "bl FUN_60026894" at 0x6000966E (start) and 0x600096AE (stop).
+ *   poly_run  replaces "bl FUN_60026894" at 0x6000966E (start) and 0x600096AE (stop);
+ *   poly_last replaces "bl FUN_6001B8D6" at 0x60019A10 (step pad pressed with LAST STEP held).
  *
  * Instrument order: BD SD LT MT HT RS HC CH OH CC RC.
  */
@@ -25,11 +30,7 @@
 
 #define NI 11
 
-#ifndef POLY_LENGTHS                              /* test lengths: RS 5 steps, CH 3 steps */
-#define POLY_LENGTHS { 0, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0 }
-#endif
-
-uint8_t poly_len[NI] = POLY_LENGTHS;              /* 0 = follow the pattern, else 1..16 */
+uint8_t poly_len[NI];                             /* 0 = follow the pattern, else 1..16 */
 uint8_t poly_pos[NI];
 uint8_t poly_reset = 1;
 
@@ -55,6 +56,25 @@ static void swap(volatile uint32_t *p, int s, uint32_t *saved, int back)
             }
         }
     }
+}
+
+void poly_last(void *obj, int pad)
+{
+    static char txt[5] = "L   ";
+    int n = pad + 1, l = -1;
+    for (int i = 0; i < NI; i++) {
+        if (TR8_BTN_HELD(TR8_BTN_INST(i)) != 1)
+            continue;
+        l = poly_len[i] = (poly_len[i] == n) ? 0 : n;
+    }
+    if (l < 0) {                                  /* no instrument held: pattern last step */
+        TR8_FN_SET_LAST(obj, pad);
+        return;
+    }
+    txt[1] = l ? ' ' : 'O';                       /* "L 12", "L  3" or "LOFF" */
+    txt[2] = l ? (l >= 10 ? '1' : ' ') : 'F';
+    txt[3] = l ? '0' + l % 10 : 'F';
+    TR8_DISPLAY_TEXT(0, txt);
 }
 
 void poly_run(void *p, int a, int run)

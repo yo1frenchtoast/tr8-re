@@ -328,8 +328,9 @@ handler is `FUN_6001961E(ctx, id)`:
 | 0x17, 0x18 | Write `VARI` = 0/1/2 (variation A, B, A+B) | hyp |
 | 0x19 | Cycles `SCALE` 0..3 | code |
 | 0x1B | Toggles Setup[0x15], may call the sequencer (`FUN_600099B6`) | unclear |
+| 0x1A | **LAST STEP** (modifier). A step pad with it held calls `FUN_6001B8D6(obj, pad)` (`0x60019A10`), which sets `LAST_A`/`LAST_B` (Ptn index 2 + variation) | **unit** (POLY.md test 2) |
 | 0x1C | **CLEAR** (modifier). With CLEAR held, an instrument button clears its row (`FUN_600193E0`); `FUN_600192BA` (clear a step) also needs it | **unit** |
-| 0x1D-0x2B | Instrument buttons (row select) | code |
+| 0x1D-0x2B | Row buttons: 0x1D-0x20 = AC RV EC SC; 0x21-0x2B = instruments BD SD LT MT HT **HC RS** CH OH CC RC: RS and HC are swapped compared with the pattern/player order (POLY.md test 2) | **unit** (RS/HC), code (others) |
 | above 0x2B | Not mapped (0x2E, 0x37 are used as modifiers somewhere) | - |
 
 ### Button held state
@@ -408,7 +409,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
    processor)?
 4. What runs on the second processor (`appB`) and over which link?
 5. LED function arguments; display text lifetime and how to keep a message visible.
-6. Button ids above 0x2B (START/STOP, PATTERN, A/B, SCALE, LAST STEP, ...).
+6. Button ids above 0x2B (START/STOP, PATTERN, ...). LAST STEP is 0x1A (section 9).
 7. The "grow the image" method (section 12) on a real unit.
 8. MIDI: the receive path (`midi\task_midi_rx.cpp`) and whether external CCs take the same path
    as `FUN_60015906`.

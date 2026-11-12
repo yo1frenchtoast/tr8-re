@@ -57,10 +57,10 @@ PATCHES["motion-mode"] = dict(PATCHES["motion"], doc="Motion recording, record i
 PATCHES["motion-probe"] = dict(PATCHES["motion"], doc="Motion hooks hardware probe (no motion, audible test)",
                                payload="patches/motion/payload_probe.json")
 
-# Per-instrument pattern length, test build with fixed lengths (patches/poly/poly.c, docs/POLY.md).
+# Per-instrument pattern length (patches/poly/poly.c, docs/POLY.md).
 # Uses the first motion region alone: cannot be combined with motion.
-PATCHES["poly-test"] = {
-    "doc": "Per-instrument length, fixed test lengths RS 5 / CH 3 (docs/POLY.md)",
+PATCHES["poly"] = {
+    "doc": "Per-instrument length: hold LAST STEP + instrument, press a pad (docs/POLY.md)",
     "payload": "patches/poly/payload.json",
     "allowed": [(0x60011150, 0x60011464)],
     "keep": [(0x60011464, 0x60011484)],
@@ -73,6 +73,7 @@ PATCHES["poly-test"] = {
         (0x60009A50, thumb_bl(0x60009A50, 0x600262F2), "poly_trig"),    # delayed flam hit
         (0x6000966E, thumb_bl(0x6000966E, 0x60026894), "poly_run"),     # sequencer start
         (0x600096AE, thumb_bl(0x600096AE, 0x60026894), "poly_run"),     # sequencer stop
+        (0x60019A10, thumb_bl(0x60019A10, 0x6001B8D6), "poly_last"),    # pad with LAST STEP held
     ],
 }
 
