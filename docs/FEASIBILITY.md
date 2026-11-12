@@ -15,9 +15,10 @@ Assessments of features that could be added. The facts behind them are in
 - **Do not modify `appB`** (second processor firmware). A bad handshake stops the boot before
   the application. It is recoverable through the updater, but there is no known reason to touch it.
 - **RAM** is not a constraint: the RTOS pool has about 29.5 MB.
-- **Code space** is: the developer dump cave is almost full after the motion patch. A larger
-  feature needs the "grow the image" method (FINDINGS section 12, designed, not tested on a unit)
-  or another dead-code region.
+- **Code space**: with `motion-poly`, about 1.6 KB of code space is left in the developer dump
+  regions, and data goes to patch RAM (64 KB taken from the RTOS pool, [COMBO.md](COMBO.md),
+  works on the unit). A larger feature needs the "grow the image" method (FINDINGS section 12,
+  not tested) or another dead-code region.
 
 ## A. Motion recording: done
 
@@ -49,7 +50,8 @@ change.
 Each instrument loops over its own number of steps (1-16). Medium difficulty, no 16-bit limit
 involved: the step trigger tests one bit per mask, so a hook swaps in the bit of each
 instrument's own head. Test build with fixed lengths **works on a real unit**; see [POLY.md](POLY.md).
-Next: a panel gesture, per-pattern storage (11 bytes), code space to combine with motion.
+Panel gesture and step LED view work on the unit. Combined with motion in `motion-poly`
+([COMBO.md](COMBO.md)), works on the unit. Next: per-pattern storage (11 bytes).
 
 ## D. Other ideas
 

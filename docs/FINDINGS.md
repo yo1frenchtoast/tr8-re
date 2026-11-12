@@ -398,6 +398,16 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
      `0x6012A2FC` (fast code, a function that returns memory bounds).
   The boot loader decompresses any size into SDRAM; the updater only checks sizes and sums.
   To be validated on a unit before use.
+- **Patch RAM by moving the pool start (used by `motion-poly`).** The pool setup `FUN_60010430`
+  (called once at boot from `0x60010482`, before the RTOS starts) reads its start from the
+  literal at `0x600104A8` and its end (`0x62000000`) from `0x600104A4`. Changing the start to
+  `0x60290988` gives 64 KB of SDRAM, `0x60280988`-`0x60290987`, that nothing else uses: no other
+  literal in the image (main or fast code) points into it [code]; **[unit]**: the `motion-poly`
+  patch runs with it (COMBO.md test 1). The other copy of `0x60280988`
+  (`0x6012A2FC`, fast code `0x01004100`) is the startup stack top returned by RVCT
+  `__user_initial_stackheap` (stack `0x60280788`-`0x60280988`), not the pool: leave it. This RAM
+  is not zeroed at boot; `patches/combo/ram.c` zeroes it before calling the pool setup. Do not
+  move the pool end instead: a table at `0x6007638E` lists SDRAM blocks up to `0x62000000`.
 - **Other dead code:** not searched systematically. Candidates: developer and test functions
   reachable only from the boot modes above 3.
 

@@ -78,6 +78,21 @@ PATCHES["poly"] = {
     ],
 }
 
+# Motion + poly together (patches/combo). Code in both developer-dump regions; tables in patch
+# RAM: the RTOS pool start moves from 0x60280988 to 0x60290988 (64 KB), zeroed by ram_init at boot.
+_motion_sites = [s for s in PATCHES["motion"]["sites"] if s[2] != "nop"]
+_poly_sites = [s for s in PATCHES["poly"]["sites"] if s[2] != "nop"]
+PATCHES["motion-poly"] = {
+    "doc": "Motion recording + per-instrument length together (docs/COMBO.md)",
+    "payload": "patches/combo/payload.json",
+    "allowed": PATCHES["motion"]["allowed"],
+    "keep": PATCHES["motion"]["keep"],
+    "sites": PATCHES["motion"]["sites"][:2] + _motion_sites + _poly_sites + [
+        (0x60010482, thumb_bl(0x60010482, 0x60010430), "ram_init"),     # pool setup: zero patch RAM first
+        (0x600104A8, struct.pack("<I", 0x60280988), struct.pack("<I", 0x60290988)),  # RTOS pool start +64 KB
+    ],
+}
+
 def load_app(img):
     m = tr8fw.parse(img, dict(tr8fw.MODULES)["appA"])
     if not m["name"].startswith("TR-8:Appli      18-0926_11:19:43"):
@@ -104,7 +119,10 @@ def apply(app, spec):
         o = addr - BASE
         if app[o:o + 4] != orig:
             sys.exit(f"unexpected bytes at 0x{addr:08x}: {app[o:o+4].hex()} (expected {orig.hex()})")
-        app[o:o + 4] = NOP_W if repl == "nop" else thumb_bl(addr, syms[repl] & ~1)
+        if isinstance(repl, bytes):                     # raw replacement (a literal)
+            app[o:o + 4] = repl
+        else:
+            app[o:o + 4] = NOP_W if repl == "nop" else thumb_bl(addr, syms[repl] & ~1)
     for r in pay["regions"]:
         a, data = r["addr"], bytes.fromhex(r["data"])
         if not any(lo <= a and a + len(data) <= hi for lo, hi in spec["allowed"]):
@@ -114,8 +132,10 @@ def apply(app, spec):
                 sys.exit(f"payload section {r['section']} overlaps a protected range")
         app[a - BASE:a - BASE + len(data)] = data
         print(f"  {r['section']:8s} 0x{a:08x} {len(data)} bytes")
+    for r in pay.get("ram", []):
+        print(f"  {r['section']:8s} 0x{r['addr']:08x} {r['size']} bytes (patch RAM, zeroed at boot)")
     for addr, _, repl in spec["sites"]:
-        print(f"  site     0x{addr:08x} -> {repl}")
+        print(f"  site     0x{addr:08x} -> {repl.hex() if isinstance(repl, bytes) else repl}")
     return app
 
 def main():

@@ -32,6 +32,13 @@ SHOWN = {
                        "fr": "Maintenir LAST STEP + un bouton d'instrument et appuyer sur un pad : l'instrument "
                              "boucle sur ce nombre de pas. Le même geste à nouveau revient à la longueur du "
                              "pattern. En RAM uniquement."}),
+    "motion-poly": dict(group="combo", status="tested", doc="docs/COMBO.md",
+                        title={"en": "Motion + polyrhythm", "fr": "Motion + polyrythme"},
+                        text={"en": "Both mods in one firmware. Their tables move to 64 KB of RAM taken from the "
+                                    "system memory pool, which frees the code space. RAM only.",
+                              "fr": "Les deux mods dans un seul firmware. Leurs tables passent dans 64 Ko de RAM "
+                                    "pris au pool mémoire du système, ce qui libère la place pour le code. En "
+                                    "RAM uniquement."}),
 }
 
 def main():
@@ -42,9 +49,10 @@ def main():
         pay = json.load(open(os.path.join(ROOT, spec["payload"])))
         out["patches"][name] = dict(
             meta,
-            sites=[{"addr": a, "orig": o.hex(), "repl": r} for a, o, r in spec["sites"]],
+            sites=[{"addr": a, "orig": o.hex(), "repl": {"bytes": r.hex()} if isinstance(r, bytes) else r}
+                   for a, o, r in spec["sites"]],
             allowed=spec["allowed"], keep=spec["keep"],
-            regions=pay["regions"], symbols=pay["symbols"])
+            regions=pay["regions"], symbols=pay["symbols"], ram=pay.get("ram", []))
     path = os.path.join(ROOT, "site", "patches.json")
     with open(path, "w") as f:
         json.dump(out, f, indent=1)

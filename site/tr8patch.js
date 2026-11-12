@@ -136,7 +136,7 @@ export function applyPatch(app, spec, log) {
     const o = s.addr - BASE, orig = unhex(s.orig);
     for (let k = 0; k < 4; k++)
       if (app[o + k] !== orig[k]) throw new PatchError(`unexpected bytes at 0x${s.addr.toString(16)} (patches cannot be combined?)`);
-    app.set(s.repl === "nop" ? NOP_W : thumbBl(s.addr, syms[s.repl] & ~1), o);
+    app.set(s.repl.bytes ? unhex(s.repl.bytes) : s.repl === "nop" ? NOP_W : thumbBl(s.addr, syms[s.repl] & ~1), o);
   }
   for (const r of spec.regions) {
     const data = unhex(r.data), a = r.addr;
@@ -147,7 +147,8 @@ export function applyPatch(app, spec, log) {
     app.set(data, a - BASE);
     log?.(`  ${r.section.padEnd(6)} 0x${a.toString(16)}  ${data.length} bytes`);
   }
-  for (const s of spec.sites) log?.(`  site   0x${s.addr.toString(16)} -> ${s.repl}`);
+  for (const r of spec.ram || []) log?.(`  ${r.section.padEnd(6)} 0x${r.addr.toString(16)}  ${r.size} bytes (patch RAM)`);
+  for (const s of spec.sites) log?.(`  site   0x${s.addr.toString(16)} -> ${s.repl.bytes ? "0x" + s.repl.bytes : s.repl}`);
 }
 
 export function pack(img, newApp, onProgress) {

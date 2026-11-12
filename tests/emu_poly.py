@@ -13,7 +13,9 @@ from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_HOOK_CODE
 from unicorn.arm_const import *
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-pay = json.load(open(os.path.join(ROOT, "patches/poly/payload.json")))
+# --payload PATH: another payload with the same symbols (patches/combo/payload.json)
+PAYLOAD = sys.argv[sys.argv.index("--payload") + 1] if "--payload" in sys.argv else "patches/poly/payload.json"
+pay = json.load(open(os.path.join(ROOT, PAYLOAD)))
 S = pay["symbols"]
 app = open(sys.argv[1], "rb").read()
 

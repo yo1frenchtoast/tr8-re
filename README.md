@@ -25,19 +25,21 @@ accepts.
 | Sequencer, controls, buttons, panel mode, sound parameter path | Mapped ([docs/FINDINGS.md](docs/FINDINGS.md)) |
 | **Motion recording** | **Works on a real TR-8**: hold TR-REC to record, hold CLEAR to erase. RAM only, one global buffer |
 | **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. RAM only ([docs/POLY.md](docs/POLY.md)) |
+| **Motion + per-instrument length together** | **Works on a real TR-8** ([docs/COMBO.md](docs/COMBO.md)) |
 | Web flasher | Same output as `tr8patch.py`, byte for byte (`tests/site_check.mjs`) |
 | Per-pattern saved motion, 32/64-step patterns | Assessed ([docs/FEASIBILITY.md](docs/FEASIBILITY.md)) |
 
 ## Use a patch
 
-The easiest way is the [web flasher](https://yo1frenchtoast.github.io/tr8-re/). The two patches
-cannot be combined yet (they use the same free memory). With Python 3 instead:
+The easiest way is the [web flasher](https://yo1frenchtoast.github.io/tr8-re/). To get both
+features, use the `motion-poly` patch. With Python 3 instead:
 
 1. Download the TR-8 system program v1.61 from Roland and unzip it (`tr8_sys_v161/TR8_UPD.BIN`).
 2. Build the patched file:
    ```sh
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_motion.BIN               # motion
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_poly.BIN --patch poly   # lengths
+   python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_both.BIN --patch motion-poly
    ```
 3. Back up your patterns and kits, then flash `TR8_UPD_motion.BIN` renamed to `TR8_UPD.BIN`
    with Roland's normal procedure: [docs/UPDATE.md](docs/UPDATE.md).
@@ -66,6 +68,7 @@ tests/run_all.sh "$F"                                # build every patch, run al
 |---|---|
 | [docs/UPDATE.md](docs/UPDATE.md) | Flash, check the version, recover, test checklist for the unit |
 | [docs/MOTION.md](docs/MOTION.md) | Motion recording: use, how it works, variants, test history |
+| [docs/COMBO.md](docs/COMBO.md) | Motion + per-instrument length together: memory layout, hardware checklist |
 | [docs/POLY.md](docs/POLY.md) | Per-instrument length (polyrhythm): test build, how it works, hardware checklist |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Guide for writing new features |
 | [docs/FINDINGS.md](docs/FINDINGS.md) | Firmware reference: file format, boot, memory map, sequencer, controls, buttons, parameters, display, code space |

@@ -6,7 +6,7 @@ const FR = {
   "hero.title": "De nouvelles fonctions pour votre TR-8",
   "hero.lede": "Choisissez un mod, déposez le fichier de mise à jour officiel de Roland, et récupérez un TR8_UPD.BIN modifié à installer avec la procédure de mise à jour habituelle. Tout se passe dans votre navigateur.",
   "mod.title": "Choisir un mod",
-  "mod.hint": "Un seul mod à la fois : les deux utilisent la même mémoire libre du firmware.",
+  "mod.hint": "Pour avoir les deux fonctions, choisissez Motion + polyrythme.",
   "file.title": "Charger la mise à jour officielle",
   "file.hint1": "Téléchargez",
   "file.hint2": "depuis",

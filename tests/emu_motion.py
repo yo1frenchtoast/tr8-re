@@ -15,7 +15,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIAG = "--diag" in sys.argv
 MODE = "--mode" in sys.argv
 HOLD = not (DIAG or MODE)                      # default build
-pay = json.load(open(os.path.join(ROOT, "patches/motion/payload%s.json" % ("_diag" if DIAG else "_mode" if MODE else ""))))
+# --payload PATH: another payload with the same symbols (patches/combo/payload.json)
+PAYLOAD = (sys.argv[sys.argv.index("--payload") + 1] if "--payload" in sys.argv
+           else "patches/motion/payload%s.json" % ("_diag" if DIAG else "_mode" if MODE else ""))
+pay = json.load(open(os.path.join(ROOT, PAYLOAD)))
 KNOB, STEP = pay["symbols"]["motion_knob"], pay["symbols"]["motion_step"]
 app = open(sys.argv[1], "rb").read()
 
