@@ -407,11 +407,12 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 
 ## 12. Code space for patches
 
-- **Developer dump cave** (used by the motion patch): `FUN_6001114E` and `FUN_600113B2` are only
+- **Developer dump cave** (used by the `motion`, `poly` and `motion-poly` patches): `FUN_6001114E` and `FUN_600113B2` are only
   called from a developer branch of the USB backup (`0x60011E00`, `0x60011E04` in `FUN_60011DBE`).
   With those two calls replaced by `nop.w`, `0x60011150`-`0x60011463` (788 bytes) and
   `0x60011488`-`0x60011BB5` (1838 bytes) are free. The literal pool `0x60011464`-`0x60011483` is
-  still used and must stay. The motion patch uses 737 + 1568 bytes.
+  still used and must stay. The motion patch uses 737 + 1568 bytes; `motion-poly` uses about
+  340 + 730 bytes, its zeroed data is in patch RAM (below).
 - **Grow the image (design, not tested on a unit).** Code appended at the end of the image
   (`0x601309E0`) would be erased, because the bss zero-fill covers `0x601264EC`-`0x60280987`.
   Instead:
@@ -419,8 +420,8 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
      `0x601309E0` and `0x60280988` are zeros and compress to about 170 KB with this LZSS; the
      application flash area has about 1.7 MB free);
   2. put the new code and data at `0x60280988` (above the bss, so it is not zeroed);
-  3. move the RTOS pool base by N: the literal `0x60280988` at `0x600104A8` (`FUN_60010430`) and at
-     `0x6012A2FC` (fast code, a function that returns memory bounds).
+  3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8` (`FUN_60010430`).
+     The other copy at `0x6012A2FC` is the startup stack top, not the pool (see the next item).
   The boot loader decompresses any size into SDRAM; the updater only checks sizes and sums.
   To be validated on a unit before use.
 - **Patch RAM by moving the pool start (used by `motion-poly`).** The pool setup `FUN_60010430`

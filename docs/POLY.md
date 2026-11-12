@@ -37,6 +37,7 @@ saves pattern edits automatically). A pattern that was never given a length play
 - Step, accent and flam of the instrument all follow its head. The global accent row (AC) and
   the weak accent follow the pattern.
 - The heads go back to step 1 when the sequencer starts or stops.
+- The lengths are per pattern: variations A and B share them.
 - When scatter is on, the instruments play as written (no length).
 
 ## How it works
@@ -153,12 +154,13 @@ Use a pattern you can change (for example pattern 16). Flash the build, then:
 | 5 | LAST STEP + CH: step LEDs | Steps 1-3 green |
 | 6 | LAST STEP + CH + pad 3 (off), switch off and on | CH follows the pattern |
 | 7 | Flams and weak accent of that pattern | Unchanged |
-| 8 | Optional: USB backup then restore | Patterns OK. Lengths after restore: note what you see |
+| 8 | Optional: USB backup then restore | Patterns OK. Lengths after restore: not reported yet |
 
 ## Limitations and next steps
 
 1. The USB backup (`TR8_PTN`) does not contain the lengths [code].
-2. The step LEDs show the pattern position, not the head of the selected instrument.
+2. In the normal view the step LEDs show the pattern position; the head of an instrument is
+   shown only while LAST STEP + that instrument are held.
 3. Flam timing: the delayed flam hit uses the heads of the last advance, which is right if it
    always lands before the next step [hyp].
 

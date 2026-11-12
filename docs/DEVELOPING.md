@@ -111,8 +111,11 @@ Rules for payload code:
 
 ### Code space
 
-The developer dump cave holds 788 + 1838 bytes and the motion patch already uses most of it.
-A new feature needs either a new free region (find dead code, replace its call sites with
+The developer dump cave holds 788 + 1838 bytes. The motion patch alone uses most of it; the
+`motion-poly` patch moves all zeroed data to 64 KB of patch RAM taken from the RTOS pool
+([COMBO.md](COMBO.md)) and leaves about 1.5 KB of code space. Data that must survive power off
+can go in unused pattern parameters, as the poly patch does ([POLY.md](POLY.md) "Storage").
+A larger feature needs either a new free region (find dead code, replace its call sites with
 `nop.w`, keep its literal pools) or the "grow the image" method, which is designed but not yet
 tested ([FINDINGS.md](FINDINGS.md) section 12). Patches that use the same region or the same
 sites cannot be combined.

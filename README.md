@@ -5,8 +5,8 @@ new features to it: **motion recording** (hold TR-REC and turn a knob: the TR-8 
 movement back with the pattern) and **per-instrument length** (each instrument loops over its
 own number of steps, for polyrhythms).
 
-**Web flasher: <https://yo1frenchtoast.github.io/tr8-re/>**. Pick a mod, drop Roland's official
-update, download the patched `TR8_UPD.BIN`. Everything runs in the browser.
+**Web flasher: <https://yo1frenchtoast.github.io/tr8-re/>**. Tick one mod or both, drop Roland's
+official update, download the patched `TR8_UPD.BIN`. Everything runs in the browser.
 
 This repository contains **no Roland code**. You download the official update from Roland; the
 patcher checks that it is exactly v1.61 and writes a modified copy that the TR-8's own updater
@@ -41,9 +41,10 @@ both. When you tick both, it builds the `motion-poly` patch. With Python 3 inste
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_poly.BIN --patch poly   # lengths
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_both.BIN --patch motion-poly
    ```
-3. Back up your patterns and kits, then flash `TR8_UPD_motion.BIN` renamed to `TR8_UPD.BIN`
+3. Back up your patterns and kits, then flash the file you built, renamed to `TR8_UPD.BIN`,
    with Roland's normal procedure: [docs/UPDATE.md](docs/UPDATE.md).
-4. How to use them: [docs/MOTION.md](docs/MOTION.md), [docs/POLY.md](docs/POLY.md).
+4. How to use them: [docs/MOTION.md](docs/MOTION.md), [docs/POLY.md](docs/POLY.md),
+   [docs/COMBO.md](docs/COMBO.md).
 
 ## Write your own feature
 
@@ -69,7 +70,7 @@ tests/run_all.sh "$F"                                # build every patch, run al
 | [docs/UPDATE.md](docs/UPDATE.md) | Flash, check the version, recover, test checklist for the unit |
 | [docs/MOTION.md](docs/MOTION.md) | Motion recording: use, how it works, variants, test history |
 | [docs/COMBO.md](docs/COMBO.md) | Motion + per-instrument length together: memory layout, hardware checklist |
-| [docs/POLY.md](docs/POLY.md) | Per-instrument length (polyrhythm): test build, how it works, hardware checklist |
+| [docs/POLY.md](docs/POLY.md) | Per-instrument length (polyrhythm): use, how it works, storage per pattern, test history |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Guide for writing new features |
 | [docs/FINDINGS.md](docs/FINDINGS.md) | Firmware reference: file format, boot, memory map, sequencer, controls, buttons, parameters, display, code space |
 | [docs/FEASIBILITY.md](docs/FEASIBILITY.md) | Assessment of further features |
@@ -81,10 +82,14 @@ tests/run_all.sh "$F"                                # build every patch, run al
 | `tools/tr8fw.py` | Update file tool: `info`, `extract` (LZSS + ELF wrappers), `pack` (recompress a module, fix size and byte-sum) |
 | `tools/tr8patch.py` | Patcher: checks the input, applies a patch, rebuilds and re-checks the file (`--list`, `--check`) |
 | `tools/elf2payload.py` | Linked payload ELF -> `payload.json` for the patcher |
+| `tools/build_site.py` | Patch table -> `site/patches.json` for the web flasher |
 | `tools/analyze.sh`, `tools/*.java` | Ghidra headless: decompile every function and list strings |
 | `patches/include/tr8_v161.h` | Known firmware addresses and functions, with confidence tags |
 | `patches/motion/` | Motion recording: `motion.c`, hardware probe `probe.c`, `link.ld`, `build.sh`, generated `payload*.json` |
-| `tests/` | Unicorn emulation tests and `run_all.sh` |
+| `patches/poly/` | Per-instrument length: `poly.c`, `link.ld`, `build.sh`, generated `payload.json` |
+| `patches/combo/` | Motion + poly: `ram.c` (patch RAM), `link.ld`, `build.sh`, generated `payload.json` |
+| `site/` | Web flasher (static page, `tr8patch.js` = JS port of the patcher) |
+| `tests/` | Unicorn emulation tests, `site_check.mjs` (web flasher = Python output) and `run_all.sh` |
 
 `firmware/`, `work/` and `analysis/` are git-ignored: they hold Roland code or output derived from
 it and must never be committed.

@@ -14,8 +14,8 @@ Assessments of features that could be added. The facts behind them are in
   the user area (back up patterns and kits).
 - **Do not modify `appB`** (second processor firmware). A bad handshake stops the boot before
   the application. It is recoverable through the updater, but there is no known reason to touch it.
-- **RAM** is not a constraint: the RTOS pool has about 29.5 MB.
-- **Code space**: with `motion-poly`, about 1.6 KB of code space is left in the developer dump
+- **RAM** is not a constraint: the RTOS pool has about 29.5 MB (29.4 MB with `motion-poly`).
+- **Code space**: with `motion-poly`, about 1.5 KB of code space is left in the developer dump
   regions, and data goes to patch RAM (64 KB taken from the RTOS pool, [COMBO.md](COMBO.md),
   works on the unit). A larger feature needs the "grow the image" method (FINDINGS section 12,
   not tested) or another dead-code region.
@@ -26,9 +26,10 @@ Works on a real unit: hold TR-REC to record, hold CLEAR to erase. See [MOTION.md
 
 **Per-pattern, saved motion** is the next step:
 
-- Storage: the `TR8_PTN` slots (16 x 0x50 bytes) are full. Motion needs its own area. Options: a
-  new region in the 128 KB user area (find the free space and the flash write functions in
-  `storage\sf_bios.cpp`), or a file on the USB storage at backup time.
+- Storage: a pattern is a set of parameters (FINDINGS section 6). Only 16 unused 16-bit
+  parameters exist per pattern (Ptn2), and the poly patch uses 11 of them. Motion needs its own
+  area. Options: a new region in the 128 KB user area (`storage\sf_bios.cpp` stores declared RAM
+  ranges; find the free space), or a file on the USB storage at backup time.
 - Size: 49 controls x 32 slots = 1568 bytes per pattern with the current layout. A sparse format
   (only controls with motion, for example 8 lanes per pattern) brings it to about 270 bytes.
 - Code: pattern change and save/load hooks, so it needs more code space (grow the image).
@@ -36,7 +37,7 @@ Works on a real unit: hold TR-REC to record, hold CLEAR to erase. See [MOTION.md
 ## B. Longer patterns (32 or 64 steps)
 
 Hard. 16-bit step masks are used everywhere: parameters (`STEP_<row>1/2`), change handlers, the
-pattern struct, the 0x50-byte storage slots, and the UI has 16 step buttons. The step engine
+pattern struct, the stored pattern parameters, and the UI has 16 step buttons. The step engine
 limit comes from `LAST_A`/`LAST_B` and the pattern struct (`FUN_600525F8`); whether the sound side
 has a limit is unknown.
 
@@ -45,13 +46,13 @@ A realistic first step: **A+B chained as one 32-step pattern**. Variation A/B al
 Check first how A+B plays today: if it already alternates A and B, a 32-step view is mostly a UI
 change.
 
-## C. Per-instrument length (polyrhythm): works (test build)
+## C. Per-instrument length (polyrhythm): done
 
 Each instrument loops over its own number of steps (1-16). Medium difficulty, no 16-bit limit
 involved: the step trigger tests one bit per mask, so a hook swaps in the bit of each
-instrument's own head. Test build with fixed lengths **works on a real unit**; see [POLY.md](POLY.md).
-Panel gesture and step LED view work on the unit. Combined with motion in `motion-poly`
-([COMBO.md](COMBO.md)), works on the unit. Next: per-pattern storage (11 bytes).
+instrument's own head. **Works on a real unit**: playback, panel gesture, step LED view, and
+lengths saved with each pattern in unused pattern parameters; see [POLY.md](POLY.md). Combined
+with motion in `motion-poly` ([COMBO.md](COMBO.md)), works on the unit.
 
 ## D. Other ideas
 

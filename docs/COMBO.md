@@ -20,8 +20,8 @@ space is zero-initialised data, which does not need to be in the image at all.
 | What | Where | Size |
 |---|---|---|
 | Motion code + `.data` | `0x60011150`-`0x60011463` (region A) | about 340 bytes |
-| Poly code + RAM init + `.data` | `0x60011488`-`0x60011BB5` (region B) | about 670 bytes |
-| All zero-initialised data (motion table, masks, poly heads) | **patch RAM** `0x60280A00` | 1936 bytes |
+| Poly code + RAM init + `.data` | `0x60011488`-`0x60011BB5` (region B) | about 730 bytes |
+| All zero-initialised data (motion table, masks, poly heads) | **patch RAM** `0x60280A00` | 1924 bytes |
 
 **Patch RAM.** The RTOS memory pool starts right after the firmware bss, at `0x60280988`. The
 patch moves its start to `0x60290988` (literal at `0x600104A8`), so the 64 KB below it belong to
@@ -32,7 +32,7 @@ section 12.
 
 The source files are the same as the single patches (`patches/motion/motion.c`,
 `patches/poly/poly.c`); only the link (`patches/combo/link.ld`) and `patches/combo/ram.c` are new.
-The space left in both regions (about 1.6 KB of code) and in patch RAM (about 62 KB) is free for
+The space left in both regions (about 1.5 KB of code) and in patch RAM (about 62 KB) is free for
 the next features.
 
 | Site | New |
@@ -58,7 +58,7 @@ the next features.
 | 3 | Motion checks 3-6 of [UPDATE.md](UPDATE.md) | As with the motion patch |
 | 4 | Poly test 2 (gesture) and test 3 (step LEDs) of [POLY.md](POLY.md) | As with the poly patch |
 | 5 | CH at 3 steps + record a BD decay motion | Both at the same time, no interference |
-| 6 | Save a pattern (TR-REC, write), USB backup | Works (the memory pool is 64 KB smaller) |
+| 6 | Edit a pattern (the TR-8 saves it automatically), USB backup | Works (the memory pool is 64 KB smaller) |
 | 7 | Switch off and on | Motion gone (RAM only), lengths kept with their pattern (tested, [POLY.md](POLY.md) test 4), unit starts normally |
 
 If the unit does not start at all, the pool move is the first suspect: recover with step [1] at
@@ -67,6 +67,8 @@ power-on and the official file.
 ## History
 
 - Built and emulated.
+- The poly lengths are now saved with each pattern (no patch RAM needed for them); see
+  [POLY.md](POLY.md) hardware test 4.
 - Hardware test 1 (2026-11-12): every check passed: normal start and play, motion and poly
   as with the single patches and at the same time, pattern save and USB backup, clean restart.
   The pool start move is safe on the unit.
