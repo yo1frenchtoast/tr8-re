@@ -58,6 +58,7 @@ tests/run_all.sh "$F"                                # build every patch, run al
 |---|---|
 | [docs/UPDATE.md](docs/UPDATE.md) | Flash, check the version, recover, test checklist for the unit |
 | [docs/MOTION.md](docs/MOTION.md) | Motion recording: use, how it works, variants, test history |
+| [docs/POLY.md](docs/POLY.md) | Per-instrument length (polyrhythm): test build, how it works, hardware checklist |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Guide for writing new features |
 | [docs/FINDINGS.md](docs/FINDINGS.md) | Firmware reference: file format, boot, memory map, sequencer, controls, buttons, parameters, display, code space |
 | [docs/FEASIBILITY.md](docs/FEASIBILITY.md) | Assessment of further features |

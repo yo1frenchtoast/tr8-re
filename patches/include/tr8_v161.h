@@ -30,6 +30,31 @@
 typedef uint64_t (*tr8_step_fn)(void *p, int step);
 #define TR8_FN_STEP ((tr8_step_fn)0x6000978F)                 /* [unit] FUN_6000978E          */
 
+/* ---------------------------------------------------------------- step player */
+
+/* Step player object (FINDINGS section 7, "Step trigger"). Word indexes into uint32_t *P. */
+#define TR8_PLAYER     ((volatile uint32_t *)0x6014A164)      /* [unit] DAT_6000991C          */
+#define TR8_PL_RUN     1      /* [unit] != 0: a trigger with step -1 advances the position   */
+#define TR8_PL_LAST    3      /* [unit] last step index (FUN_600268F4)                       */
+#define TR8_PL_ACCENT  0x20   /* [code] global accent mask (AC row)                          */
+#define TR8_PL_INST    0x21   /* [unit] + i: step mask of instrument i (BD SD LT MT HT RS HC CH OH CC RC) */
+#define TR8_PL_ACC     0x42   /* [unit] + i: accent mask of instrument i                     */
+#define TR8_PL_FLAM    0x67   /* [code] + i: flam mask of instrument i                       */
+#define TR8_PL_POS     0x66   /* [unit] current step (0..LAST)                               */
+#define TR8_PL_SCATTER 0x1DA  /* [code] BYTE offset of an s16: -1 = no scatter step order    */
+
+/* Trigger one step: step -1 = advance and play the next step, else play `step` (flam != 0:
+ * delayed flam hit, tests the flam masks). Tests bit (1 << step) of every mask.
+ * Returns bit i = instrument i fired. Called by the sequencer at 0x60009800, 0x6000985A,
+ * 0x60009884 (advance) and 0x60009A50 (flam). */
+typedef uint32_t (*tr8_trigger_fn)(volatile uint32_t *p, int step, int flam);
+#define TR8_FN_TRIGGER ((tr8_trigger_fn)0x600262F3)            /* [unit] FUN_600262F2          */
+
+/* Set the player run state: run != 0 at start (0x6000966E), 0 at stop (0x600096AE, which
+ * also sets the position to LAST so the next advance plays step 0). */
+typedef void (*tr8_player_run_fn)(void *p, int unused, int run);
+#define TR8_FN_PLAYER_RUN ((tr8_player_run_fn)0x60026895)      /* [unit] FUN_60026894          */
+
 /* ---------------------------------------------------------------- panel controls */
 
 #define TR8_NCTRL 49  /* control ids 0..48, see TR8_CTRL_* and docs/FINDINGS.md "Control ids" */

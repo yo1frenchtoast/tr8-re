@@ -57,6 +57,25 @@ PATCHES["motion-mode"] = dict(PATCHES["motion"], doc="Motion recording, record i
 PATCHES["motion-probe"] = dict(PATCHES["motion"], doc="Motion hooks hardware probe (no motion, audible test)",
                                payload="patches/motion/payload_probe.json")
 
+# Per-instrument pattern length, test build with fixed lengths (patches/poly/poly.c, docs/POLY.md).
+# Uses the first motion region alone: cannot be combined with motion.
+PATCHES["poly-test"] = {
+    "doc": "Per-instrument length, fixed test lengths RS 5 / CH 3 (docs/POLY.md)",
+    "payload": "patches/poly/payload.json",
+    "allowed": [(0x60011150, 0x60011464)],
+    "keep": [(0x60011464, 0x60011484)],
+    "sites": [
+        (0x60011E00, thumb_bl(0x60011E00, 0x6001114E), "nop"),          # dev dump 1 (frees the cave)
+        (0x60011E04, thumb_bl(0x60011E04, 0x600113B2), "nop"),          # dev dump 2 (frees the cave)
+        (0x60009800, thumb_bl(0x60009800, 0x600262F2), "poly_trig"),    # step advance (pre-step path)
+        (0x6000985A, thumb_bl(0x6000985A, 0x600262F2), "poly_trig"),    # step advance
+        (0x60009884, thumb_bl(0x60009884, 0x600262F2), "poly_trig"),    # step advance at counter 0
+        (0x60009A50, thumb_bl(0x60009A50, 0x600262F2), "poly_trig"),    # delayed flam hit
+        (0x6000966E, thumb_bl(0x6000966E, 0x60026894), "poly_run"),     # sequencer start
+        (0x600096AE, thumb_bl(0x600096AE, 0x60026894), "poly_run"),     # sequencer stop
+    ],
+}
+
 def load_app(img):
     m = tr8fw.parse(img, dict(tr8fw.MODULES)["appA"])
     if not m["name"].startswith("TR-8:Appli      18-0926_11:19:43"):

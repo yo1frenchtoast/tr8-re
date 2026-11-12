@@ -44,7 +44,14 @@ A realistic first step: **A+B chained as one 32-step pattern**. Variation A/B al
 Check first how A+B plays today: if it already alternates A and B, a 32-step view is mostly a UI
 change.
 
-## C. Other ideas
+## C. Per-instrument length (polyrhythm): works (test build)
+
+Each instrument loops over its own number of steps (1-16). Medium difficulty, no 16-bit limit
+involved: the step trigger tests one bit per mask, so a hook swaps in the bit of each
+instrument's own head. Test build with fixed lengths **works on a real unit**; see [POLY.md](POLY.md).
+Next: a panel gesture, per-pattern storage (11 bytes), code space to combine with motion.
+
+## D. Other ideas
 
 | Idea | Difficulty | Notes |
 |---|---|---|

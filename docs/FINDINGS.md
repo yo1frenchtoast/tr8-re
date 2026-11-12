@@ -202,6 +202,34 @@ State struct at `0x6007E100`:
 - `FUN_60009AF8`: 32-slot x 0x14-byte delay queue for scheduled triggers (flam, shuffle).
 - Pattern struct at `0x6012FA64`: +0x10 = current variation (0 = A, other = B) [unit], read at
   `0x6012FA74`; +0x14 / +0x18 = last step values (`FUN_600525F8`).
+  Per-row records of 6 bytes `{u16 A, u16 B, u8 mute}`: +0x20 + 4n (AC RV EC SC, no mute byte),
+  +0x30 + 6i (instrument i steps), +0x72 + 6i (accents), +0xBA + 6i (flams). Instrument order
+  BD SD LT MT HT RS HC CH OH CC RC. Read with `FUN_600528CC` / `FUN_600525D0` / `FUN_6005260A(obj, i)`:
+  the mask of the current variation, 0 if muted [code].
+
+### Step trigger
+
+The masks that play are copies in the **player object `P = 0x6014A164`** (`uint32_t` words),
+written by `FUN_6000E152` and the change handlers (setters `FUN_60026AAE`... ) [code]:
+
+| Word | Meaning |
+|---|---|
+| P[1] | run: set by `FUN_60026894(P, 0, run)` (start `0x6000966E`, stop `0x600096AE`) |
+| P[3] | last step index (`FUN_600268F4`) |
+| P[0x20] | global accent mask; P[0x4D] weak accent |
+| P[0x21 + i] | step mask of instrument i |
+| P[0x42 + i] | accent mask of instrument i |
+| P[0x66] | **play position** (step 0..last). Stop sets it to last, so the next advance plays 0 |
+| P[0x67 + i] | flam mask of instrument i |
+| byte +0x1D8, s16 +0x1DA, bytes +0x1DC | scatter: order length, index (-1 = off), step order |
+
+`FUN_600262F2(P, step, flam)` plays one step. With step -1 it advances P[0x66] (if P[1]: +1, 0
+after P[3]), then applies the scatter order. It then tests the single bit `1 << step` in every
+mask and sends the hits to the sound engine. flam != 0 (explicit step, from the delay queue at
+`0x60009A50`) also needs the flam mask. Returns bit i = instrument i fired. **[unit]**: hooking
+the calls below and swapping mask bits changes what plays (POLY.md hardware test 1).
+Callers with -1: `0x60009800`, `0x6000985A`, `0x60009884` (at counter 0, after setting P[3] to
+0, which forces step 0), `0x60026910`. This is the hook used by [POLY.md](POLY.md).
 
 ## 8. Controls (knobs and faders)
 

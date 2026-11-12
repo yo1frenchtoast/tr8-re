@@ -22,3 +22,4 @@ run motion       patched       emu_motion.py
 run motion-mode  patched_mode  emu_motion.py --mode
 run motion-diag  patched_diag  emu_motion.py --diag
 run motion-probe patched_probe emu_probe.py
+run poly-test  patched_poly  emu_poly.py
