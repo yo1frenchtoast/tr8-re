@@ -34,7 +34,7 @@ pr = lambda i: r32(P + 4 * i)
 
 log = []
 held = set()                                   # buttons held (FUN_60013168)
-STUBS = {0x60013168: "held", 0x6001B8D6: "set_last", 0x60015980: "text", 0x6001B12E: "setup_get",
+STUBS = {0x6001774E: "led", 0x6001B736: "ptn_get", 0x6001B280: "f", 0x60013168: "held", 0x6001B8D6: "set_last", 0x60015980: "text", 0x6001B12E: "setup_get",
          0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6000F9E0: "msg", 0x6000FA2C: "msg",
          0x6000FA20: "msg", 0x60053F38: "f", 0x60053B40: "f", 0x600522E4: "range", 0x600521E8: "f"}
 during = []                                    # callbacks run at the first engine call
@@ -49,6 +49,10 @@ def hook(uc, addr, size, _):
             ret = 1 if r0 in held else 0
         elif name == "setup_get":
             ret = 0xFFFFFFFF if r1 == 3 else 0     # Setup[3] == -1: the firmware's own pad condition
+        elif name == "led":
+            log.append((r0 - 0x1D, r1))
+        elif name == "ptn_get":
+            ret = 15                               # pattern LAST = step 16
         elif name == "set_last":
             log.append(("set_last", r1))
         elif name == "text":
@@ -116,6 +120,24 @@ expect("RS button is 0x27 (hardware test 2)", (INSTBTN(RS), lens()[RS], lens()[H
 expect("LAST STEP + BD + SD + pad 12: both set", pad(12, LASTSTEP, INSTBTN(BD), INSTBTN(SD)), [("text", "L 12")])
 expect("same gesture again: back to the pattern length", pad(12, LASTSTEP, INSTBTN(BD), INSTBTN(SD)), [("text", "LOFF")])
 expect("lengths after the gestures", lens(), [0, 0, 0, 0, 0, 5, 0, 3, 0, 0, 0])
+
+# Step LEDs of the LAST STEP view, through the firmware's own FUN_60016386
+PLAY, RED, IN, OFF = 0x00, 0x01, 0x2A, 0x2D      # site 0x60016438 is only in the LAST STEP loop
+def leds(*buttons, running=0, pos=None):
+    held.clear(); held.update(buttons); log.clear()
+    w32(0x60149F38 + 0x20, 0)
+    uc.mem_write(0x6007E102, bytes([running]))
+    if pos is not None:
+        uc.mem_write(S["poly_pos"] + CH, bytes([pos]))
+    call(0x60016386, 0x70003000)
+    held.clear()
+    return [c for _, c in sorted(log)]
+expect("LAST STEP alone: pattern length view as before", leds(LASTSTEP), [IN] * 16)
+expect("LAST STEP + BD (no length): pattern view", leds(LASTSTEP, INSTBTN(BD)), [IN] * 16)
+expect("LAST STEP + CH (length 3): steps 1-3 lit, rest off", leds(LASTSTEP, INSTBTN(CH)), [IN] * 3 + [OFF] * 13)
+expect("LAST STEP + RS (length 5, RS button 0x27)", leds(LASTSTEP, INSTBTN(RS)), [IN] * 5 + [OFF] * 11)
+expect("running: CH play position shown", leds(LASTSTEP, INSTBTN(CH), running=1, pos=1), [IN, PLAY, IN] + [OFF] * 13)
+uc.mem_write(0x6007E102, bytes([0]))
 
 setup()
 pw(POS, 15)                                    # as after a stop: the next advance plays step 0

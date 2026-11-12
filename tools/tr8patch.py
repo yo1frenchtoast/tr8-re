@@ -74,6 +74,7 @@ PATCHES["poly"] = {
         (0x6000966E, thumb_bl(0x6000966E, 0x60026894), "poly_run"),     # sequencer start
         (0x600096AE, thumb_bl(0x600096AE, 0x60026894), "poly_run"),     # sequencer stop
         (0x60019A10, thumb_bl(0x60019A10, 0x6001B8D6), "poly_last"),    # pad with LAST STEP held
+        (0x60016438, thumb_bl(0x60016438, 0x6001774E), "poly_led"),     # step LEDs, LAST STEP view
     ],
 }
 

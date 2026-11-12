@@ -4,6 +4,9 @@
  * Panel: hold LAST STEP + an instrument button and press step pad n -> that instrument loops
  * over n steps. The same gesture with the same pad again -> back to the pattern length.
  * LAST STEP + pad without an instrument button keeps its normal meaning (pattern length).
+ * While LAST STEP + an instrument with a length are held, the step LEDs show that instrument:
+ * steps inside its length lit (green, like the pattern length view), its play position, the
+ * rest off.
  *
  * Each instrument with a length L != 0 has its own play head that advances once per step and
  * wraps after L steps, independent of the pattern's last step. Instruments with L = 0 follow
@@ -22,7 +25,8 @@
  *   poly_trig replaces "bl FUN_600262F2" at 0x60009800, 0x6000985A, 0x60009884 (step advance)
  *             and 0x60009A50 (delayed flam trigger);
  *   poly_run  replaces "bl FUN_60026894" at 0x6000966E (start) and 0x600096AE (stop);
- *   poly_last replaces "bl FUN_6001B8D6" at 0x60019A10 (step pad pressed with LAST STEP held).
+ *   poly_last replaces "bl FUN_6001B8D6" at 0x60019A10 (step pad pressed with LAST STEP held);
+ *   poly_led  replaces "bl FUN_6001774E" at 0x60016438 (step LED loop of the LAST STEP view).
  *
  * Instrument order: BD SD LT MT HT RS HC CH OH CC RC.
  */
@@ -75,6 +79,22 @@ void poly_last(void *obj, int pad)
     txt[2] = l ? (l >= 10 ? '1' : ' ') : 'F';
     txt[3] = l ? '0' + l % 10 : 'F';
     TR8_DISPLAY_TEXT(0, txt);
+}
+
+/* Step LED loop of the LAST STEP view (FUN_60016386 runs it only while LAST STEP is held). */
+void poly_led(int led, unsigned colour)
+{
+    for (int i = 0; i < NI; i++) {
+        int l = poly_len[i];
+        if (!l || TR8_BTN_HELD(TR8_BTN_INST(i)) != 1)
+            continue;
+        int u = led - TR8_LED_STEP(0);
+        colour = (TR8_SEQ_RUNNING && u == poly_pos[i]) ? TR8_COL_PLAY
+               : u < l                                  ? TR8_COL_IN
+               :                                          TR8_COL_OFF;
+        break;
+    }
+    TR8_FN_STEP_LED(led, colour);
 }
 
 void poly_run(void *p, int a, int run)

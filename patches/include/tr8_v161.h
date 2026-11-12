@@ -125,6 +125,18 @@ typedef void (*tr8_cc_fn)(void *unused, int cc, int value);
 typedef void (*tr8_text_fn)(void *unused, const char *s);
 #define TR8_DISPLAY_TEXT ((tr8_text_fn)0x60015981)              /* [code] FUN_60015980          */
 
+/* Step LED colour: led = 0x1D + step (0..15). Colours seen in the step LED function
+ * FUN_60016386: 0 = play position, 0x2A = inside the pattern length (LAST STEP view),
+ * 0x2D = off, 1/2/3/4 = steps 1-4/5-8/9-12/13-16 in the normal view (red/orange/yellow/white
+ * groups of the panel) [code]. */
+typedef void (*tr8_step_led_fn)(int led, unsigned colour);
+#define TR8_FN_STEP_LED ((tr8_step_led_fn)0x6001774F)            /* [code] FUN_6001774E          */
+#define TR8_LED_STEP(n) (0x1D + (n))
+#define TR8_COL_PLAY  0x00   /* [unit] blinks while playing */
+#define TR8_COL_RED   0x01   /* [unit] red, POLY.md test 3 */
+#define TR8_COL_IN    0x2A   /* [unit] green */
+#define TR8_COL_OFF   0x2D
+
 /* LED control, arguments not decoded: FUN_6001A7EC(id, a, b, c). */
 typedef void (*tr8_led_fn)(int id, int a, int b, int c);
 #define TR8_LED ((tr8_led_fn)0x6001A7ED)                        /* [hyp]                        */

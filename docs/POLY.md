@@ -21,6 +21,7 @@ Flash as described in [UPDATE.md](UPDATE.md) (back up first).
 | The same gesture with the same pad again | Back to the pattern length. The display shows `LOFF` |
 | Hold LAST STEP + several instrument buttons, press a pad | All of them get that length |
 | Hold LAST STEP, press a pad (no instrument button) | Normal: sets the pattern length |
+| Hold LAST STEP + an instrument that has a length | The step LEDs show that instrument like the pattern-length view: steps inside its length green, its play position blinking while playing, the other steps off |
 | Power off | All lengths are lost (all instruments follow the pattern again) |
 
 The lengths are global, not per pattern: changing pattern keeps them.
@@ -54,12 +55,17 @@ A mask that changed during the call (a panel edit) is not overwritten.
 | `0x6000966E` in `FUN_6000964E` (start) | `bl FUN_60026894` | `bl poly_run` |
 | `0x600096AE` in `FUN_6000969A` (stop) | `bl FUN_60026894` | `bl poly_run` |
 | `0x60019A10` in `FUN_6001961E` (button handler: pad with LAST STEP `0x1A` held) | `bl FUN_6001B8D6` (set LAST_A/B) | `bl poly_last` |
+| `0x60016438` in `FUN_60016386` (step LED loop, LAST STEP view only) | `bl FUN_6001774E(led, colour)` | `bl poly_led` |
 | `0x60011E00`, `0x60011E04` | developer dump calls | `nop.w` (frees the region) |
 
 `poly_last` checks the instrument buttons (`0x21 + i`, held bitmap): none held -> the original
 call; else it sets the lengths and shows the result with `FUN_60015980`.
 
-Code: `patches/poly/poly.c`, about 540 bytes in `0x60011150`-`0x60011464`.
+`poly_led` replaces the colour of each step when an instrument with a length is held: 0 = play
+position (blinks), 0x2A = inside the length (green, the pattern-length colour), 0x2D = off. The firmware redraws the step LEDs
+when an instrument button or a pad is pressed (flag bit 0x4).
+
+Code: `patches/poly/poly.c`, about 660 bytes in `0x60011150`-`0x60011464`.
 Emulation test: `tests/emu_poly.py` runs the firmware's own `FUN_600262F2` through the hook, and
 the gesture through the firmware's own button handler `FUN_6001961E`.
 
@@ -96,6 +102,18 @@ Same pattern as test 1 (BD 1, 5, 9, 13; CH on step 1; RS on 1 and 2). Play it.
 Also watch: does pressing an instrument button while LAST STEP is held do something else
 (instrument selection is expected); does the display text stay long enough to read.
 
+## Hardware test 3 (step LEDs): passed
+
+Set CH to 3 steps (LAST STEP + CH + pad 3).
+
+| # | Action | Expected |
+|---|---|---|
+| 1 | Hold LAST STEP + CH, stopped | Steps 1-3 green, 4-16 off |
+| 2 | Same while playing | The CH play position moves over steps 1-3 |
+| 3 | Hold LAST STEP + BD (no length) | The normal pattern-length view |
+| 4 | Hold LAST STEP + CH, press pad 6 | CH length 6: steps 1-6 green |
+| 5 | Release CH, keep LAST STEP | Back to the pattern view (at the next redraw) [hyp] |
+
 ## Limitations and next steps
 
 1. Save the lengths per pattern (11 bytes; same storage problem as motion).
@@ -115,3 +133,6 @@ Also watch: does pressing an instrument button while LAST STEP is held do someth
   LAST STEP + RS set the hand clap and LAST STEP + HC set the rim shot. Cause: the instrument
   buttons are in the player order except RS and HC, which are swapped (button 0x26 = HC,
   0x27 = RS). Fixed in `TR8_BTN_INST`; check 3 then passed on the unit.
+- Hardware test 3 (2026-11-12, step LEDs): passed with the last step in red (colour 1, confirmed
+  red; 0x2A is green, 0 blinks while playing). Then simplified to the firmware's own look: all
+  steps of the length green, no red step.
