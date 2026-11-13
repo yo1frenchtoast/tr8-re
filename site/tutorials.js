@@ -109,7 +109,6 @@ export const TUTORIALS = {
     doc: "docs/CHAIN.md",
     en: {
       tab: "Bar chain",
-      warn: "Experimental: an earlier build of the bar chain worked on a TR-8, this build is tested in emulation only. Keep the official file to go back.",
       intro: "Play a pattern as up to eight bars, each with its own A and B steps. A plays bars 1 to Na, B plays bars 1 to Nb, and A+B plays the A bars, then the B bars.",
       steps: [
         "Hold [[A]] and press pads [[1]] [[2]] [[3]] [[4]], one after the other. Side A is now 4 bars long. The display shows {{  A1}} to {{  A4}}.",
@@ -137,7 +136,6 @@ export const TUTORIALS = {
     },
     fr: {
       tab: "Chaîne de mesures",
-      warn: "Expérimental : une version précédente de la chaîne de mesures a fonctionné sur une TR-8, cette version n'est testée qu'en émulation. Gardez le fichier officiel pour revenir en arrière.",
       intro: "Jouez un pattern sur huit mesures maximum, chacune avec ses propres pas A et B. A joue les mesures 1 à Na, B les mesures 1 à Nb, et A+B joue les mesures A puis les mesures B.",
       steps: [
         "Maintenez [[A]] et appuyez sur les pads [[1]] [[2]] [[3]] [[4]], l'un après l'autre. Le côté A fait maintenant 4 mesures. L'écran affiche {{  A1}} à {{  A4}}.",

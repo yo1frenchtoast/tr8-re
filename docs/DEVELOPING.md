@@ -144,8 +144,8 @@ Data that must survive power off can go in unused pattern parameters, as the pol
 (find dead code, replace its call sites with `nop.w`, keep its literal pools). Patches that use
 the same region or disagree about a site cannot be combined.
 
-The image-growth path passes in emulation but has not been on a unit yet; the first boot is the
-thing to watch ([CHAIN.md](CHAIN.md) hardware checklist).
+The image-growth path works on a unit: the bar chain uses it, alone and combined with motion and
+poly ([CHAIN.md](CHAIN.md) "Hardware check for the image build").
 
 ## 3. Firmware API
 

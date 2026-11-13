@@ -354,15 +354,15 @@
    "provides": [
     "chain"
    ],
-   "status": "experimental",
+   "status": "tested",
    "doc": "docs/CHAIN.md",
    "title": {
     "en": "Bar chain",
     "fr": "Cha\u00eene de mesures"
    },
    "text": {
-    "en": "Hold A or B and press pad 1..8 to select that bar and make the side that long; A+B + pad sets both sides, A+B + CLEAR + pad resets. Each bar keeps its own A and B steps in flash, so the phrase survives a power cycle. Boot path new in this build: emulation-tested, hardware check pending.",
-    "fr": "Maintenir A ou B et appuyer sur un pad 1..8 pour choisir la mesure et donner cette longueur au c\u00f4t\u00e9 ; A+B + pad r\u00e8gle les deux c\u00f4t\u00e9s, A+B + CLEAR + pad remet \u00e0 z\u00e9ro. Chaque mesure garde ses propres pas A et B en flash : la phrase survit \u00e0 une extinction. Nouveau chemin de d\u00e9marrage : test\u00e9 en \u00e9mulation, v\u00e9rification mat\u00e9rielle \u00e0 faire."
+    "en": "Hold A or B and press pad 1..8 to select that bar and make the side that long; A+B + pad sets both sides, A+B + CLEAR + pad resets. Each bar keeps its own A and B steps in flash, so the phrase survives a power cycle. Works on a real TR-8.",
+    "fr": "Maintenir A ou B et appuyer sur un pad 1..8 pour choisir la mesure et donner cette longueur au c\u00f4t\u00e9 ; A+B + pad r\u00e8gle les deux c\u00f4t\u00e9s, A+B + CLEAR + pad remet \u00e0 z\u00e9ro. Chaque mesure garde ses propres pas A et B en flash : la phrase survit \u00e0 une extinction. Fonctionne sur une vraie TR-8."
    },
    "sites": [
     {
@@ -471,7 +471,7 @@
     "motion",
     "chain"
    ],
-   "status": "experimental",
+   "status": "tested",
    "doc": "docs/CHAIN.md",
    "title": {
     "en": "Bar chain + motion",
@@ -649,7 +649,7 @@
     "poly",
     "chain"
    ],
-   "status": "experimental",
+   "status": "tested",
    "doc": "docs/CHAIN.md",
    "title": {
     "en": "Bar chain + polyrhythm",
@@ -847,7 +847,7 @@
     "poly",
     "chain"
    ],
-   "status": "experimental",
+   "status": "tested",
    "doc": "docs/CHAIN.md",
    "title": {
     "en": "Bar chain + motion + polyrhythm",

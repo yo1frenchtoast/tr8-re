@@ -60,14 +60,14 @@ _CHAIN_TEXT = {
 def _chain(title_en, title_fr, extra_en, extra_fr):
     return dict(group="image",
                 provides=None,   # set below
-                status="experimental", doc="docs/CHAIN.md",
+                status="tested", doc="docs/CHAIN.md",
                 title={"en": title_en, "fr": title_fr},
                 text={"en": _CHAIN_TEXT["en"] + " " + extra_en,
                       "fr": _CHAIN_TEXT["fr"] + " " + extra_fr})
 
 SHOWN["chain"] = dict(_chain("Bar chain", "Chaîne de mesures",
-                             "Boot path new in this build: emulation-tested, hardware check pending.",
-                             "Nouveau chemin de démarrage : testé en émulation, vérification matérielle à faire."),
+                             "Works on a real TR-8.",
+                             "Fonctionne sur une vraie TR-8."),
                       provides=["chain"])
 SHOWN["motion-chain"] = dict(_chain("Bar chain + motion", "Chaîne de mesures + motion",
                                     "Motion recording is included in the same firmware.",

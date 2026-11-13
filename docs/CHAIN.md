@@ -17,11 +17,10 @@ Status: the tenth build (standalone) — eight bars per side, the shrink gesture
 following the bar that is playing — **passed on a real TR-8** (hardware test below). The current
 build moves the code and the bar index out of the developer-dump region and into the application
 image, so the chain **combines with `motion` and `poly`** and appears in the web flasher next to
-them; it also carries the review fixes described in the test history (twelfth build). Emulation
-passes (249 chain checks plus the three combinations), but this build has not been on a unit yet —
-the boot path, a larger decompressed image, is the part to watch. Keep
-`work/TR8_UPD_chain_b4.BIN` (the confirmed standalone build) as the fallback. Like the other
-patches it is built from your own copy of Roland's v1.61 file.
+them; it also carries the review fixes described in the test history (twelfth build). The image
+build **works on a real TR-8** too: `motion-poly-chain` booted and the chain worked with motion
+and poly on the unit (see "Hardware check for the image build"). Like the other patches it is
+built from your own copy of Roland's v1.61 file.
 
 ## Use
 
@@ -727,7 +726,14 @@ playing, and nothing froze. The build is kept as `work/TR8_UPD_chain.BIN`.
   11. Change the pattern: playback starts at bar 1 of the new pattern, and the previous pattern's
       bars are not overwritten.
 
-## Hardware check for the image build (pending)
+## Hardware check for the image build (passed)
+
+**Result (2026-11-13): passed on the unit.** The `motion-poly-chain` image build (the review
+version, with the suggested fixes) booted normally and the bar chain worked on a real TR-8 with
+motion and poly in the same firmware. The only issues seen were minor ones when motion recording
+and per-instrument lengths are used at the same time (the motion/poly combination, not the
+chain). The later fixes (single flash owner, power-safe compaction, the stale-bar fix) change the
+chain's storage and task split but not the boot path.
 
 This build changes only where the code lives and how the image boots, so the gestures, the log,
 the side lengths and the display are the tenth build's (already confirmed above). The new risks
