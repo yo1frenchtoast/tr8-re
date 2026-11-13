@@ -106,6 +106,13 @@ tests/run_all.sh "$F"                                # build every patch, run al
 `firmware/`, `work/` and `analysis/` are git-ignored: they hold Roland code or output derived from
 it and must never be committed.
 
+## Credits
+
+- **Bar chain** ([docs/CHAIN.md](docs/CHAIN.md)): designed and written by Andrei Dabrakou
+  ([andrdobr666](https://github.com/andrdobr666)), including the flash log, the image build that
+  combines it with motion and poly, and its tests
+  ([pull request #1](https://github.com/yo1frenchtoast/tr8-re/pull/1)).
+
 ## License
 
 MIT, see [LICENSE](LICENSE). This covers the code and documentation in this repository only.
