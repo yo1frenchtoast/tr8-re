@@ -11,10 +11,14 @@
  *   gives way to the screen's own text as soon as the variation button is released.
  *
  * Playback: variation A plays bars 1..Na with each bar's A steps, variation B plays bars 1..Nb
- * with each bar's B steps, and A+B plays the A sequence then the B sequence. Every sequence
- * starts at bar 1 on a sequencer start and loops at its end. A side and B side have their own
- * length, so A can be a two-bar phrase while B is four bars. The length of a side is the highest
- * bar selected on that side (1..4); a pattern whose sides were never selected stays stock.
+ * with each bar's B steps, and A+B plays the A sequence then the B sequence. A sequence loops at
+ * its end. A side and B side have their own length, so A can be a two-bar phrase while B is four
+ * bars. The length of a side is the highest bar selected on that side (1..4); a pattern whose
+ * sides were never selected stays stock.
+ *
+ * A bar select is also a jump: while playing, the next bar boundary plays the selected bar and
+ * the sequence carries on from it; while stopped, the next start begins at the selected bar. A
+ * fresh patch state and a pattern change put the playhead back on bar 1.
  *
  * So pattern 1 keeps four private bars (A and B steps each), pattern 2 the same, and each
  * pattern's two sides are its own phrases. A bar that has never been recorded is the pattern
@@ -352,7 +356,8 @@ __attribute__((section(".text.far"))) static int clen(int side)
     return v <= NBARS ? (int)v : NBARS;
 }
 
-static char txt[5];                   /* the four-character numeric display */
+/* The four-character numeric display. .data: the second region is full, the first has room. */
+__attribute__((section(".data.far"))) static char txt[5];
 
 /* "  A1": the side, then the bar. It is only a confirmation of the pad press; releasing the
  * variation button hands the display back to the screen (see chain_release). */
@@ -421,7 +426,9 @@ void chain_var(void *obj)
         TR8_FN_VARIATION(obj);                  /* side was never selected: stock */
         return;
     }
-    pos = chain_wrapping ? (int)chain_pos + 1 : 0;
+    /* A wrap advances one bar; a fresh start begins at the bar last selected with A/B + pad
+     * (cur_bar, 0-based; it is 0 when nothing was selected, so the phrase starts at bar 1). */
+    pos = chain_wrapping ? (int)chain_pos + 1 : (int)cur_bar;
     if (v == 0) {
         if (pos >= na)
             pos = 0;
@@ -519,6 +526,8 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
     saved = store_save(cur_pat, cur_bar);      /* keep the bar being left */
     cur_bar = (uint8_t)bar;
     chain_row[b] = (uint8_t)bar;               /* the row follows the bar being edited */
+    chain_pos = (uint8_t)(bar - 1);            /* selecting a bar is also a jump: the next bar
+                                                * boundary (and the next start) plays this one */
     slot_load(cur_pat, bar, b);
     struct_slot0();
     TR8_SEQ_VARI = (uint32_t)(b ? 1 : 0);

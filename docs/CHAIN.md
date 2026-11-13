@@ -13,7 +13,9 @@ side that was never selected stays stock.
 Every pattern has its own four bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 150 checks). Not yet tested on hardware.
+Status: **works in emulation** (`tests/emu_chain.py`, 163 checks). The previous build (sequential
+per-side playback, green row, stopped editing) is confirmed on hardware; the bar jump of this one
+is emulation-tested and pending on the unit.
 Like the other patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
@@ -44,6 +46,10 @@ never selected are the pattern's own steps.
 Selecting a bar does not depend on the transport: with the machine **stopped**, `A + pad 2`
 loads bar 2 into the working copy and redraws the step view at once, so the step pads and TR-REC
 edit bar 2; `A + pad 1` stores bar 2 and switches to bar 1, and `A + pad 2` brings it back. The
+selection is also a **jump**: the playhead moves to that bar, so while playing the next bar
+boundary plays the selected bar (instead of the next one in the order) and the sequence carries
+on from it, and while stopped the next start begins at that bar. A bar the side does not have
+clamps to its first bar, and switching pattern puts the playhead back on bar 1. The
 load sets the screen's "repaint the step view" bit (`0x04` in the halfword at `0x60149B8C`), which
 the panel dispatcher serves on its next pass; see the note on the hardware freeze below. That is
 the panel's screen object, not the Setup database `0x60149F38` — see
@@ -96,6 +102,11 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
 - **Power off and on keeps the bars and the lengths**; the log is flash and is rescanned on the
   first use, and the lengths are ordinary pattern parameters. A firmware update erases the log
   (but not the lengths): the bars then fall back to the pattern's own steps.
+- **A bar select is a jump.** `A/B + pad n` moves that side's playhead to bar *n*: while the
+  machine plays, the next bar boundary plays bar *n* and the sequence continues from it; while it
+  is stopped, the next start begins at bar *n*. Selecting the bar that is already playing repeats
+  it once at the next boundary. A fresh patch state and a pattern change start at bar 1, and a
+  bar the side does not have clamps to its first bar.
 - The display confirms each gesture. While VARIATION A or B is **held**, the pads become that
   side's bar row: the bars the side has are green, the bar at that side's head blinks yellow (it
   is the bar being played, or, stopped, the bar last selected on that side), and the remaining
@@ -341,14 +352,16 @@ writes a side length, a bar or the pattern:
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 150 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 163 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..4` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar selection
   and the working copy (bar 1 = pattern, bar 2 loaded after a save, last steps and B side; the
   same round trip while stopped: `A + pad 3`, edit a step, `A + pad 1`, back to `A + pad 3` with
   the edit, and the step-view repaint bit `0x04` set after every load but not after the A+B
-  length gesture, and no slot-0 notification at all); the display hand-back (releasing VARIATION
+  length gesture, and no slot-0 notification at all); the bar jump (a select moves the playhead
+  while stopped and while playing, selecting the playing bar repeats it, the side's first bar
+  clamps a bar it does not have); the display hand-back (releasing VARIATION
   A or B calls the firmware's repaint helper — the payload must go through `FUN_60051E20` and
   never write the object by hand — a swallowed pad release leaves it alone, another button does
   not touch it); two build-level checks that the payload never references the Setup database
@@ -403,9 +416,17 @@ writes a side length, a bar or the pattern:
   display), and `chain_release` calls the firmware's own `FUN_60051E20` (thumb `0x60051E21`, which
   sets `0x44`), so the patch no longer writes a firmware object by hand. This build also carries
   the sequential per-side playback, the two side lengths, the green/blink row and the stopped bar
-  editing. Emulation passes (150 checks, two of them build-level: the payload never mentions
-  `0x60149F38` and still names `0x60149B8C`); hardware check pending. The previous confirmed
-  build is `bd47883`, kept as `work/TR8_UPD_chain_b4.BIN` for an immediate fallback.
+  editing. Confirmed on the hardware: the freeze was gone, the four bars played and recorded, the
+  row was right on every screen, and a bar selected while stopped loaded for editing and could be
+  switched again. The previous confirmed build is `bd47883`, kept as `work/TR8_UPD_chain_b4.BIN`
+  as an immediate fallback.
+- Eighth build: `A/B + pad n` is also a **bar jump**. The selection writes the playhead
+  (`chain_pos` = *n* - 1 in `chain_edit`, so the next boundary lands on *n*) and a fresh start
+  begins at the bar last selected (`cur_bar`, which `sync` resets on a pattern change, so a new
+  pattern still starts at bar 1). Cost 4 bytes in the second region, which was full: the display
+  buffer `txt` moved to the first region (`.data.far`), next to the other small state. Emulation
+  passes (163 checks, including the jump stopped/playing, the playing bar repeating, the B side
+  and the clamp). Hardware check pending.
 - Hardware checklist for this build:
   0. **Freeze check (do this first):** hold VARIATION A alone for a few seconds and release it
      (the smallest failing case of the previous build); then `A + pad 5` while stopped; then,
@@ -426,6 +447,10 @@ writes a side length, a bar or the pattern:
      (watch the bar row change side), then back to A bar 1.
   4. Set A to two bars with `A+B + pad 2` (`AB 2`): the A sequence shortens. `A+B+CLEAR + pad`
      (`AB--`) returns both sides to stock.
+  4b. **Bar jump:** with four A bars, press A and let it play; while bar 1 plays, `A + pad 3`:
+     the next bar boundary must play bar 3 (not bar 2) and carry on to bar 4, then bar 1. Stop,
+     then `A + pad 2` and press A: playback must start at bar 2. `B + pad 2` then B: B starts at
+     its bar 2. Switch to another pattern and press A: it starts at its bar 1.
   5. Record different steps into A bar 1, A bar 2 and B bar 1; play A, B and A+B: each bar's own
      steps come back. Select a bar again: the display follows the pad and the steps are restored.
   6. **Stopped bar editing:** with the sequencer stopped, `A + pad 2`, record a step, `A + pad 1`,

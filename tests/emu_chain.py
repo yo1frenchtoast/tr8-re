@@ -18,6 +18,8 @@ pads and LAST STEP edit it. Tested here:
   - playback: chain_var fills the player struct 0x6012FA64 from the bar's log entry (or from the
     pattern slot when the bar was never recorded); A plays bars 1..Na with A steps, B plays
     1..Nb with B steps, A+B plays the A sequence then the B one.
+  - bar jump: selecting a bar moves the playhead, so the next boundary (playing) or the next start
+    (stopped) is that bar, and the sequence carries on from it.
   - power cycle: the payload state is cleared, the log is rescanned, and the recorded bars play.
 """
 import struct, sys, json, os
@@ -620,7 +622,44 @@ expect("A+B: B bar 1", wrap(), (1, 1, 0))
 expect("A+B: B bar 2", wrap(), (1, 1, 1))
 expect("A+B: back to A bar 1", wrap(), (0, 0, 0))
 
+# --- bar jump: A/B + pad moves the playhead, stopped or playing --------------------
+# Selecting a bar with A/B + pad is also a jump: a fresh start begins at the selected bar, and
+# while playing the next bar boundary is that bar instead of the next one in the order.
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+set_chain(4, 0)
+w32(VARI, 0)
+expect("jump: nothing selected, a start begins at A bar 1", start(vari=0), (0, 0, 0))
+expect("jump: ... bar 2", wrap(), (0, 0, 1))
+press(3, A)                                   # select bar 3 while the machine is stopped
+expect("jump: bar 3 is the working copy", pget(CNT), 0x04)
+expect("jump: a start now begins at the selected bar 3", start(vari=0), (0, 0, 2))
+expect("jump: ... carries on with bar 4", wrap(), (0, 0, 3))
+expect("jump: ... and wraps to bar 1", wrap(), (0, 0, 0))
+
+press(1, A)                                   # playhead back on bar 1
+start(vari=0)                                 # bar 1
+expect("jump: playing bar 2", wrap(), (0, 0, 1))
+press(2, A)                                   # select the bar that is playing
+expect("jump: selecting the playing bar keeps it at the next boundary", wrap(), (0, 0, 1))
+press(3, A)                                   # jump to bar 3 while playing
+expect("jump: the next boundary is the selected bar 3", wrap(), (0, 0, 2))
+expect("jump: ... then bar 4", wrap(), (0, 0, 3))
+expect("jump: ... then bar 1", wrap(), (0, 0, 0))
+
+# The B side jumps the same way; a bar the side does not have clamps to its first bar.
+set_chain(3, 2)
+w32(VARI, 1)
+press(2, B)
+expect("jump: a start on B begins at the selected B bar 2", start(vari=1), (1, 1, 1))
+press(4, A)                                   # A bar 4 is past the B side's two bars
+expect("jump: the B side clamps a bar it does not have", start(vari=1), (1, 1, 0))
+
 # Playback moves each side's row head: the bar row blinks the bar of the pass being played.
+press(2, B)                                   # the B side's head on its bar 2
+press(1, A)                                   # the A playhead back on bar 1
+set_chain(3, 2)                               # three A bars, two B bars
 w32(RUN, 1)
 start(vari=0)
 expect("row: the A sequence starts with A bar 1 blinking",
@@ -671,6 +710,7 @@ w32(slot_addr(0) + 12, 0x0D)                  # LAST_B
 call(S["chain_commit"], 0, 4, 1, 0)           # record bar 2
 set_chain(3, 0)
 w32(VARI, 0)
+press(1, A)                                   # put the playhead back on bar 1
 expect("recorded bar: start on bar 1, still the pattern",
        (start(vari=0), struct_rows(), struct_scalars()),
        ((0, 0, 0), slot_rows(1), (0x11, 0x21, SCALE[1])))
