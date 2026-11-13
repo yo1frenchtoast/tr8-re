@@ -13,7 +13,7 @@ side that was never selected stays stock.
 Every pattern has its own four bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 132 checks). Not yet tested on hardware.
+Status: **works in emulation** (`tests/emu_chain.py`, 134 checks). Not yet tested on hardware.
 Like the other patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
@@ -84,8 +84,9 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
   first use, and the lengths are ordinary pattern parameters. A firmware update erases the log
   (but not the lengths): the bars then fall back to the pattern's own steps.
 - The display confirms each gesture. While VARIATION A or B is **held**, the pads become that
-  side's bar row: the bars the side has are green, the bar being played blinks green, and pads
-  5-16 are off, so only that side's bars are lit. Stopped, the selected bar blinks. This works in
+  side's bar row: the bars the side has are green, the bar at that side's head blinks yellow (it
+  is the bar being played, or, stopped, the bar last selected on that side), and the remaining
+  pads are off, so only that side's bars are lit. This works in
   every screen (sequencer, PTN SELECT, TR-REC, ...) and after a pattern change. Releasing the
   button gives the pads back to whatever the screen was showing (A+B keeps the length gesture and
   leaves the pads stock). A save the flash chip refused shows **`FAIL`** instead of the bar
@@ -149,16 +150,18 @@ All four end in `bl FUN_6004BB4C`, a veneer to the fast-code LED function `0x010
 triple, so it does not care whether the caller used raw levels or a palette colour:
 
 - pads 1..N of the side whose button is held (`led` `0x1D` onward): `(1, 9, 2)` = palette
-  `0x2A`, the pattern-length green; the bar that is playing gets `(1, 0, 2)` = palette `0`, the
-  blinking play colour. Stopped, the selected bar blinks instead,
+  `0x2A`, the pattern-length green; the bar at that side's head gets `(1, 0, 6)`, which is the
+  play colour's blink flag (`b` = 0) on the yellow colour (`c` = 6), so the head blinks yellow.
+  Stopped, the selected bar of that side is the head and blinks,
 - every other pad in the same state, including pads N+1..16: `(0, 0, 2)` = palette `0x2D`, off,
   so only the bars that side has are lit,
 - everything else (any other LED, or neither/both buttons held) is forwarded unchanged.
 
 Because the hook is in the setters, the row appears in every screen (sequencer, PTN SELECT,
 TR-REC, LAST STEP, ...) and keeps working after a pattern change, which is when the screen
-switches to another renderer. Holding A while the B side plays shows the A row with no blink,
-and A+B is excluded on purpose: it is the both-sides gesture, not bar selection.
+switches to another renderer. Each side has its own head, so holding A while the B side plays
+shows the A row's own head blinking. A+B is excluded on purpose: it is the both-sides gesture,
+not bar selection.
 
 ### Editing a bar
 
@@ -305,12 +308,12 @@ writes a side length, a bar or the pattern:
 | ` 3--` (plain pad 3) | hook runs on every press and sees no modifier; the text is written after the firmware handled the pad |
 | ` 8-L` (LAST STEP + pad 8) | LAST STEP is held, so the press goes to the firmware first (pattern length) and the text is written after it |
 | ` 3CL` (A+B + LAST STEP + pad 3) | the same with both variation buttons held: LAST STEP wins, no bar selection |
-| pads 5-16 dark while A is held | the bar row: pads 1-4 lit (the probe has no side lengths, so all four are yellow; the real build shows only that side's bars, green, with the playing one blinking), the rest off |
+| pads 5-16 dark while A is held | the bar row: pads 1-4 lit (the probe has no side lengths, so all four are yellow; the real build shows only that side's bars, green, with the head blinking yellow), the rest off |
 | nothing at all | the payload is not running: the build is not the patched one |
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 132 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 134 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..4` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar selection
@@ -327,7 +330,7 @@ writes a side length, a bar or the pattern:
   simulated flash models the chip's block protection: program/erase outside a write session are
   dropped, as on the unit, and the run checks that every operation happened inside a session and
   every session was closed. The bar row: all four pad setters (both raw, both palette) resolve
-  that side's bars to green, the playing bar to the blinking play triple and every other pad to
+  that side's bars to green, the head bar to the blinking yellow triple and every other pad to
   off while exactly one of A/B is held, and forward the original triple when neither or both are
   held and for every other LED; after a bar press the A row stays one bar and the B row shows the
   new bar. The probe build (`--probe`, `payload_probe.json`, 46 checks): display strings on the
@@ -354,14 +357,14 @@ writes a side length, a bar or the pattern:
   misbehaves, flash the probe build and report which display string it shows.
 - Hardware checklist for this build:
   1. Plain pattern, no side selected: A, B and A+B behave exactly as stock; while A or B is held
-     the row shows just bar 1 (the pattern itself) blinking green and pads 2-16 dark.
+     the row shows just bar 1 (the pattern itself) blinking yellow and pads 2-16 dark.
   2. Give A four bars (`A + pad 1`, then 2, 3, 4): the display shows `  1A`..`  4A`; while A is
-     held, all four bars are green and the playing bar blinks green, pads 5-16 dark. Press A: the
+     held, all four bars are green and the playing bar blinks yellow, pads 5-16 dark. Press A: the
      four A bars play in order and wrap. Press B: B has no bars yet, so it is stock. Press A+B:
      the A sequence only. **`FAIL` in place of the bar number means the flash chip refused the
      save of the bar being left** (stop here and report it).
   3. Give B two bars (`B + pad 1`, `B + pad 2`): while B is held only pads 1-2 are green, and the
-     playing B bar blinks. Press B: two bars in order. Press A+B: four A bars, then two B bars
+     playing B bar blinks yellow. Press B: two bars in order. Press A+B: four A bars, then two B bars
      (watch the bar row change side), then back to A bar 1.
   4. Set A to two bars with `A+B + pad 2` (`AB 2`): the A sequence shortens. `A+B+CLEAR + pad`
      (`AB--`) returns both sides to stock.

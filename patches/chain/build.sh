@@ -4,7 +4,7 @@
 # Needs clang + ld.lld (LLVM). The patcher itself does not.
 set -euo pipefail
 cd "$(dirname "$0")"
-SYMS="chain_var chain_wrap chain_press chain_release chain_commit chain_led4 chain_pos chain_side chain_bar chain_wrapping chain_swallow"
+SYMS="chain_var chain_wrap chain_press chain_release chain_commit chain_led4 chain_pos chain_side chain_row chain_wrapping chain_swallow"
 # The probe keeps the LAST STEP fallback (chain_pad) to show what that branch sees.
 SYMS_PROBE="chain_var chain_wrap chain_press chain_release chain_commit chain_led4 chain_pos chain_wrapping chain_swallow chain_pad chain_pad_c"
 

@@ -295,13 +295,13 @@ for site, sym in SITES:
 
 # --- the bar row ------------------------------------------------------------------
 # Pads are LED ids 0x1D..0x2C. While exactly one of VARIATION A/B is held the pads show that
-# side's bars: the bars the side has are green (1,9,2), the one being played blinks green
-# (1,0,2 = the play colour), and every other pad is off (0,0,2). Stopped, the selected bar
-# blinks. The probe has no side lengths: pads 1-4 are all yellow (1,9,6) and 5-16 off, which is
-# exactly the hook check it exists for.
+# side's bars: the bars the side has are green (1,9,2) and the bar at that side's head blinks
+# yellow (1,0,6; b = 0 is the blink flag), every other pad is off (0,0,2). The head is the bar
+# being played on that side, or, stopped, the bar last selected on it. The probe has no side
+# lengths: pads 1-4 are all yellow and 5-16 off, which is exactly the hook check it exists for.
 LED_OBJ = 0x601488D0
 PAD = lambda n: 0x1C + n             # pad 1..16 = LED 0x1D..0x2C
-PLAY, GREEN, YELLOW, OFF = (1, 0, 2), (1, 9, 2), (1, 9, 6), (0, 0, 2)
+PLAY, BLINK, GREEN, YELLOW, OFF = (1, 0, 2), (1, 0, 6), (1, 9, 2), (1, 9, 6), (0, 0, 2)
 
 def led_call(fn, led, *args, **buttons):
     held.clear(); held.update(buttons.get("held", ())); log.clear()
@@ -349,12 +349,13 @@ if "--probe" in sys.argv:
                led_call(fn, 0x0F, 0x2A, held=(A,)), L(0x0F, *GREEN))
 else:
     set_counts(3, 2)                    # A = three bars, B = two
-    w32(RUN, 0)                         # stopped: the selected bar (0) blinks
+    w32(RUN, 0)                         # stopped: each side's head is the bar being edited
+    uc.mem_write(S["chain_row"], b"\0\0")
     for fn, args, c0 in RAW_SETTERS:
-        expect(f"LED raw setter 0x{fn:08x}: A held, three green bars, none playing, bar 1 blink",
-               row(fn, args, (A,)), want_row([PLAY, GREEN, GREEN, OFF]))
+        expect(f"LED raw setter 0x{fn:08x}: A held, three green bars, bar 1 blinks yellow",
+               row(fn, args, (A,)), want_row([BLINK, GREEN, GREEN, OFF]))
         expect(f"LED raw setter 0x{fn:08x}: B held shows the B side's two bars",
-               row(fn, args, (B,)), want_row([PLAY, GREEN, OFF, OFF]))
+               row(fn, args, (B,)), want_row([BLINK, GREEN, OFF, OFF]))
         expect(f"LED raw setter 0x{fn:08x}: nothing held passes through",
                led_call(fn, PAD(1), *args), L(PAD(1), 1, 7, c0))
         expect(f"LED raw setter 0x{fn:08x}: A+B passes through",
@@ -362,10 +363,10 @@ else:
         expect(f"LED raw setter 0x{fn:08x}: non-pad LEDs pass through",
                led_call(fn, 0x2D, *args, held=(A,)), L(0x2D, 1, 7, c0))
     for fn in PAL_SETTERS:
-        expect(f"LED palette setter 0x{fn:08x}: A held, three green bars, none playing, bar 1 blink",
-               row(fn, (0x2A,), (A,)), want_row([PLAY, GREEN, GREEN, OFF]))
+        expect(f"LED palette setter 0x{fn:08x}: A held, three green bars, bar 1 blinks yellow",
+               row(fn, (0x2A,), (A,)), want_row([BLINK, GREEN, GREEN, OFF]))
         expect(f"LED palette setter 0x{fn:08x}: B held shows the B side's two bars",
-               row(fn, (0x2A,), (B,)), want_row([PLAY, GREEN, OFF, OFF]))
+               row(fn, (0x2A,), (B,)), want_row([BLINK, GREEN, OFF, OFF]))
         expect(f"LED palette setter 0x{fn:08x}: nothing held passes the palette colour through",
                led_call(fn, PAD(1), 0x2A), L(PAD(1), *GREEN))
         expect(f"LED palette setter 0x{fn:08x}: A+B passes through",
@@ -373,31 +374,24 @@ else:
         expect(f"LED palette setter 0x{fn:08x}: non-pad LEDs pass through",
                led_call(fn, 0x0F, 0x2A, held=(A,)), L(0x0F, *GREEN))
 
-    # The playing bar blinks: A plays bar 3, then B plays bar 2.
+    # Each side has its own head; the row blinks it whatever the panel is doing.
+    uc.mem_write(S["chain_row"], bytes([2, 1]))     # A head = bar 3, B head = bar 2
+    expect("LED: A head bar 3 -> pad 3 blinks yellow, pads 1-2 green",
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, BLINK, OFF]))
+    expect("LED: B head bar 2 -> pad 2 blinks yellow, pad 1 green",
+           row(0x6001773A, (1, 7, 7), (B,)), want_row([GREEN, BLINK, OFF, OFF]))
     w32(RUN, 1)
-    w32(VARI, 0)
-    uc.mem_write(S["chain_side"], b"\0")
-    uc.mem_write(S["chain_bar"], b"\2")
-    expect("LED: playing A bar 3 -> pad 3 blinks, pads 1-2 green",
-           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, PLAY, OFF]))
-    w32(VARI, 2)                        # A+B: bar 3 is still an A pass
-    expect("LED: A+B, A side, bar 3 still blinks on the A row",
-           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, PLAY, OFF]))
-    w32(VARI, 1)
-    uc.mem_write(S["chain_side"], b"\1")
-    uc.mem_write(S["chain_bar"], b"\1")
-    expect("LED: playing B bar 2 -> pad 2 blinks, pad 1 green",
-           row(0x6001773A, (1, 7, 7), (B,)), want_row([GREEN, PLAY, OFF, OFF]))
-    expect("LED: holding A while B plays -> A row steady (no blink)",
-           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, GREEN, OFF]))
+    expect("LED: running does not change the head mapping",
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, BLINK, OFF]))
     w32(RUN, 0)
+    uc.mem_write(S["chain_row"], b"\0\0")
 
     # A side never selected: one default bar is shown; B keeps its own two.
     set_counts(0, 2)
     expect("LED: A side unset -> one default bar",
-           row(0x6001773A, (1, 7, 7), (A,)), want_row([PLAY, OFF, OFF, OFF]))
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([BLINK, OFF, OFF, OFF]))
     expect("LED: B side still two bars",
-           row(0x6001773A, (1, 7, 7), (B,)), want_row([PLAY, GREEN, OFF, OFF]))
+           row(0x6001773A, (1, 7, 7), (B,)), want_row([BLINK, GREEN, OFF, OFF]))
 
 if "--probe" in sys.argv:
     expect("probe: plain pad is shown after the firmware handled it", press(3),
@@ -461,9 +455,9 @@ expect("press: the sides are one and two bars long", pget(CNT), 0x21)
 expect("press: the panel variation follows the bar", (r32(VARI), r32(EFF), r32(slot_addr(0))), (1, 1, 1))
 if "--probe" not in sys.argv:           # the probe has no current bar
     expect("LED: after A/B + pad 2, holding B blinks pad 2",
-           led_call(0x6001773A, PAD(2), 1, 7, 7, held=(B,)), L(PAD(2), *PLAY))
-    expect("LED: ... holding A shows only its single bar, steady",
-           led_call(0x6001773A, PAD(1), 1, 7, 7, held=(A,)), L(PAD(1), *GREEN))
+           led_call(0x6001773A, PAD(2), 1, 7, 7, held=(B,)), L(PAD(2), *BLINK))
+    expect("LED: ... holding A shows its single bar, bar 1 blinking",
+           led_call(0x6001773A, PAD(1), 1, 7, 7, held=(A,)), L(PAD(1), *BLINK))
     expect("LED: ... so pad 2 is off on the A row",
            led_call(0x6001773A, PAD(2), 1, 7, 7, held=(A,)), L(PAD(2), *OFF))
 
@@ -519,13 +513,15 @@ def start(**kw):
     log.clear()
     uc.mem_write(S["chain_wrapping"], b"\0")
     call(S["chain_var"], PTN)
-    return (r32(EFF), r8(S["chain_side"]), r8(S["chain_bar"]))
+    return (r32(EFF), r8(S["chain_side"]),
+            r8(S["chain_row"] + r8(S["chain_side"])))
 
 def wrap():
     uc.mem_write(S["chain_wrapping"], b"\1")
     call(S["chain_var"], PTN)
     uc.mem_write(S["chain_wrapping"], b"\0")
-    return (r32(EFF), r8(S["chain_side"]), r8(S["chain_bar"]))
+    return (r32(EFF), r8(S["chain_side"]),
+            r8(S["chain_row"] + r8(S["chain_side"])))
 
 def set_chain(a, b):
     set_counts(a, b)
@@ -562,6 +558,18 @@ expect("A+B: A bar 3", wrap(), (0, 0, 2))
 expect("A+B: B bar 1", wrap(), (1, 1, 0))
 expect("A+B: B bar 2", wrap(), (1, 1, 1))
 expect("A+B: back to A bar 1", wrap(), (0, 0, 0))
+
+# Playback moves each side's row head: the bar row blinks the bar of the pass being played.
+w32(RUN, 1)
+start(vari=0)
+expect("row: the A sequence starts with A bar 1 blinking",
+       row(0x6001773A, (1, 7, 7), (A,)), want_row([BLINK, GREEN, GREEN, OFF]))
+wrap()
+expect("row: ... and moves to A bar 2",
+       row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, BLINK, GREEN, OFF]))
+expect("row: the B side keeps its own head (bar 2 from the A+B passes)",
+       row(0x6001773A, (1, 7, 7), (B,)), want_row([GREEN, BLINK, OFF, OFF]))
+w32(RUN, 0)
 
 # A side never selected: with the panel on A the stock variation runs; B still has its own
 # sequence and A+B plays the B bars (there are no A bars).

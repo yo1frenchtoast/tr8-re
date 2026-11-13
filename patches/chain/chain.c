@@ -85,7 +85,7 @@ typedef void (*fl_sess_fn)(void);
 
 uint8_t chain_pos;        /* position in this pass, 0..na+nb-1 (A+B) or 0..n-1 (A/B) */
 uint8_t chain_side;       /* side being played: 0 = A, 1 = B */
-uint8_t chain_bar;        /* bar being played on that side, 0..NBARS-1 */
+uint8_t chain_row[2];     /* bar last selected or played on each side, for the bar row */
 uint8_t chain_wrapping;   /* set by chain_wrap around the FUN_600095F0 call */
 uint16_t chain_swallow;   /* pads whose press we took: their release is swallowed too */
 
@@ -362,8 +362,8 @@ static void show_bar(int n, int is_b)
     TR8_DISPLAY_TEXT(0, txt);
 }
 
-/* .text.far (the second region is full). */
-__attribute__((section(".text.far"))) static void show_ab(int n)
+/* .text (the second region) now that the row code got smaller. */
+static void show_ab(int n)
 {
     txt[0] = 'A';
     txt[1] = 'B';
@@ -398,6 +398,8 @@ __attribute__((section(".text.far"))) static void sync(void)
     if (p != cur_pat) {
         cur_pat = (uint8_t)p;
         cur_bar = 0;
+        chain_row[0] = 0;
+        chain_row[1] = 0;
         slot_load(p, 0, (int)(area_slot(TR8_AREA_PATTERN, 0)[0] & 1));
     }
 }
@@ -439,7 +441,7 @@ void chain_var(void *obj)
         }
     }
     chain_pos = (uint8_t)pos;
-    chain_bar = (uint8_t)bar;
+    chain_row[chain_side] = (uint8_t)bar;
     struct_bar(cur_pat, bar);
     TR8_SEQ_VARIATION = chain_side;
     TR8_FN_APPLY(obj);
@@ -455,11 +457,12 @@ void chain_wrap(void *obj)
 
 /* ---------------------------------------------------------------- bar row LEDs */
 
-/* While exactly one of VARIATION A/B is held the 16 pads are that side's bar row: bars 1..N are
- * green (palette 0x2A, (1, 9, 2)), the bar that is playing blinks green (palette 0, (1, 0, 2))
- * and pads 5..16 are off, so only the bars that side has are lit. When the sequencer is stopped
- * the selected bar blinks instead, so A/B + pad still shows the bar being edited. Releasing the
- * button gives the pads back to whatever the screen wants to show.
+/* While exactly one of VARIATION A/B is held the 16 pads are that side's bar row: the bars that
+ * side has are green (1, 9, 2) and the bar at that side's head blinks yellow (1, 0, 6): b = 0 is
+ * the firmware's blink flag, as in the play colour (1, 0, 2), and c = 6 is yellow. The head is the
+ * bar the sequencer is playing on that side, or, stopped, the bar last selected on it. Pads past
+ * the side's last bar are off, so only the bars that side has are lit. Releasing the button gives
+ * the pads back to whatever the screen wants to show.
  *
  * Every screen paints pads through one of four tiny setters, so the hook is inside them, not on a
  * view: 0x60017748 (raw setter FUN_6001773A), 0x6001776C (palette setter FUN_6001774E),
@@ -474,22 +477,20 @@ void chain_led4(void *obj, int led, int a, int b, int c)
 
     if ((unsigned)p <= 15 && (TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) != hb) {
         int n = clen(hb);                  /* holding B shows the B side's bars */
-        int cur = -1;
+        int cur;
 
         if (!n)
             n = 1;                         /* nothing selected: the pattern itself */
-        if (p < n) {
-            cur = TR8_SEQ_RUNNING ? (chain_side == hb ? (int)chain_bar : -1)
-                                  : (int)cur_bar;
-            if ((unsigned)cur >= (unsigned)n)
-                cur = -1;
-        }
-        a = p < n;                         /* pads 5..16: off (palette 0x2D = 0, 0, 2) */
-        if (!a)
+        cur = (int)chain_row[hb];
+        if ((unsigned)cur >= (unsigned)n)
+            cur = n - 1;                   /* the side shrank: blink its last bar */
+        a = p < n;                         /* pads past the last bar: off */
+        b = p == cur ? 0 : 9;              /* 0 = blink (the play flag), 9 = steady */
+        c = p == cur ? 6 : 2;              /* head: yellow, other bars: green */
+        if (!a) {
             b = 0;
-        else
-            b = p == cur ? 0 : 9;          /* 0 = blink, 9 = steady */
-        c = 2;                             /* colour 2 = green */
+            c = 2;                         /* palette 0x2D = (0, 0, 2), off */
+        }
     }
     TR8_FN_LED_SET(obj, led, a, b, c);
 }
@@ -514,6 +515,7 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
 
     saved = store_save(cur_pat, cur_bar);      /* keep the bar being left */
     cur_bar = (uint8_t)bar;
+    chain_row[b] = (uint8_t)bar;               /* the row follows the bar being edited */
     slot_load(cur_pat, bar, b);
     struct_slot0();
     TR8_SEQ_VARI = (uint32_t)(b ? 1 : 0);
