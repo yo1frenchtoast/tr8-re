@@ -36,8 +36,9 @@ A review of a patch checks these points. An author checks them before opening a 
    vs. A+B position, unchecked flash slots as indexes.
 4. **Tests**: each rule above that has a "Test" line in DEVELOPING.md has an emulation test.
    Each reported bug gets a test that fails before the fix.
-5. **Header**: no unused definitions are added to `tr8_v161.h`. An entry point that is known to
-   hang the unit is documented in FINDINGS.md, not offered in the header.
+5. **Header**: no unused firmware entry points (function pointers) are added to `tr8_v161.h`.
+   Offsets and constants that document a layout may stay. An entry point that is known to hang
+   the unit is documented in FINDINGS.md, not offered in the header.
 6. **Documents**: addresses, sizes and block counts in FINDINGS.md and the patch document match
    the code.
 
