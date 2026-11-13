@@ -78,6 +78,23 @@ PATCHES["poly"] = {
     ],
 }
 
+# Bar chain (patches/chain/chain.c, docs/CHAIN.md).
+# More than two bars per pattern: A/B + pad paints a bar, A+B + pad sets the length.
+# Same free region as motion and poly: cannot be combined with them yet.
+PATCHES["chain"] = {
+    "doc": "Bar chain: A/B + pad paints a bar, A+B + pad sets the length (docs/CHAIN.md)",
+    "payload": "patches/chain/payload.json",
+    "allowed": [(0x60011150, 0x60011464)],
+    "keep": [(0x60011464, 0x60011484)],
+    "sites": [
+        (0x60011E00, thumb_bl(0x60011E00, 0x6001114E), "nop"),          # dev dump 1 (frees the cave)
+        (0x60011E04, thumb_bl(0x60011E04, 0x600113B2), "nop"),          # dev dump 2 (frees the cave)
+        (0x60009614, thumb_bl(0x60009614, 0x6000E404), "chain_var"),    # restart: variation of the pass
+        (0x600098CA, thumb_bl(0x600098CA, 0x600095F0), "chain_wrap"),   # pattern wrap: mark it as a wrap
+        (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),    # step pad: A/B held -> paint
+    ],
+}
+
 # Motion + poly together (patches/combo). Code in both developer-dump regions; tables in patch
 # RAM: the RTOS pool start moves from 0x60280988 to 0x60290988 (64 KB), zeroed by ram_init at boot.
 _motion_sites = [s for s in PATCHES["motion"]["sites"] if s[2] != "nop"]

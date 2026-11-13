@@ -26,8 +26,9 @@ accepts.
 | **Motion recording** | **Works on a real TR-8**: hold TR-REC to record, hold CLEAR to erase. RAM only, one global buffer |
 | **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. Saved with each pattern ([docs/POLY.md](docs/POLY.md)) |
 | **Motion + per-instrument length together** | **Works on a real TR-8** ([docs/COMBO.md](docs/COMBO.md)) |
+| **Bar chain (more than two bars)** | **Emulation-tested**: hold A or B + a pad to paint a bar, A+B + a pad to set the length. Saved with each pattern ([docs/CHAIN.md](docs/CHAIN.md)) |
 | Web flasher | Same output as `tr8patch.py`, byte for byte (`tests/site_check.mjs`) |
-| Per-pattern saved motion, 32/64-step patterns | Assessed ([docs/FEASIBILITY.md](docs/FEASIBILITY.md)) |
+| Per-pattern saved motion, more than two bars | Assessed; the bar chain is implemented ([docs/FEASIBILITY.md](docs/FEASIBILITY.md), [docs/CHAIN.md](docs/CHAIN.md)) |
 
 ## Use a patch
 
@@ -39,12 +40,14 @@ both. When you tick both, it builds the `motion-poly` patch. With Python 3 inste
    ```sh
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_motion.BIN               # motion
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_poly.BIN --patch poly   # lengths
+   python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_chain.BIN --patch chain # bar chain
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_both.BIN --patch motion-poly
    ```
 3. Back up your patterns and kits, then flash the file you built, renamed to `TR8_UPD.BIN`,
    with Roland's normal procedure: [docs/UPDATE.md](docs/UPDATE.md).
 4. How to use them: [docs/MOTION.md](docs/MOTION.md), [docs/POLY.md](docs/POLY.md),
-   [docs/COMBO.md](docs/COMBO.md).
+   [docs/COMBO.md](docs/COMBO.md), [docs/CHAIN.md](docs/CHAIN.md). The bar chain is standalone
+   for now (same code region as motion and poly); the web flasher does not offer it yet.
 
 ## Write your own feature
 
@@ -71,6 +74,7 @@ tests/run_all.sh "$F"                                # build every patch, run al
 | [docs/MOTION.md](docs/MOTION.md) | Motion recording: use, how it works, variants, test history |
 | [docs/COMBO.md](docs/COMBO.md) | Motion + per-instrument length together: memory layout, hardware checklist |
 | [docs/POLY.md](docs/POLY.md) | Per-instrument length (polyrhythm): use, how it works, storage per pattern, test history |
+| [docs/CHAIN.md](docs/CHAIN.md) | Bar chain (more than two bars): gestures, display, how it works, storage, test history |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | Guide for writing new features |
 | [docs/FINDINGS.md](docs/FINDINGS.md) | Firmware reference: file format, boot, memory map, sequencer, controls, buttons, parameters, display, code space |
 | [docs/FEASIBILITY.md](docs/FEASIBILITY.md) | Assessment of further features |
@@ -87,6 +91,7 @@ tests/run_all.sh "$F"                                # build every patch, run al
 | `patches/include/tr8_v161.h` | Known firmware addresses and functions, with confidence tags |
 | `patches/motion/` | Motion recording: `motion.c`, hardware probe `probe.c`, `link.ld`, `build.sh`, generated `payload*.json` |
 | `patches/poly/` | Per-instrument length: `poly.c`, `link.ld`, `build.sh`, generated `payload.json` |
+| `patches/chain/` | Bar chain (more than two bars): `chain.c`, `link.ld`, `build.sh`, generated `payload.json` |
 | `patches/combo/` | Motion + poly: `ram.c` (patch RAM), `link.ld`, `build.sh`, generated `payload.json` |
 | `site/` | Web flasher (static page, `tr8patch.js` = JS port of the patcher) |
 | `tests/` | Unicorn emulation tests, `site_check.mjs` (web flasher = Python output) and `run_all.sh` |

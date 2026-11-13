@@ -34,17 +34,20 @@ Works on a real unit: hold TR-REC to record, hold CLEAR to erase. See [MOTION.md
   (only controls with motion, for example 8 lanes per pattern) brings it to about 270 bytes.
 - Code: pattern change and save/load hooks, so it needs more code space (grow the image).
 
-## B. Longer patterns (32 or 64 steps)
+## B. Longer patterns (more than two bars): bar chain done
 
-Hard. 16-bit step masks are used everywhere: parameters (`STEP_<row>1/2`), change handlers, the
-pattern struct, the stored pattern parameters, and the UI has 16 step buttons. The step engine
-limit comes from `LAST_A`/`LAST_B` and the pattern struct (`FUN_600525F8`); whether the sound side
-has a limit is unknown.
+A true 32- or 64-step pattern is hard: 16-bit step masks are used everywhere: parameters
+(`STEP_<row>1/2`), change handlers, the pattern struct, the stored pattern parameters, and the UI
+has 16 step buttons. The step engine limit comes from `LAST_A`/`LAST_B` and the pattern struct
+(`FUN_600525F8`). A 32-step view would also need a page selector the panel does not have.
 
-A realistic first step: **A+B chained as one 32-step pattern**. Variation A/B already gives two
-16-bit masks per row, and the firmware already has an A+B variation setting (`VARI` = 2, [hyp]).
-Check first how A+B plays today: if it already alternates A and B, a 32-step view is mostly a UI
-change.
+The useful part of the feature is a longer **arrangement**, and that is implemented as the bar
+chain ([CHAIN.md](CHAIN.md)): a pattern plays up to 16 bars, each one an A or B pass, painted
+with A/B + pad and saved with the pattern. It is emulation-tested; the step engine is untouched.
+What it does not give is more than two bars of *material*: for four different bars, either add
+C/D variation storage (same masks, 16 more parameters per pattern) or make each chain entry a
+whole pattern (4-bit pattern + 1-bit variation per bar still fits in the spare Ptn2 ids), which
+needs the pattern-select path.
 
 ## C. Per-instrument length (polyrhythm): done
 

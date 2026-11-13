@@ -25,6 +25,19 @@
 #define TR8_SEQ_TICKS     (*(volatile uint32_t *)0x6007E130)  /* [code] ticks per half step   */
 #define TR8_SEQ_VARIATION (*(volatile uint32_t *)0x6012FA74)  /* [unit] 0 = A, other = B      */
 
+/* Player struct 0x6012FA64 (what FUN_600095F0 and FUN_6000E404 take):
+ *   +0x0c VARI: 0 = A, 1 = B, 2 = A+B (the panel setting)
+ *   +0x10 effective variation, i.e. TR8_SEQ_VARIATION
+ *   +0x14 / +0x18 LAST_A / LAST_B (FUN_600525F8 picks by the effective variation)
+ * FUN_600095F0 restarts the pattern: load the panel parameters, apply the variation, read the
+ * last step, run the player. It is called at sequencer start (0x600091A2, 0x600098E4) and at
+ * every pattern wrap (0x600098CA). */
+#define TR8_SEQ_VARI (*(volatile uint32_t *)0x6012FA70)        /* [code] panel VARI            */
+typedef void (*tr8_obj_fn)(void *obj);
+#define TR8_FN_VARIATION ((tr8_obj_fn)0x6000E405)              /* [code] FUN_6000E404: VARI -> effective, masks -> sound */
+#define TR8_FN_APPLY     ((tr8_obj_fn)0x6000E153)              /* [code] FUN_6000E152          */
+#define TR8_FN_RESTART   ((tr8_obj_fn)0x600095F1)              /* [code] FUN_600095F0          */
+
 /* Per-step function: called (usually twice) for every step from the clock tick.
  * Hook its call sites 0x60009862 and 0x60009808 to run code once per step. */
 typedef uint64_t (*tr8_step_fn)(void *p, int step);
@@ -84,6 +97,8 @@ typedef int (*tr8_held_fn)(unsigned id);
 
 #define TR8_BTN_STEP(n)   ((n) - 1)   /* [code] step buttons 1..16 = ids 0x00..0x0F            */
 #define TR8_BTN_TR_REC    0x11        /* [unit]                                                */
+#define TR8_BTN_VARI_A    0x17        /* [code] writes the panel setting VARI (+0x0C)          */
+#define TR8_BTN_VARI_B    0x18        /* [code]                                                */
 #define TR8_BTN_CLEAR     0x1C        /* [unit]                                                */
 #define TR8_BTN_INST_FIRST 0x1D       /* [code] row buttons 0x1D..0x2B: AC RV EC SC, then 11 instruments */
 /* Button of instrument i (player order BD SD LT MT HT RS HC CH OH CC RC). The buttons are

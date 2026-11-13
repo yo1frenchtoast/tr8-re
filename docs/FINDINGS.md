@@ -232,6 +232,25 @@ State struct at `0x6007E100`:
   BD SD LT MT HT RS HC CH OH CC RC. Read with `FUN_600528CC` / `FUN_600525D0` / `FUN_6005260A(obj, i)`:
   the mask of the current variation, 0 if muted [code].
 
+### Pattern restart and variation
+
+`FUN_600095F0` restarts the pattern: it resets the counters, loads the panel parameters into the
+pattern struct `0x6012FA64`, applies the variation, reads the last step and runs the player. It is
+called at sequencer start (`0x600091A2`, `0x600098E4`) and at **every pattern wrap**
+(`0x600098CA`, from `FUN_6000989C` when the counter passes +0x1C).
+
+Inside it, `FUN_6000E404` applies the variation: struct +0x0C is the panel setting `VARI`
+(0 = A, 1 = B, 2 = A+B, written by buttons `0x17`/`0x18`), and if it is 2 the effective
+variation (+0x10, read as `0x6012FA74`) is toggled, else `VARI` is stored. Then `FUN_6000E152`
+writes the step, accent and flam masks of that variation into the player object. The last step is
+read **after** this (`FUN_600525F8`), so the variation must be set before `FUN_600095F0` returns.
+
+Button handler `FUN_6001961E` dispatches button id 0x00-0x0F to `0x600199F4`, which first tests
+LAST STEP (`0x1A`) and then sets the pattern length (`FUN_6001B8D6` at `0x60019A10`). The pad id
+is still in `r6` there, so a hook on the `bl FUN_60013168` at `0x600199F6` can read it. Button
+`0x17`/`0x18` with TR-REC held is already used by the firmware (`0x6001974C`, `0x60019798`, calls
+`FUN_6001B736` and rewrites +0x10), so it is not free for patches.
+
 ### Step trigger
 
 The masks that play are copies in the **player object `P = 0x6014A164`** (`uint32_t` words),
