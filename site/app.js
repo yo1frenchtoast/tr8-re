@@ -36,8 +36,8 @@ const FR = {
   "faq.a3": "Le fichier sur le lecteur n'est pas celui construit ici (somme de contrôle). Reconstruisez-le, recopiez-le, et vérifiez qu'il n'y a rien d'autre sur le lecteur.",
   "faq.q4": "Où sont mes mouvements, longueurs ou mesures après un redémarrage ?",
   "faq.a4": "Les longueurs sont sauvegardées avec chaque pattern, et les mesures de la chaîne de mesures dans la mémoire flash de la TR-8 : les deux survivent à l'extinction. Les mouvements de motion restent en RAM pour l'instant : ils sont perdus à l'extinction.",
-  "guide.title": "Utiliser les mods",
-  "guide.hint": "Une première prise en main pour chaque mod. Si vous avez construit plusieurs mods ensemble, chacun fonctionne exactement comme décrit ici.",
+  "guide.title": "Comment les utiliser",
+  "guide.hint": "Chaque mod fonctionne de la même façon quand plusieurs sont construits ensemble.",
   "foot.affil": "Projet non officiel, sans lien avec Roland Corporation ni approuvé par elle. TR-8 est une marque de Roland Corporation.",
   "foot.license": "Licence MIT. Aucun code Roland n'est inclus : la page modifie le fichier que vous fournissez.",
   "foot.docs": "Documentation et source",
@@ -54,11 +54,42 @@ const MSG = {
 };
 const REPO = "https://github.com/yo1frenchtoast/tr8-re/blob/main/";
 
+// tr8patch.js reports in English (it is shared with tests/site_check.mjs). Its messages are
+// translated here; the technical lines (sections, addresses, sites) stay as they are.
+const FR_MSG = [
+  [/^input: TR-8 v1\.61 TR8_UPD\.BIN, all checks OK$/, "entrée : TR8_UPD.BIN de TR-8 v1.61, toutes les vérifications sont OK"],
+  [/^compressing the application\.\.\.$/, "compression de l'application..."],
+  [/^output checked: trailer and module sums OK$/, "sortie vérifiée : fin de fichier et sommes des modules OK"],
+  [/^file too small: not a TR-8 TR8_UPD\.BIN$/, "fichier trop petit : ce n'est pas un TR8_UPD.BIN de TR-8"],
+  [/^unexpected trailer: not a TR-8 v1\.61 TR8_UPD\.BIN$/, "fin de fichier inattendue : ce n'est pas un TR8_UPD.BIN de TR-8 v1.61"],
+  [/^module at (0x[0-9a-f]+): byte-sum is wrong \(corrupted file\)$/, "module en $1 : somme de contrôle fausse (fichier corrompu)"],
+  [/^unsupported application "(.*)": only system v(.+) is supported$/, "application non prise en charge « $1 » : seul le système v$2 est pris en charge"],
+  [/^the application does not match the official v1\.61 \(already patched, or another version\)$/,
+   "l'application ne correspond pas à la v1.61 officielle (fichier déjà modifié, ou autre version)"],
+  [/^unexpected bytes at (0x[0-9a-f]+) \(patches cannot be combined\?\)$/, "octets inattendus en $1 (patches incompatibles ?)"],
+  [/^payload (.+) outside the free regions$/, "payload $1 en dehors des zones libres"],
+  [/^payload (.+) overlaps a protected range$/, "payload $1 sur une zone protégée"],
+  [/^internal error: compressor round trip failed$/, "erreur interne : la recompression a échoué"],
+  [/^patched application too big$/, "application modifiée trop grande"],
+  [/^unknown patch (.+)$/, "patch inconnu $1"],
+  [/^these patches use the same free memory and cannot be combined$/, "ces patches utilisent la même mémoire libre et ne peuvent pas être combinés"],
+  [/^zip file not readable$/, "fichier zip illisible"],
+  [/^zip compression method not supported$/, "méthode de compression du zip non prise en charge"],
+  [/^no TR8_UPD\.BIN inside this zip$/, "aucun TR8_UPD.BIN dans ce zip"],
+];
+function tr(text) {
+  if (lang !== "fr") return text;
+  for (const [re, fr] of FR_MSG) if (re.test(text)) return text.replace(re, fr);
+  return text;
+}
+
 const $ = (id) => document.getElementById(id);
 const EN = {};
 document.querySelectorAll("[data-i18n]").forEach((el) => (EN[el.dataset.i18n] = el.textContent));
 
 let lang = "en", manifest = null, input = null, fileName = "", output = null, guideTab = null;
+let dropError = null;      // last file error, in English (translated when shown)
+const logLines = [];       // build log: { text, cls }; text is English or a function of the language
 try { lang = localStorage.getItem("lang") || (navigator.language.startsWith("fr") ? "fr" : "en"); } catch { /* storage blocked */ }
 
 function setLang(l) {
@@ -72,7 +103,13 @@ function setLang(l) {
   document.querySelectorAll("[data-lang]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === l)));
   renderMods();
   renderGuide();
+  showDrop();
+  renderLog();
+}
+
+function showDrop() {
   if (input) $("drop-text").textContent = `${fileName} · ${MSG[lang].loaded}`;
+  else if (dropError) $("drop-text").textContent = tr(dropError);
 }
 
 // One card per feature (patches that give a single feature). The build uses the
@@ -102,7 +139,10 @@ function renderMods() {
     const cb = card.querySelector("input");
     cb.value = p.provides[0];
     cb.checked = sel.includes(cb.value);
-    cb.addEventListener("change", refresh);
+    cb.addEventListener("change", () => {
+      if (cb.checked) guideTab = cb.value;          // show the tutorial of the mod just ticked
+      refresh();
+    });
     card.querySelector(".mod-title").textContent = p.title[lang];
     card.querySelector(".mod-text").textContent = p.text[lang];
     const tag = card.querySelector(".tag");
@@ -137,12 +177,15 @@ function el(tag, cls, ...kids) {
   return e;
 }
 
-// One tab per feature the site offers, in the order of the mod cards. The first ticked mod is
-// open by default; a tab the user picked stays open.
+// One tab per ticked mod, in the order of the cards, right under them. The mod ticked last is
+// open; a tab the user picked stays open. Nothing ticked: no tutorial.
 function renderGuide() {
   if (!manifest) return;
-  const ids = features().map(([, p]) => p.provides[0]).filter((f) => TUTORIALS[f]);
-  if (!ids.includes(guideTab)) guideTab = checked().find((f) => ids.includes(f)) || ids[0];
+  const sel = checked();
+  const ids = features().map(([, p]) => p.provides[0]).filter((f) => TUTORIALS[f] && sel.includes(f));
+  $("guide-wrap").hidden = !ids.length;
+  if (!ids.length) return;
+  if (!ids.includes(guideTab)) guideTab = ids[0];
   const tabs = $("guide-tabs");
   tabs.replaceChildren();
   for (const id of ids) {
@@ -192,14 +235,22 @@ function renderGuide() {
 }
 
 function log(text, cls) {
-  const line = document.createElement("span");
-  line.textContent = text + "\n";
-  if (cls) line.className = cls;
-  $("log").append(line);
+  logLines.push({ text, cls });
+  renderLog();
+}
+
+function renderLog() {
+  $("log").replaceChildren(...logLines.map(({ text, cls }) => {
+    const line = document.createElement("span");
+    line.textContent = (typeof text === "function" ? text() : tr(text)) + "\n";
+    if (cls) line.className = cls;
+    return line;
+  }));
   $("log").scrollTop = $("log").scrollHeight;
 }
 
 function refresh() {
+  renderGuide();
   output = null;
   $("download").hidden = true;
   const name = manifest && pickPatch();
@@ -209,27 +260,30 @@ function refresh() {
 async function takeFile(file) {
   const drop = $("drop");
   drop.classList.remove("ok", "bad");
-  $("log").replaceChildren();
+  logLines.length = 0;
+  renderLog();
   input = null;
+  dropError = null;
   try {
     input = await extractUpdate(new Uint8Array(await file.arrayBuffer()));
     fileName = file.name;
     drop.classList.add("ok");
-    $("drop-text").textContent = `${fileName} · ${MSG[lang].loaded}`;
   } catch (e) {
     drop.classList.add("bad");
-    $("drop-text").textContent = String(e.message || e);
+    dropError = String(e.message || e);
   }
+  showDrop();
   refresh();
 }
 
 async function run() {
   const name = pickPatch();
   $("build").disabled = true;
-  $("log").replaceChildren();
+  logLines.length = 0;
   $("meter").hidden = false;
   $("meter-bar").style.width = "0";
-  log(`${MSG[lang].building} ${manifest.patches[name].provides.join(" + ")}`);
+  const what = manifest.patches[name].provides.join(" + ");
+  log(() => `${MSG[lang].building} ${what}`);
   try {
     await new Promise((r) => setTimeout(r, 30));            // let the page repaint first
     output = await build(input, manifest, [name], {
@@ -237,7 +291,7 @@ async function run() {
       progress: (f) => ($("meter-bar").style.width = `${Math.round(f * 100)}%`),
     });
     $("meter-bar").style.width = "100%";
-    log(MSG[lang].built, "ok");
+    log(() => MSG[lang].built, "ok");
     $("download").hidden = false;
   } catch (e) {
     log(String(e.message || e), "err");

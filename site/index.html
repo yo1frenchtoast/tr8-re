@@ -37,6 +37,12 @@
       <h2><span class="num">1</span><span data-i18n="mod.title">Choose your mods</span></h2>
       <p class="hint" data-i18n="mod.hint">Tick one or more mods: the flasher builds one firmware that contains exactly those.</p>
       <div class="mods" id="mods" role="group"></div>
+      <div class="guide-wrap" id="guide-wrap" hidden>
+        <h3 class="guide-title" id="guide-title" data-i18n="guide.title">How to use them</h3>
+        <p class="hint" data-i18n="guide.hint">Each mod works the same way when several are built together.</p>
+        <div class="tabs" role="tablist" id="guide-tabs" aria-labelledby="guide-title"></div>
+        <div class="guide" id="guide" role="tabpanel"></div>
+      </div>
     </li>
 
     <li class="panel" id="step-file">
@@ -73,12 +79,6 @@
       <p class="note" data-i18n="install.back">To go back, do the same with the official TR8_UPD.BIN from the zip.</p>
     </li>
 
-    <li class="panel" id="step-use">
-      <h2><span class="num">5</span><span data-i18n="guide.title">Use your mods</span></h2>
-      <p class="hint" data-i18n="guide.hint">A first session for each mod. If you built several mods together, each one works exactly as described here.</p>
-      <div class="tabs" role="tablist" id="guide-tabs" aria-labelledby="step-use"></div>
-      <div class="guide" id="guide" role="tabpanel"></div>
-    </li>
   </ol>
 
   <section class="faq">

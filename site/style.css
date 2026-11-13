@@ -83,7 +83,7 @@ h1 { margin: 0; font: 700 clamp(38px, 7vw, 64px)/1 "Barlow Condensed", sans-seri
 .panel { background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; position: relative; }
 .panel::before { content: ""; position: absolute; left: -1px; top: 18px; width: 3px; height: 28px; background: var(--green); box-shadow: var(--glow); }
 h2 { margin: 0 0 6px; display: flex; align-items: center; gap: 12px; font: 600 24px/1.1 "Barlow Condensed", sans-serif; letter-spacing: .06em; text-transform: uppercase; }
-.num { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--green-dim); color: var(--green); font-size: 17px; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); background: rgba(166, 242, 15, .08); }
+.num { flex: none; display: inline-grid; place-items: center; min-width: 26px; height: 26px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--green); font: 500 14px/1 "JetBrains Mono", monospace; letter-spacing: 0; }
 .hint, .note { color: var(--muted); margin: 0 0 16px; }
 .note { margin: 14px 0 0; }
 
@@ -177,3 +177,6 @@ samp { font: 500 .9em "JetBrains Mono", monospace; white-space: pre; padding: 0 
   .g-row { grid-template-columns: 1fr; gap: 2px; }
   .g-head { display: none; }
 }
+.guide-wrap { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.guide-title { margin: 0 0 4px; font: 600 19px "Barlow Condensed", sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.guide-wrap .tabs { margin-top: 4px; }
