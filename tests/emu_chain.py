@@ -15,8 +15,9 @@ pads and LAST STEP edit it. Tested here:
     scale and the 26 A/B mask rows), appended through the firmware's raw flash primitives
     (simulated here); the pattern save is redirected, so area 4 slot n+1 keeps the pattern's own
     steps; compaction, the ring and the 16-bit sequence wrap keep the newest entry per bar, and
-    the 128 keys (16 patterns x 8 bars) fit the 160-slot log. The bar index itself lives in patch
-    RAM, so the image moves the RTOS pool start by 64 KB.
+    the 128 keys (16 patterns x 8 bars) fit the 160-slot log. The bar index and the code live in
+    the application image above the firmware bss, so the image grows and the RTOS pool start
+    moves by 64 KB.
   - playback: chain_var fills the player struct 0x6012FA64 from the bar's log entry (or from the
     pattern slot when the bar was never recorded); A plays bars 1..Na with A steps, B plays
     1..Nb with B steps, A+B plays the A sequence then the B one.
@@ -237,13 +238,22 @@ expect("build: the payload never references the Setup database object",
 if "--probe" not in sys.argv:
     expect("build: the repaint request names the panel object",
            struct.pack("<I", HMI) in CODE, True)
-    # The 16 patterns x 8 bars index is 128 bytes, which neither code region has: it lives in
-    # patch RAM above the firmware bss, so the image moves the RTOS pool start (literal at
-    # 0x600104A8) by 64 KB. The payload lists the section but does not write it into the image.
-    expect("patch RAM: the RTOS pool start moved from 0x60280988 to 0x60290988",
-           r32(0x600104A8), 0x60290988)
-    expect("patch RAM: the bar index is 128 bytes at 0x60280a00, below the moved pool",
-           [(r["addr"], r["size"]) for r in pay.get("ram", [])], [(0x60280A00, 128)])
+    # The code and the 16 patterns x 8 bars index live in the application image itself, above
+    # the firmware bss (which the startup code zeroes up to 0x60280987), so the patcher grows the
+    # image to cover them and the RTOS pool start (literal 0x600104A8) moves by 64 KB. There is
+    # no patch RAM: the payload is written into the image, and the boot zero-fill cannot reach it.
+    bss_end, pool = 0x60280987, 0x60290988
+    codes = [(r["addr"], r["addr"] + len(r["data"]) // 2) for r in pay["regions"]]
+    expect("image: the payload has no patch RAM section", pay.get("ram"), None)
+    expect("image: the code and state sit above the firmware bss and below the moved pool",
+           (codes[0][0] > bss_end, codes[-1][1] < pool), (True, True))
+    expect("image: the RTOS pool start moved from 0x60280988 to 0x60290988",
+           r32(0x600104A8), pool)
+    expect("image: the patched image covers the payload",
+           len(app) >= codes[-1][1] - 0x60000000, True)
+    b0, _ = REGIONS[".bss"]
+    expect("image: the image itself carries the zeroed bar index",
+           set(app[b0 - 0x60000000:b0 - 0x60000000 + len(REGIONS[".bss"][1])]), {0})
 
 # Pad press through the firmware button handler FUN_6001961E(ctx, button id 0..15)
 A, B, LAST, CLEAR = 0x17, 0x18, 0x1A, 0x1C
@@ -910,7 +920,7 @@ w32(slot_addr(0) + 12, 0x0D)
 call(S["chain_commit"], 0, 4, 1, 0)
 set_chain(3, 0)
 w32(VARI, 0)
-uc.mem_write(0x60280A00, b"\xff" * 128)   # patch RAM is not zeroed at boot: store_init must clear it
+# The index is in the image and zeroed at boot; cold_boot clears the payload's .bss the same way.
 cold_boot()
 expect("power cycle: the log is rescanned and bar 2 still has the edit",
        (start(vari=0), wrap(), struct_rows()[5]),

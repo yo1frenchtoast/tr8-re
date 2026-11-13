@@ -1,6 +1,17 @@
 #!/bin/bash
-# Rebuild payload.json (bar chain: A/B + pad paints a bar, A+B + pad sets the length)
-# and payload_probe.json (hardware probe, probe.c: display only).
+# Rebuild the bar chain payloads (chain.c, probe.c) and the payloads of the combined patches.
+#
+#   payload.json               bar chain alone: code and state in the image (0x60281200)
+#   payload_probe.json        hardware probe (probe.c): the old cave build, display only
+#   payload_motion.json       chain + motion
+#   payload_poly.json         chain + poly
+#   payload_motion_poly.json  chain + motion-poly (the prelinked combo payload)
+#
+# The combined payloads are unions of the parts' payload JSONs (tools/merge_payloads.py). The
+# parts are linked separately and do not share address space: the chain lives in the image above
+# the bss, the cave patches in the developer-dump cave. Rebuild the parts first if their sources
+# changed: ../motion/build.sh, ../poly/build.sh and ../combo/build.sh.
+#
 # Needs clang + ld.lld (LLVM). The patcher itself does not.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -17,17 +28,26 @@ if [ -z "$LD" ]; then
 fi
 if [ -z "$LD" ]; then echo "need ld.lld (LLVM) or a Rust toolchain" >&2; exit 1; fi
 
-build() {   # $1 = output suffix, $2 = source, $3 = symbols to keep and export
-    local sfx=$1 src=$2 syms=$3
+build() {   # $1 = output suffix, $2 = source, $3 = link script, $4 = symbols to keep and export
+    local sfx=$1 src=$2 script=$3 syms=$4
     clang --target=thumbv7m-none-eabi -mcpu=cortex-m3 -mthumb -Oz -fno-inline -ffreestanding -fno-builtin \
           -fno-common -ffunction-sections -fdata-sections -nostdlib -Wall -Wextra -I../include \
           -c $src -o chain$sfx.o
-    $LD -T link.ld --gc-sections -e chain_var $(printf -- '-u %s ' $syms) chain$sfx.o -o chain$sfx.elf
+    $LD -T $script --gc-sections -e chain_var $(printf -- '-u %s ' $syms) chain$sfx.o -o chain$sfx.elf
     python3 -I ../../tools/elf2payload.py chain$sfx.elf $syms > payload$sfx.json
 }
-build "" chain.c "$SYMS"
-build _probe probe.c "$SYMS_PROBE"
+build "" chain.c link.ld "$SYMS"
+build _probe probe.c probe.ld "$SYMS_PROBE"
 OBJDUMP=$(command -v llvm-objdump || echo /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/llvm-objdump)
 [ -x "$OBJDUMP" ] && $OBJDUMP -d --triple=thumbv7m chain.elf > chain.lst
 rm -f chain*.o
-echo "payload.json, payload_probe.json updated"
+
+for part in motion poly combo; do
+    case $part in
+        motion) out=payload_motion.json ;;
+        poly)   out=payload_poly.json ;;
+        combo)  out=payload_motion_poly.json ;;
+    esac
+    python3 -I ../../tools/merge_payloads.py "$out" payload.json ../$part/payload.json
+done
+echo "payload.json, payload_probe.json, payload_motion.json, payload_poly.json, payload_motion_poly.json updated"

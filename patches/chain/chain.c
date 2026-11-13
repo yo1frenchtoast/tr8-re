@@ -98,12 +98,11 @@ uint8_t chain_row[2];     /* bar last selected or played on each side, for the b
 uint8_t chain_wrapping;   /* set by chain_wrap around the FUN_600095F0 call */
 uint8_t chain_swallow;    /* bit n: pad n's press was taken, its release is swallowed too */
 
-/* Newest entry index + 1 per (pattern, bar), 0 = none: 16 patterns x 8 bars. The two code
- * regions have no room for 128 bytes of state, so it lives in patch RAM above the firmware bss
- * (0x60280A00), which the patcher frees by moving the RTOS pool start by 64 KB — the same move
- * motion-poly uses. Patch RAM is not zeroed at boot, but store_init clears tab before any other
- * use, so that is enough. */
-__attribute__((section(".ram"))) static uint8_t tab[NBARS * 16];
+/* Newest entry index + 1 per (pattern, bar), 0 = none: 16 patterns x 8 bars. The patch lives in
+ * the application image above the firmware bss (0x60281200, see link.ld): the patcher grows the
+ * image to cover it and the RTOS pool start moves by 64 KB, so this memory is neither zeroed at
+ * boot nor handed to the pool. store_init clears the index before its first use anyway. */
+static uint8_t tab[NBARS * 16];
 static uint8_t wr_i;             /* next log entry */
 static uint16_t seqn;            /* last sequence number written */
 static uint8_t inited;           /* the log has been scanned */
@@ -145,8 +144,8 @@ static int fl_put(int i)
     return ebuf[0] == EMAGIC;
 }
 
-/* .text.far: the second region is full (see the bar row section). */
-__attribute__((section(".text.far"))) static uint32_t ecrc(const uint32_t *e)
+/* FNV-1a over an entry, skipping the checksum word. */
+static uint32_t ecrc(const uint32_t *e)
 {
     uint32_t h = 0x811C9DC5u;
     int i;
@@ -288,9 +287,8 @@ static int store_save(int pat, int bar)
 }
 
 /* Store the working copy, if the panel changed it since it was loaded. Kept out of line so
- * chain_edit does not have to pass the bar; both callers and the store live in the first region,
- * which has room for it. */
-__attribute__((section(".text.far"))) static int save_dirty(void)
+ * chain_edit does not have to pass the bar. */
+static int save_dirty(void)
 {
     return store_save(cur_pat, cur_bar);
 }
@@ -306,9 +304,8 @@ static volatile uint32_t *area_slot(int area, int slot)
 }
 
 /* Load a bar into the working copy: the log entry if there is one, else the pattern's own
- * steps (area 4 slot pat+1), which the redirect in chain_commit keeps untouched. In the first
- * free region: both callers (sync, chain_edit) are there and the second region is full. */
-__attribute__((section(".text.far"))) static void slot_load(int pat, int bar, int side)
+ * steps (area 4 slot pat+1), which the redirect in chain_commit keeps untouched. */
+static void slot_load(int pat, int bar, int side)
 {
     volatile uint32_t *d = area_slot(TR8_AREA_PATTERN, 0);
     volatile uint32_t *src;
@@ -338,8 +335,8 @@ __attribute__((section(".text.far"))) static void slot_load(int pat, int bar, in
 }
 
 /* Fill the player struct from bar `bar` of pattern `pat`, without touching the working copy. */
-/* .text.far: the second region is full (see the bar row section). */
-__attribute__((section(".text.far"))) static void struct_bar(int pat, int bar)
+/* Fill the player struct from a bar's 26 step rows and its LAST_A/LAST_B. */
+static void struct_bar(int pat, int bar)
 {
     volatile uint32_t *def = area_slot(TR8_AREA_PATTERN, pat + 1);
     volatile uint8_t *d = TR8_PTN_STRUCT, *p = d;
@@ -374,18 +371,16 @@ __attribute__((section(".text.far"))) static void struct_bar(int pat, int bar)
 /* ---------------------------------------------------------------- chain */
 
 /* Bars of one side: 0 = never selected (that side stays stock), 1..8 = sequence length. */
-/* .text.far (the second region is full). */
-__attribute__((section(".text.far"))) static int clen(int side)
+static int clen(int side)
 {
     uint32_t v = TR8_PTN2_CUR[CHAIN_COUNTS] >> (4 * side);
     v &= 0xF;
     return v <= NBARS ? (int)v : NBARS;
 }
 
-/* The four-character numeric display. .data: the second region is full, the first has room. The
- * bytes are stored as one word (the display reads the string, so txt[4] stays 0), which is why a
- * message is a word: "  A1" is 0x31_2041_2020. */
-__attribute__((section(".data.far"))) static char txt[5];
+/* The four-character numeric display. The bytes are stored as one word (the display reads the
+ * string, so txt[4] stays 0), which is why a message is a word: "  A1" is 0x31_2041_2020. */
+static char txt[5];
 
 static void show4(uint32_t w)
 {
@@ -414,7 +409,7 @@ static void show_fail(void)
 
 /* The panel changed pattern: the working copy is now that pattern's own steps, so bar 1 (or
  * the bar the user selects next) has to be loaded before anything edits or plays it. */
-__attribute__((section(".text.far"))) static void sync(void)
+static void sync(void)
 {
     int p = (int)(area_slot(TR8_AREA_SETUP, 0)[TR8_SETUP_PATTERN] & 0xF);
 
@@ -556,9 +551,8 @@ void chain_led4(void *obj, int led, int a, int b, int c)
  * at least n bars long. A/B + CLEAR + pad n: that side becomes exactly n bars long (shrink).
  * A+B + pad: both sides n bars. A+B+CLEAR + pad: both sides stock.
  * a = VARIATION A held, b = VARIATION B held. */
-/* .text.far (the first region, link.ld); noinline keeps clang from folding it into chain_press,
- * which overflowed the second region. */
-__attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, int a, int b)
+/* noinline keeps clang from folding this into chain_press. */
+__attribute__((noinline)) static void chain_edit(int pad, int a, int b)
 {
     int bar = pad;
     int saved;
@@ -655,7 +649,7 @@ int chain_release(int id)
  * The guard matters: the firmware also saves a pattern the panel only just selected, before the
  * patch has seen a pad and loaded that pattern's bar 1. The working copy is then the pattern
  * itself, not a bar, so the stock commit is the right thing (and is a no-op copy in practice). */
-__attribute__((section(".text.far"))) void chain_commit(int a, int area, int slot, int b)
+void chain_commit(int a, int area, int slot, int b)
 {
     if (area == TR8_AREA_PATTERN && slot >= 1 && slot - 1 == (int)cur_pat) {
         store_save(slot - 1, cur_bar);

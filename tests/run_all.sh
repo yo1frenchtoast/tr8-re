@@ -28,9 +28,18 @@ run chain-probe patched_chain_probe emu_chain.py --payload patches/chain/payload
 run motion-poly patched_combo emu_combo.py
 printf '%-14s ' "  + motion";  $PY tests/emu_motion.py work/patched_combo/appA.bin --payload patches/combo/payload.json | tail -1
 printf '%-14s ' "  + poly";    $PY tests/emu_poly.py   work/patched_combo/appA.bin --payload patches/combo/payload.json | tail -1
+# The chain in the image combines with the cave patches: one payload, one set of hook sites.
+run motion-chain patched_motion_chain emu_chain.py
+printf '%-14s ' "  + motion";  $PY tests/emu_motion.py work/patched_motion_chain/appA.bin | tail -1
+run poly-chain patched_poly_chain emu_chain.py
+printf '%-14s ' "  + poly";    $PY tests/emu_poly.py work/patched_poly_chain/appA.bin | tail -1
+run motion-poly-chain patched_mpc emu_chain.py
+printf '%-14s ' "  + combo";   $PY tests/emu_combo.py work/patched_mpc/appA.bin --payload patches/chain/payload_motion_poly.json | tail -1
 # Web flasher: same output as tr8patch.py (needs Node 18+; skipped without it)
 if command -v node > /dev/null; then
     $PY -I tools/build_site.py > /dev/null
     git diff --quiet site/patches.json 2> /dev/null || echo "note: site/patches.json changed, commit it with the payloads"
-    printf '%-14s ' "site"; node tests/site_check.mjs "$IN" work/TR8_UPD_motion.BIN work/TR8_UPD_poly.BIN work/TR8_UPD_motion_poly.BIN | tail -1
+    printf '%-14s ' "site"; node tests/site_check.mjs "$IN" work/TR8_UPD_motion.BIN work/TR8_UPD_poly.BIN \
+        work/TR8_UPD_motion_poly.BIN work/TR8_UPD_chain.BIN work/TR8_UPD_motion_chain.BIN \
+        work/TR8_UPD_poly_chain.BIN work/TR8_UPD_motion_poly_chain.BIN | tail -1
 fi

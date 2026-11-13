@@ -46,6 +46,44 @@ SHOWN = {
                                     "longueurs sont sauvegardées avec chaque pattern, motion en RAM uniquement."}),
 }
 
+# The bar chain lives in the application image above the firmware bss (the patcher grows the
+# image and moves the RTOS pool start), so it no longer takes the cave and combines with every
+# cave patch. Each combination is a manifest entry whose features are exactly the ticked ones.
+_CHAIN_TEXT = {
+    "en": "Hold A or B and press pad 1..8 to select that bar and make the side that long; A+B + pad "
+          "sets both sides, A+B + CLEAR + pad resets. Each bar keeps its own A and B steps in flash, "
+          "so the phrase survives a power cycle.",
+    "fr": "Maintenir A ou B et appuyer sur un pad 1..8 pour choisir la mesure et donner cette longueur "
+          "au côté ; A+B + pad règle les deux côtés, A+B + CLEAR + pad remet à zéro. Chaque mesure garde "
+          "ses propres pas A et B en flash : la phrase survit à une extinction.",
+}
+def _chain(title_en, title_fr, extra_en, extra_fr):
+    return dict(group="image",
+                provides=None,   # set below
+                status="experimental", doc="docs/CHAIN.md",
+                title={"en": title_en, "fr": title_fr},
+                text={"en": _CHAIN_TEXT["en"] + " " + extra_en,
+                      "fr": _CHAIN_TEXT["fr"] + " " + extra_fr})
+
+SHOWN["chain"] = dict(_chain("Bar chain", "Chaîne de mesures",
+                             "Boot path new in this build: emulation-tested, hardware check pending.",
+                             "Nouveau chemin de démarrage : testé en émulation, vérification matérielle à faire."),
+                      provides=["chain"])
+SHOWN["motion-chain"] = dict(_chain("Bar chain + motion", "Chaîne de mesures + motion",
+                                    "Motion recording is included in the same firmware.",
+                                    "L'enregistrement de motion est inclus dans le même firmware."),
+                             provides=["motion", "chain"])
+SHOWN["poly-chain"] = dict(_chain("Bar chain + polyrhythm", "Chaîne de mesures + polyrythme",
+                                  "Per-instrument lengths are included in the same firmware.",
+                                  "Les longueurs par instrument sont incluses dans le même firmware."),
+                           provides=["poly", "chain"])
+SHOWN["motion-poly-chain"] = dict(_chain("Bar chain + motion + polyrhythm",
+                                         "Chaîne de mesures + motion + polyrythme",
+                                         "All three mods in one firmware.",
+                                         "Les trois mods dans un seul firmware."),
+                                  provides=["motion", "poly", "chain"])
+
+
 def main():
     out = {"app_sha256": tr8patch.APPA_SHA256, "app_name": "TR-8:Appli      18-0926_11:19:43",
            "version": "1.61", "patches": {}}
