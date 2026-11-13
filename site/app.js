@@ -318,6 +318,7 @@ $("build").addEventListener("click", run);
 $("download").addEventListener("click", download);
 document.querySelectorAll("[data-lang]").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
 
-manifest = await (await fetch("patches.json")).json();
+// GitHub Pages sends max-age=600: revalidate so a new status or payload shows at once.
+manifest = await (await fetch("patches.json", { cache: "no-cache" })).json();
 setLang(lang);
 refresh();
