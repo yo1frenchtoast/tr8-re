@@ -205,7 +205,7 @@ Set CH to 3 steps (LAST STEP + CH + pad 3), leave BD without a length. Pattern l
 | 7 | Leave TR-REC (another mode button) | LAST STEP as stock |
 | 8 | Pattern length 12 (LAST STEP + pad 12), select BD | LAST STEP lit steadily (stock) |
 
-## Hardware test 6 (restart on the fly, one advance counter): not done yet
+## Hardware test 6 (restart on the fly, one advance counter): passed
 
 Set CH to 3 steps and RS to 5. Put CH on its step 1 only, RS on its steps 1 and 2, and BD on
 steps 1, 5, 9, 13.
@@ -250,4 +250,5 @@ steps 1, 5, 9, 13.
   pass. Hardware test 5 (2026-11-13, `motion-poly-chain`): passed, every check as described.
 - One advance counter (`poly_n`) instead of the per-instrument heads and the reset flag, so the
   restart on the fly (TAP + START/STOP, panel task) and the sequencer never write the same
-  variables in two steps. Same behaviour; emulation tests pass. Hardware test 6 pending.
+  variables in two steps. Same behaviour; emulation tests pass. Hardware test 6 (2026-11-13,
+  `motion-poly-chain`): passed, every check as described, including fast TAP + START/STOP.
