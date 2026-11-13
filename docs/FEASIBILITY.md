@@ -52,11 +52,11 @@ bars. Each side of a pattern has its own length: A plays bars 1..Na with its A s
 1..Nb with its B steps, and A+B plays the A sequence then the B sequence. Each pattern keeps its
 own eight bars and its own two lengths, so switching pattern switches the phrases. Its code and
 its 128-byte bar index do not fit the two developer-dump regions, so the chain uses the "grow the
-image" method: the patcher extends the decompressed image to cover 0x60281C9C and puts the code
+image" method: the patcher extends the decompressed image to cover 0x60282794 and puts the code
 and state at 0x60281200, above the firmware bss that the startup code zeroes, and moves the RTOS
 pool start by 64 KB (0x60280988 -> 0x60290988) so the pool cannot reach it. The cave stays free
 for motion/poly, so the chain combines with them and the web flasher offers every combination. It
-is emulation-tested (224 chain checks plus the three combinations, including a simulated power
+is emulation-tested (249 chain checks plus the three combinations, including a simulated power
 cycle, log compaction and the chip's write protection); the step engine is untouched and no
 pattern slot is spent on a bar. The larger image still ends far below `appB`, and the flash log
 lives outside the application's compressed range. While

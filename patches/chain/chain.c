@@ -49,10 +49,20 @@
  *   entry (128 bytes): magic, seq | pattern << 16 | bar << 20, LAST_A | LAST_B << 8, checksum,
  *   then 26 words, one per step row: A mask | B mask << 16, then the scale.
  * The log is append-only, so an edit costs one 128-byte program (no erase, the pattern is
- * never lost by a torn write); a full block is compacted into the scratch block. The pattern
- * commit is redirected: instead of copying the working copy into area 4 slot n+1, the entry
- * for (pattern, bar) is appended, which is why slot n+1 keeps the pattern's original A/B steps
- * and can serve as the default for a bar that was never recorded.
+ * never lost by a torn write); a full block is compacted into the scratch block, and the boot
+ * scan finishes an interrupted compaction from that scratch block. The pattern commit is
+ * redirected only while that pattern has a side sequence: instead of copying the working copy
+ * into area 4 slot n+1, the entry for (pattern, bar) is appended, which is why slot n+1 keeps
+ * the pattern's original A/B steps and can serve as the default for a bar that was never
+ * recorded. A pattern with no side sequence keeps the stock commit, so its edits survive a
+ * reflash.
+ *
+ * Tasks (docs/DEVELOPING.md section 3): chain_var and chain_wrap run in the sequencer task;
+ * chain_view, chain_press, chain_edit, chain_led4, chain_commit and the log/store code run in
+ * the panel task. The sequencer never touches the flash: it reads a RAM copy of the bars that
+ * the panel task fills (bar_ram). State has one writer: the sequencer writes chain_pos,
+ * chain_side, chain_row and chain_wrapping; the panel writes cur_pat, cur_bar, cur_side,
+ * chain_sel, chain_jump, chain_swallow and the log index.
  */
 #include "tr8_v161.h"
 
@@ -92,11 +102,18 @@ typedef void (*fl_sess_fn)(void);
 #define F_READ  ((fl_read_fn)0x60003EA3)
 #define F_ERASE ((fl_erase_fn)0x60003EDB)
 
-uint8_t chain_pos;        /* position in this pass, 0..na+nb-1 (A+B) or 0..n-1 (A/B) */
-uint8_t chain_side;       /* side being played: 0 = A, 1 = B */
-uint8_t chain_row[2];     /* bar last selected or played on each side, for the bar row */
-uint8_t chain_wrapping;   /* set by chain_wrap around the FUN_600095F0 call */
-uint8_t chain_swallow;    /* bit n: pad n's press was taken, its release is swallowed too */
+/* Sequencer task only (see the "Tasks" note in the header). */
+volatile uint8_t chain_pos;      /* position in this pass, 0..na+nb-1 (A+B) or 0..n-1 (A/B) */
+volatile uint8_t chain_side;     /* side being played: 0 = A, 1 = B */
+volatile uint8_t chain_row[2];   /* bar last played on each side, for the bar row */
+volatile uint8_t chain_wrapping; /* set by chain_wrap around the FUN_600095F0 call */
+
+/* Panel task only. chain_jump and chain_sel are the panel's hand-off to the sequencer (each a
+ * single byte, written last after the data it describes); the sequencer only reads them. */
+volatile uint8_t chain_jump;     /* (bar + 1) | toggle | side << 5, 0 = no jump asked for yet */
+volatile uint8_t chain_sel[2];   /* bar last selected on each side, for the stopped bar row */
+uint8_t chain_swallow;           /* bit n: pad n's press was taken, its release swallowed too */
+static uint8_t chain_tog;        /* panel: toggles bit 4, so two selects of one bar differ */
 
 /* Newest entry index + 1 per (pattern, bar), 0 = none: 16 patterns x 8 bars. The patch lives in
  * the application image above the firmware bss (0x60281200, see link.ld): the patcher grows the
@@ -104,12 +121,24 @@ uint8_t chain_swallow;    /* bit n: pad n's press was taken, its release is swal
  * boot nor handed to the pool. store_init clears the index before its first use anyway. */
 static uint8_t tab[NBARS * 16];
 static uint8_t wr_i;             /* next log entry */
+static uint8_t flash_bad;        /* a compaction step did not land: keep the scratch block */
 static uint16_t seqn;            /* last sequence number written */
-static uint8_t inited;           /* the log has been scanned */
-static uint8_t cur_pat = 0xFF;   /* pattern whose bar is in the working copy, 0xFF = unknown */
-static uint8_t cur_bar;          /* bar in the working copy */
-static uint8_t cur_side;         /* side the working copy was loaded for */
+static volatile uint8_t inited;  /* the log has been scanned (panel task) */
+static volatile uint8_t cur_pat = 0xFF; /* pattern whose bars are loaded, 0xFF = unknown */
+static volatile uint8_t cur_bar; /* bar in the working copy */
+static volatile uint8_t cur_side;/* side the working copy was loaded for */
 static uint32_t clean;           /* wchash() of the working copy when it was loaded */
+
+/* Playback copy of each bar's log entry, filled by the panel task. Two buffers per bar: the
+ * panel writes the one the sequencer is not using and then flips cache_idx[bar] (one byte,
+ * written last), so the sequencer never reads flash and never sees a half-written bar
+ * (DEVELOPING.md section 3, rule 3). A buffer whose first word is not EMAGIC means the bar has
+ * no log entry and the pattern's own steps are the default. */
+static volatile uint8_t cache_idx[NBARS];
+static volatile uint32_t bar_ram[2][NBARS][ENTW];
+
+static uint8_t jump_seen;        /* sequencer: last chain_jump value it acted on */
+static uint8_t view_hold;        /* panel: sync() just changed pattern, skip one follow */
 
 static uint32_t ebuf[ENTW];
 
@@ -118,6 +147,18 @@ static volatile uint32_t *area_slot(int area, int slot);
 static uint32_t ent_off(int i)
 {
     return FL_BASE + (uint32_t)i * ENTB;
+}
+
+/* Publish bar `bar` for the sequencer: copy the entry into the buffer it is not reading, then
+ * flip the index. A null entry marks the bar as "no log entry". Panel task only. */
+static void cache_put(int bar, const uint32_t *e)
+{
+    volatile uint32_t *d = bar_ram[cache_idx[bar] ^ 1u][bar];
+    int i;
+
+    for (i = 0; i < ENTW; i++)
+        d[i] = e ? e[i] : 0;
+    cache_idx[bar] ^= 1u;              /* published last */
 }
 
 /* Every program and erase goes through one of these, so the chip is never left protected while
@@ -182,6 +223,22 @@ static uint32_t wchash(const volatile uint32_t *s)
     return h;
 }
 
+/* Move the write pointer to the next erased slot. It is called only after a compaction or when
+ * recovering the scratch block, both of which leave a run of erased slots at or above wr_i. */
+static int find_free(void)
+{
+    int n = 0;
+
+    while (n < NENT) {
+        F_READ(ent_off(wr_i), 4, ebuf);
+        if (ebuf[0] == 0xFFFFFFFFu)
+            return 1;
+        wr_i = (uint8_t)((wr_i + 1) % NENT);
+        n++;
+    }
+    return 0;
+}
+
 /* Scan the log once: the newest entry per bar, and where to append. The newest entry of a bar
  * is not always the last one in address order: after the ring wraps or a block is compacted, an
  * older duplicate can sit above a newer entry. Sequence numbers decide, compared modulo 2^16 so
@@ -191,7 +248,7 @@ static uint32_t wchash(const volatile uint32_t *s)
  * the sequence number is the highest one stored. */
 static void store_init(void)
 {
-    int i, k;
+    int i, k, have = 0;
     uint32_t w;
 
     for (i = 0; i < NBARS * 16; i++)
@@ -205,8 +262,10 @@ static void store_init(void)
         }
         k = ekey(ebuf);
         w = ebuf[1] & 0xFFFF;
-        if ((int16_t)(w - seqn) > 0)
+        if (!have || (int16_t)(w - seqn) > 0) {
             seqn = (uint16_t)w;
+            have = 1;
+        }
         if (!tab[k]) {
             tab[k] = (uint8_t)(i + 1);
             continue;
@@ -215,6 +274,36 @@ static void store_init(void)
         if (eok(ebuf, -1) && (int16_t)(w - (ebuf[1] & 0xFFFF)) > 0)
             tab[k] = (uint8_t)(i + 1);
     }
+    /* Finish an interrupted compaction. store_gc copies the live entries to the scratch block,
+     * erases their block and writes them back; a power cut between the erase and the end of the
+     * copy-back leaves the only copy in the scratch block. An entry that the live log no longer
+     * has (tab[k] == 0) is appended again with its old sequence number, so nothing that was
+     * stored before the cut is lost. A duplicate that the log still has is ignored: the scan
+     * above already chose the newest copy. */
+    for (i = 0; i < EPB; i++) {
+        F_READ(FL_SCR + (uint32_t)i * ENTB, ENTB, ebuf);
+        if (!eok(ebuf, -1))
+            continue;
+        w = ebuf[1] & 0xFFFF;
+        if (!have || (int16_t)(w - seqn) > 0) {
+            seqn = (uint16_t)w;
+            have = 1;
+        }
+        k = ekey(ebuf);
+        if (tab[k])
+            continue;
+        if (!find_free())
+            break;                  /* no free slot: the five blocks always keep one */
+        F_READ(FL_SCR + (uint32_t)i * ENTB, ENTB, ebuf);   /* find_free() used ebuf */
+        if (!eok(ebuf, -1))
+            continue;
+        if (!fl_put((int)wr_i)) {
+            flash_bad = 1;          /* keep the scratch block: retry on the next boot */
+            break;
+        }
+        tab[k] = (uint8_t)(wr_i + 1);
+        wr_i = (uint8_t)((wr_i + 1) % NENT);
+    }
     inited = 1;
 }
 
@@ -222,8 +311,13 @@ static void store_init(void)
  * back at its start and continue there. There are at most 128 live entries (16 patterns x 8 bars)
  * in 160 slots, so the block with the fewest of them always keeps a free slot: compacting the
  * block at the write pointer would not help when all of its entries are live. A slot is live when
- * tab[] names it; any other valid entry in the block is an older duplicate and is dropped. */
-static void store_gc(void)
+ * tab[] names it; any other valid entry in the block is an older duplicate and is dropped.
+ *
+ * Every copy is read back. A copy that did not land stops the compaction and sets flash_bad: the
+ * scratch block keeps the only copy of the entries that were not written back, so no later save
+ * may erase it (that would lose them). store_init picks them up on the next boot. 1 = the block
+ * was compacted, 0 = a write failed and nothing else may be written this boot. */
+static int store_gc(void)
 {
     int i, k, n = 0, blk = 0, b, cnt, bestn = EPB + 1;
 
@@ -237,18 +331,30 @@ static void store_gc(void)
     for (i = 0; i < EPB; i++) {
         int idx = blk * EPB + i;
         F_READ(ent_off(idx), ENTB, ebuf);
+        if (!eok(ebuf, -1))            /* erased or torn: its key is not an index */
+            continue;
         if (tab[k = ekey(ebuf)] == idx + 1) {
             fl_write(FL_SCR + (uint32_t)n * ENTB);
+            F_READ(FL_SCR + (uint32_t)n * ENTB, ENTB, ebuf);
+            if (!eok(ebuf, -1)) {      /* the copy did not land: the block is still whole */
+                flash_bad = 1;
+                return 0;
+            }
             n++;
         }
     }
     fl_erase(FL_BASE + (uint32_t)blk * 0x1000u);
     for (i = 0; i < n; i++) {
         F_READ(FL_SCR + (uint32_t)i * ENTB, ENTB, ebuf);
-        fl_put(blk * EPB + i);
-        tab[ekey(ebuf)] = (uint8_t)(blk * EPB + i + 1);
+        k = ekey(ebuf);
+        if (!fl_put(blk * EPB + i)) {  /* the rest is only in the scratch block */
+            flash_bad = 1;
+            return 0;
+        }
+        tab[k] = (uint8_t)(blk * EPB + i + 1);
     }
     wr_i = (uint8_t)(blk * EPB + n);
+    return 1;
 }
 
 /* Append the working copy (area 4 slot 0) as bar `bar` of pattern `pat`. 1 = the entry is in
@@ -263,13 +369,16 @@ static int store_save(int pat, int bar)
 
     if (!inited)
         store_init();
+    if (flash_bad)
+        return 0;                          /* a compaction step failed: retry after a reboot */
     h = wchash(s);
     if (h == clean)
         return 1;                          /* nobody touched the bar: it is already stored */
     idx = wr_i;
     F_READ(ent_off((int)idx), 4, ebuf);
     if (ebuf[0] != 0xFFFFFFFFu) {          /* block still in use: reclaim one */
-        store_gc();
+        if (!store_gc())
+            return 0;                      /* index and clean hash untouched */
         idx = wr_i;
     }
     ebuf[0] = EMAGIC;
@@ -280,9 +389,15 @@ static int store_save(int pat, int bar)
     ebuf[30] = s[1] & 3;              /* scale: the redirect never writes the pattern slot */
     ebuf[3] = ecrc(ebuf);
     ok = fl_put((int)idx);
-    tab[pat * NBARS + bar] = (uint8_t)(idx + 1);
+    /* The pointer moves past a failed slot too: a torn program cannot be reused without an
+     * erase. The index and the clean hash are not touched, so the next save tries this bar again
+     * in the next slot (DEVELOPING.md section 7, rule 2). */
     wr_i = (uint8_t)((idx + 1) % NENT);
-    clean = h;
+    if (ok) {
+        tab[pat * NBARS + bar] = (uint8_t)(idx + 1);
+        clean = h;
+        cache_put(bar, ebuf);              /* the bar the sequencer will play next */
+    }
     return ok;
 }
 
@@ -323,6 +438,7 @@ static void slot_load(int pat, int bar, int side)
             d[2] = ebuf[2] & 0xFF;
             d[3] = (ebuf[2] >> 8) & 0xFF;
             d[0] = (uint32_t)side;
+            cache_put(bar, ebuf);
             clean = wchash(d);
             return;
         }
@@ -331,30 +447,42 @@ static void slot_load(int pat, int bar, int side)
     for (i = 0; i < 56; i++)
         d[i] = src[i];
     d[0] = (uint32_t)side;
+    cache_put(bar, 0);
     clean = wchash(d);
 }
 
-/* Fill the player struct from bar `bar` of pattern `pat`, without touching the working copy. */
-/* Fill the player struct from a bar's 26 step rows and its LAST_A/LAST_B. */
+/* Load the pattern's own steps (area 4 slot pat+1) into the working copy, ignoring the log.
+ * Used when a side sequence is reset to stock, so that the stock commit that the Ptn2 setter
+ * triggers writes the pattern itself and not the bar that happened to be loaded. */
+static void pattern_load(int pat, int side)
+{
+    volatile uint32_t *d = area_slot(TR8_AREA_PATTERN, 0);
+    volatile uint32_t *src = area_slot(TR8_AREA_PATTERN, pat + 1);
+    int i;
+
+    for (i = 0; i < 56; i++)
+        d[i] = src[i];
+    d[0] = (uint32_t)side;
+    clean = wchash(d);
+}
+
+/* Fill the player struct from bar `bar` of pattern `pat`, without touching the working copy.
+ * This runs in the sequencer task, so it reads the panel's RAM copy and never the flash. */
 static void struct_bar(int pat, int bar)
 {
     volatile uint32_t *def = area_slot(TR8_AREA_PATTERN, pat + 1);
     volatile uint8_t *d = TR8_PTN_STRUCT, *p = d;
-    uint8_t idx = tab[pat * NBARS + bar];
-    int i, ok = 0;
+    const uint32_t *e = (const uint32_t *)bar_ram[cache_idx[bar]][bar];
+    int i, ok = eok(e, pat * NBARS + bar);
 
-    if (idx) {
-        F_READ(ent_off(idx - 1), ENTB, ebuf);
-        ok = eok(ebuf, pat * NBARS + bar);
-    }
     /* The player struct has 4-byte A/B pairs for the first four rows (0x20..0x2F), then 6-byte
      * ones (0x30..): walking a pointer is shorter than computing the offset of every row. */
     p = d + 0x20;
     for (i = 0; i < ROWS; i++) {
         uint32_t a, b;
         if (ok) {
-            a = ebuf[4 + i] & 0xFFFF;
-            b = ebuf[4 + i] >> 16;
+            a = e[4 + i] & 0xFFFF;
+            b = e[4 + i] >> 16;
         } else {
             a = def[4 + 2 * i] & 0xFFFF;
             b = def[5 + 2 * i] & 0xFFFF;
@@ -363,9 +491,9 @@ static void struct_bar(int pat, int bar)
         *(volatile uint16_t *)(p + 2) = (uint16_t)b;
         p += i < 4 ? 4 : 6;
     }
-    *(volatile uint32_t *)(d + TR8_PTN_LAST_A) = ok ? (ebuf[2] & 0xFF) : def[2];
-    *(volatile uint32_t *)(d + TR8_PTN_LAST_B) = ok ? ((ebuf[2] >> 8) & 0xFF) : def[3];
-    TR8_FN_SCALE((void *)d, ok ? (int)(ebuf[30] & 3) : (int)def[1]);
+    *(volatile uint32_t *)(d + TR8_PTN_LAST_A) = ok ? (e[2] & 0xFF) : def[2];
+    *(volatile uint32_t *)(d + TR8_PTN_LAST_B) = ok ? ((e[2] >> 8) & 0xFF) : def[3];
+    TR8_FN_SCALE((void *)d, ok ? (int)(e[30] & 3) : (int)def[1]);
 }
 
 /* ---------------------------------------------------------------- chain */
@@ -407,8 +535,28 @@ static void show_fail(void)
     show4(0x4C494146u);                   /* "FAIL" */
 }
 
+/* Fill the playback cache for pattern `pat`. Panel task only: it is the only flash reader. */
+static void cache_load(int pat)
+{
+    int i;
+
+    for (i = 0; i < NBARS; i++) {
+        uint8_t t = tab[pat * NBARS + i];
+        const uint32_t *e = 0;
+
+        if (t) {
+            F_READ(ent_off(t - 1), ENTB, ebuf);
+            if (eok(ebuf, pat * NBARS + i))
+                e = ebuf;
+        }
+        cache_put(i, e);
+    }
+}
+
 /* The panel changed pattern: the working copy is now that pattern's own steps, so bar 1 (or
- * the bar the user selects next) has to be loaded before anything edits or plays it. */
+ * the bar the user selects next) has to be loaded before anything edits or plays it. The cache
+ * carries the bars to the sequencer, and cur_pat is written last, after the cache. Panel task
+ * only. */
 static void sync(void)
 {
     int p = (int)(area_slot(TR8_AREA_SETUP, 0)[TR8_SETUP_PATTERN] & 0xF);
@@ -416,14 +564,19 @@ static void sync(void)
     if (!inited)
         store_init();
     if (p != cur_pat) {
-        int side = (int)(area_slot(TR8_AREA_PATTERN, 0)[0] & 1);   /* the pattern's own VARI */
+        volatile uint32_t *wc = area_slot(TR8_AREA_PATTERN, 0);
+        uint32_t vari = wc[0];             /* the pattern's own VARI: 0 = A, 1 = B, 2 = A+B */
+        int side = vari == 1;              /* A+B starts on the A side */
 
-        cur_pat = (uint8_t)p;
+        cache_load(p);
         cur_bar = 0;
         cur_side = (uint8_t)side;
-        chain_row[0] = 0;
-        chain_row[1] = 0;
+        chain_sel[0] = 0;
+        chain_sel[1] = 0;
         slot_load(p, 0, side);
+        wc[0] = vari;                      /* slot_load wrote the side: keep A+B */
+        cur_pat = (uint8_t)p;
+        view_hold = 1;                     /* this pass must not follow the old row */
     }
 }
 
@@ -431,9 +584,17 @@ static void sync(void)
  * A plays bars 1..Na, B bars 1..Nb, A+B the A sequence then the B one; all start at bar 1. */
 void chain_var(void *obj)
 {
-    int na, nb, v, pos, bar;
+    int na, nb, v, pos, bar, side;
+    uint8_t j;
 
-    sync();
+    /* The panel task owns the flash scan and the bar cache. Until it has seen this pattern
+     * (first start after power-on, or a start from MIDI), play one stock pass and ask the panel
+     * to catch up; the next bar boundary uses the chain. No flash access from here. */
+    if (!inited || (int)(area_slot(TR8_AREA_SETUP, 0)[TR8_SETUP_PATTERN] & 0xF) != (int)cur_pat) {
+        *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
+        TR8_FN_VARIATION(obj);
+        return;
+    }
     v = (int)TR8_SEQ_VARI;
     na = clen(0);
     nb = clen(1);
@@ -442,36 +603,52 @@ void chain_var(void *obj)
         return;
     }
     /* A wrap advances one bar; a fresh start begins at the bar last selected with A/B + pad
-     * (cur_bar, 0-based; it is 0 when nothing was selected, so the phrase starts at bar 1). */
-    pos = chain_wrapping ? (int)chain_pos + 1 : (int)cur_bar;
+     * (cur_bar, 0-based; it is 0 when nothing was selected, so the phrase starts at bar 1). In
+     * A+B, cur_bar is an index inside one side, so a B-side selection adds the A length. A new
+     * chain_jump overrides both: it is the bar the panel just selected, and its side bit says
+     * whether that was the B side of an A+B phrase. */
+    j = chain_jump;
+    if (j != jump_seen) {
+        jump_seen = j;
+        pos = (int)(j & 0x0F) - 1;              /* bar 1..8 -> 0..7; 0 bits = bar 1 */
+        if (pos < 0)
+            pos = 0;
+        if (v == 2 && (j & 0x20))
+            pos += na;                          /* selected on the B side */
+    } else {
+        pos = chain_wrapping ? (int)chain_pos + 1
+                             : (int)cur_bar + (v == 2 && cur_side ? na : 0);
+    }
     if (v == 0) {
         if (pos >= na)
             pos = 0;
-        chain_side = 0;
+        side = 0;
         bar = pos;
     } else if (v == 1) {
         if (pos >= nb)
             pos = 0;
-        chain_side = 1;
+        side = 1;
         bar = pos;
     } else {
         if (pos >= na + nb)
             pos = 0;
         if (pos >= na) {
-            chain_side = 1;
+            side = 1;
             bar = pos - na;
         } else {
-            chain_side = 0;
+            side = 0;
             bar = pos;
         }
     }
     chain_pos = (uint8_t)pos;
-    chain_row[chain_side] = (uint8_t)bar;
     struct_bar(cur_pat, bar);
-    TR8_SEQ_VARIATION = chain_side;
+    TR8_SEQ_VARIATION = (uint32_t)side;
     TR8_FN_APPLY(obj);
-    /* The step view follows the bar that is playing (chain_view): ask the panel to paint its
-     * step pads on its next pass. Only this bit, so the numeric text is left alone. */
+    /* Publish the pass for the panel (row then side, so a reader never pairs a new side with
+     * an old row), then ask it to paint the step pads. Only that bit, so the text is left
+     * alone. */
+    chain_row[side] = (uint8_t)bar;
+    chain_side = (uint8_t)side;
     *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
 }
 
@@ -499,14 +676,18 @@ void chain_view(void *obj)
     int side, bar;
 
     sync();                        /* the panel may have switched pattern: not our bar's copy */
-    side = (int)chain_side;
-    bar = (int)chain_row[side];
-    if (TR8_SEQ_RUNNING && (bar != (int)cur_bar || side != (int)cur_side)) {
-        if (!store_save(cur_pat, cur_bar))     /* keep the bar being left, if it was edited */
-            show_fail();
-        cur_bar = (uint8_t)bar;
-        cur_side = (uint8_t)side;
-        slot_load(cur_pat, bar, side);
+    if (view_hold) {               /* sync() just loaded bar 1 of the new pattern */
+        view_hold = 0;
+    } else {
+        side = (int)chain_side;
+        bar = (int)chain_row[side];
+        if (TR8_SEQ_RUNNING && (bar != (int)cur_bar || side != (int)cur_side)) {
+            if (!store_save(cur_pat, cur_bar))  /* keep the bar being left, if it was edited */
+                show_fail();
+            cur_bar = (uint8_t)bar;
+            cur_side = (uint8_t)side;
+            slot_load(cur_pat, bar, side);
+        }
     }
     TR8_FN_STEPVIEW(obj);
 }
@@ -516,9 +697,9 @@ void chain_view(void *obj)
 /* While exactly one of VARIATION A/B is held the 16 pads are that side's bar row: the bars that
  * side has are green (1, 9, 2) and the bar at that side's head blinks yellow (1, 0, 6): b = 0 is
  * the firmware's blink flag, as in the play colour (1, 0, 2), and c = 6 is yellow. The head is the
- * bar the sequencer is playing on that side, or, stopped, the bar last selected on it. Pads past
- * the side's last bar are off, so only the bars that side has are lit. Releasing the button gives
- * the pads back to whatever the screen wants to show.
+ * bar the sequencer is playing on that side (chain_row), or, stopped, the bar last selected on
+ * it (chain_sel). Pads past the side's last bar are off, so only that side's bars are lit.
+ * Releasing the button gives the pads back to whatever screen wants to show.
  *
  * Every screen paints pads through one of four tiny setters, so the hook is inside them, not on a
  * view: 0x60017748 (raw setter FUN_6001773A), 0x6001776C (palette setter FUN_6001774E),
@@ -537,7 +718,7 @@ void chain_led4(void *obj, int led, int a, int b, int c)
 
         if (!n)
             n = 1;                         /* nothing selected: the pattern itself */
-        cur = (int)chain_row[hb];
+        cur = (int)(TR8_SEQ_RUNNING ? chain_row[hb] : chain_sel[hb]);
         if ((unsigned)cur >= (unsigned)n)
             cur = n - 1;                   /* the side shrank: blink its last bar */
         a = p < n;                         /* pads past the last bar: off */
@@ -561,6 +742,19 @@ __attribute__((noinline)) static void chain_edit(int pad, int a, int b)
     if (a && b) {
         int n = ex ? 0 : bar + 1;
 
+        if (!n) {
+            /* Back to stock: the working copy must be the pattern's own steps again before the
+             * Ptn2 setter triggers the pattern save (chain_commit then keeps the stock commit),
+             * and the pending jump must not point at a bar any more. */
+            pattern_load(cur_pat, 0);
+            cur_bar = 0;
+            cur_side = 0;
+            chain_sel[0] = 0;
+            chain_sel[1] = 0;
+            chain_tog ^= 0x10;
+            chain_jump = chain_tog;            /* no bar bits: the next pass starts at bar 1 */
+            *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
+        }
         TR8_PTN2_SET(0, CHAIN_COUNTS, n | (n << 4));
         show_ab(n);
         return;
@@ -568,9 +762,8 @@ __attribute__((noinline)) static void chain_edit(int pad, int a, int b)
 
     saved = save_dirty();                      /* keep the bar being left, if it was edited */
     cur_bar = (uint8_t)bar;
-    chain_row[b] = (uint8_t)bar;               /* the row follows the bar being edited */
-    chain_pos = (uint8_t)(bar - 1);            /* selecting a bar is also a jump: the next bar
-                                                * boundary (and the next start) plays this one */
+    cur_side = (uint8_t)b;
+    chain_sel[b] = (uint8_t)bar;               /* the row follows the bar being edited */
     slot_load(cur_pat, bar, b);
     struct_bar(cur_pat, bar);                 /* the same bar, into the player struct */
     TR8_SEQ_VARI = (uint32_t)(b ? 1 : 0);
@@ -591,6 +784,10 @@ __attribute__((noinline)) static void chain_edit(int pad, int a, int b)
         }
         TR8_PTN2_SET(0, CHAIN_COUNTS, na | (nb << 4));
     }
+    /* Hand the bar to the sequencer last: it may already be running, and this is the value that
+     * makes the next bar boundary play the bar just selected (see chain_var). */
+    chain_tog ^= 0x10;
+    chain_jump = (uint8_t)((bar + 1) | chain_tog | (b << 5));
     /* The bar is in slot 0 and in the player struct; ask the panel to repaint its step pads on
      * its next pass instead of notifying the screens from inside the press dispatch (that
      * synchronous observer walk is what froze the unit). Only the pads: the display was just
@@ -605,10 +802,10 @@ __attribute__((noinline)) static void chain_edit(int pad, int a, int b)
  * Runs before the screen, so this is the first code that can take the pad. */
 int chain_press(int id)
 {
+    sync();                            /* every press: the panel may have switched pattern */
     if ((unsigned)id < 16) {
         int a, b;
 
-        sync();
         if ((unsigned)id >= NBARS)
             goto stock;
         a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1;
@@ -643,15 +840,19 @@ int chain_release(int id)
 }
 
 /* Replaces "bl FUN_6000FC78" at 0x6001B7F4 (the firmware's pattern save, FUN_6001B7D8).
- * The working copy is one bar, not the pattern, so it is appended to the log instead of being
- * copied over area 4 slot n+1; that slot keeps the pattern's own A/B steps, which is what an
- * unrecorded bar plays. area 6 (weak accents, flams, this pattern's chain) is saved as before.
- * The guard matters: the firmware also saves a pattern the panel only just selected, before the
- * patch has seen a pad and loaded that pattern's bar 1. The working copy is then the pattern
- * itself, not a bar, so the stock commit is the right thing (and is a no-op copy in practice). */
+ * While this pattern has a side sequence the working copy is one bar, not the pattern, so it is
+ * appended to the log instead of being copied over area 4 slot n+1; that slot keeps the
+ * pattern's own A/B steps, which is what an unrecorded bar plays. area 6 (weak accents, flams,
+ * this pattern's chain) is saved as before. Without a side sequence, and for a pattern the panel
+ * only just selected (the firmware saves it before the patch has loaded a bar), the working copy
+ * is the pattern itself and the stock commit is the right thing. */
 void chain_commit(int a, int area, int slot, int b)
 {
-    if (area == TR8_AREA_PATTERN && slot >= 1 && slot - 1 == (int)cur_pat) {
+    /* Redirect only while this pattern has a side sequence. With no sequence the working copy
+     * is the pattern itself (sync/pattern_load loaded it there), so the stock commit is right
+     * and its slot keeps the pattern across an update/reflash. */
+    if (area == TR8_AREA_PATTERN && slot >= 1 && slot - 1 == (int)cur_pat &&
+        (clen(0) || clen(1))) {
         store_save(slot - 1, cur_bar);
         return;
     }

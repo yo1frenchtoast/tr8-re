@@ -83,11 +83,11 @@ PATCHES["poly"] = {
 
 # Bar chain (patches/chain/chain.c, docs/CHAIN.md).
 # Up to eight bars per pattern, each with its own A and B step set: A/B + pad 1..8 selects the bar
-# and grows that side's sequence, A+B + pad sets both lengths. The code and its 128-byte index
-# live in the application image above the firmware bss (0x60281200): the patcher grows the image
-# to cover them and the RTOS pool start moves by 64 KB, the motion-poly move. The developer-dump
-# cave is left to motion/poly, so the chain combines with them.
-CHAIN_IMAGE = (0x60281200, 0x60282200)
+# and grows that side's sequence, A+B + pad sets both lengths. The code, the 128-byte index and a
+# RAM cache of the bars live in the application image above the firmware bss (0x60281200): the
+# patcher grows the image to cover them and the RTOS pool start moves by 64 KB, the motion-poly
+# move. The developer-dump cave is left to motion/poly, so the chain combines with them.
+CHAIN_IMAGE = (0x60281200, 0x60283200)
 _chain_sites = [
     (0x60009614, thumb_bl(0x60009614, 0x6000E404), "chain_var"),    # restart: variation of the pass
     (0x600098CA, thumb_bl(0x600098CA, 0x600095F0), "chain_wrap"),   # pattern wrap: mark it as a wrap

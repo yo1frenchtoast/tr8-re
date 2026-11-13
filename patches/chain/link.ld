@@ -6,7 +6,7 @@
    motion-poly uses. 0x60280988-0x60281183 stays below this region for motion-poly's patch RAM;
    the startup zero-fill ends at 0x60280987, so nothing written here is erased. */
 MEMORY {
-  IMAGE (rwx) : ORIGIN = 0x60281200, LENGTH = 0x1000
+  IMAGE (rwx) : ORIGIN = 0x60281200, LENGTH = 0x2000
 }
 SECTIONS {
   .text : { *(.text*) *(.rodata*) } > IMAGE

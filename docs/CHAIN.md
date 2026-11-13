@@ -13,14 +13,15 @@ side that was never selected stays stock.
 Every pattern has its own eight bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: the tenth build — eight bars per side, the shrink gesture, the step view following the
-bar that is playing — **passed on a real TR-8** (hardware test below). This build moves the code
-and the bar index out of the developer-dump region and into the application image, so the chain
-**combines with `motion` and `poly`** and appears in the web flasher next to them. Emulation
-passes (224 chain checks plus the three combinations), but the new boot path — a larger
-decompressed image — has not been on a unit yet. Keep `work/TR8_UPD_chain_b4.BIN` (the confirmed
-standalone build) as the fallback. Like the other patches it is built from your own copy of
-Roland's v1.61 file.
+Status: the tenth build (standalone) — eight bars per side, the shrink gesture, the step view
+following the bar that is playing — **passed on a real TR-8** (hardware test below). The current
+build moves the code and the bar index out of the developer-dump region and into the application
+image, so the chain **combines with `motion` and `poly`** and appears in the web flasher next to
+them; it also carries the review fixes described in the test history (twelfth build). Emulation
+passes (249 chain checks plus the three combinations), but this build has not been on a unit yet —
+the boot path, a larger decompressed image, is the part to watch. Keep
+`work/TR8_UPD_chain_b4.BIN` (the confirmed standalone build) as the fallback. Like the other
+patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
 
@@ -176,13 +177,38 @@ The probe build also replaces `0x600199F6` in `FUN_6001961E` (`bl FUN_60013168`,
 test of the step-pad branch) with `bl chain_pad`; the real build does not, to make room in the
 second region (see Code space).
 
+**Task of every hook** ([DEVELOPING.md](DEVELOPING.md) section 3). The clock code and the panel
+dispatcher are different tasks, and two of the hooks are on the clock side, so the payload keeps
+their state apart:
+
+| Hook | Site | Task | Tag |
+|---|---|---|---|
+| `chain_var` | `0x60009614`, inside `FUN_600095F0` (start and every wrap) | sequencer | [code] |
+| `chain_wrap` | `0x600098CA`, inside `FUN_6000989C` (pattern wrap) | sequencer | [code] |
+| `chain_view` | `0x60016C44`, inside the HMI dispatcher `FUN_60016C08` (bit `0x04`) | panel | [code] |
+| `chain_press` | `0x60013842`, inside `FUN_600137DE` (press dispatch) | panel | [code] |
+| `chain_release` | `0x600137D2`, inside `FUN_6001377C` (release dispatch) | panel | [code] |
+| `chain_led4` | `0x60017748`, `0x6001776C`, `0x60017E18`, `0x60017E3A` (pad setters) | panel | [code] |
+| `chain_commit` | `0x6001B7F4`, inside `FUN_6001B7D8` (pattern save) | panel | [code] |
+| `chain_pad` (probe only) | `0x600199F6`, inside `FUN_6001961E` (global button handler) | panel | [code] |
+
+The sequencer task writes `chain_pos`, `chain_side`, `chain_row` and `chain_wrapping` only. The
+panel task writes `cur_pat`, `cur_bar`, `cur_side`, `chain_sel`, `chain_swallow`, `chain_jump`,
+the log index and the playback cache. Each hand-off between them is one byte written last, after
+the data it describes: `chain_jump` (the bar the panel just selected) and the per-bar
+`cache_idx` (flipped after the bar copy). No buffer is written by both tasks.
+
 `FUN_600095F0` restarts the pattern at start and at every wrap
 ([FINDINGS.md](FINDINGS.md) section 7, "Pattern restart and variation"). It first fills the
 player struct `0x6012FA64` from area 4 slot 0 (the working copy) and reads the last step after
 applying the variation. `chain_var` replaces the variation call inside it: it reads the two side
 lengths, picks the bar and the side of this pass, writes that bar's content into the player
 struct and calls `FUN_6000E152` to put its A or B masks into the sound. With no length set, or
-with the panel on a side that has no bars, it calls the original `FUN_6000E404`.
+with the panel on a side that has no bars, it calls the original `FUN_6000E404`. This runs in
+the sequencer task, so it never reads the flash: the panel task keeps a RAM copy of the current
+pattern's eight bars (`bar_ram`) and the sequencer copies from that. Until the panel task has seen
+this pattern (the first start after power-on, or a start from MIDI), it plays one stock pass and
+asks the panel to catch up; the next bar boundary uses the chain.
 
 `chain_wrap` replaces the wrap call and sets a flag around `FUN_600095F0`, so `chain_var` knows
 whether this restart is a wrap (advance) or a start (bar 1). The tick never changes the pattern,
@@ -315,7 +341,10 @@ count as an edit), compared with the hash taken when the bar was loaded. If the 
 returns without touching the flash. This is what makes the follow free: during steady playback the
 panel pass loads each new bar and the bar being left is hashed, found unchanged and skipped, so
 playback issues no program or erase at all — no wear and no power-cut window. An edit made while
-playing changes the hash and is appended once, when the sequence moves on.
+playing changes the hash and is appended once, when the sequence moves on. The read-back decides:
+on a failed program the bar's index and clean hash are left alone, so the next save tries it again
+and the panel shows `FAIL`; only the write pointer moves on, because a torn program cannot be
+reused without an erase.
 
 The log is append-only: one save is one 128-byte program, no erase, so a torn write can only lose
 the newest entry and never a pattern. When the write pointer reaches a block that is still in use,
@@ -323,22 +352,49 @@ the block with the fewest live entries is compacted: its live entries (the newes
 pattern/bar) are copied to the scratch block, the block is erased and they are written back. That
 block always keeps a free slot, because there are at most 128 live entries (16 patterns x 8
 bars) in 160 slots. The newest entry per `(pattern, bar)` wins by sequence number, so the scan is
-correct after the ring wraps or a block is compacted; the log is scanned once on first use, after
-which a static index of 128 bytes points at each bar's newest entry. The index is 16 patterns x 8
-bars, which no longer fits the developer-dump region, so it lives with the code **in the
-application image** above the firmware bss (`0x60281B80`, `.bss`); the image grows to cover it and
-the RTOS pool start moves by 64 KB (see "Code space"). The image is decompressed from flash at
-every boot, so the index is in place and zeroed before `store_init` runs — there is no patch RAM
-and no boot hook for the chain.
+correct after the ring wraps or a block is compacted.
 
-**Pattern save is redirected.** The firmware's pattern save (`FUN_6001B7D8` -> `FUN_6000FC78`)
-normally copies area 4 slot 0 over slot *n+1*. `chain_commit` replaces that call for area 4:
-instead of the copy it appends the working copy as the current `(pattern, bar)` entry. So area 4
-slot *n+1* keeps the pattern's **own** steps, which is exactly what an unrecorded bar plays, and
-the pattern is never overwritten with one of its bars. If the save names a pattern the patch has
-not loaded (the firmware also saves a pattern the panel only just selected), the working copy is
-that pattern and not a bar, so the stock commit runs instead. The area-6 half of the save (weak
-accents, flams, the two side lengths) goes through the stock commit unchanged.
+**The boot scan finishes an interrupted compaction.** `store_gc` copies the live entries to the
+scratch block, erases their block and writes them back. Each copy is read back: if one did not
+land, the compaction stops, the scratch block keeps the only copy of the entries that were not
+written back, and `flash_bad` refuses every further save until the next boot (a copy that fails
+before the erase leaves the source block whole). If the power fails between the erase and the end
+of the copy-back, the only copy of those bars is likewise in the scratch block. `store_init`
+therefore reads the scratch block after the log: an entry the live log no longer has is appended
+again with its old sequence number, so nothing stored before the cut is lost; a duplicate the log
+still has is skipped, because the sequence-number scan already chose the newest copy. A cut or a
+dropped program before the erase leaves both copies and takes the same path.
+
+**The log is scanned by the panel task, once per boot.** `chain_press` and `chain_view` call
+`sync()`, which scans on its first pass (or when the pattern changed) and then fills the playback
+cache; the sequencer never calls it. The index is 128 bytes (16 patterns x 8 bars), which
+no longer fits the developer-dump region, so it lives with the code **in the application image**
+above the firmware bss (`0x60281E68` onward, `.bss`); the image grows to cover it and the RTOS
+pool start moves by 64 KB (see "Code space"). The image is decompressed from flash at every boot,
+so the index is in place and zeroed before `store_init` runs — there is no patch RAM and no boot
+hook for the chain.
+
+**The sequencer reads RAM, not flash.** The eight bars of the current pattern are kept twice in
+the image (`bar_ram[2][8][32]`). The panel task reads a bar's log entry, copies it into the buffer
+the sequencer is not using, and then flips that bar's `cache_idx` byte. `struct_bar` reads the
+buffer the index names, so a bar boundary never issues a flash read and never sees a half-written
+entry; a buffer whose first word is not the magic means the bar has no entry, and the pattern slot
+is played. The panel fills the cache on a pattern change (before `cur_pat` is written) and after
+every save.
+
+**Pattern save is redirected only while the pattern has a chain.** The firmware's pattern save
+(`FUN_6001B7D8` -> `FUN_6000FC78`) normally copies area 4 slot 0 over slot *n+1*. While the
+current pattern has a side sequence (`clen(0) != 0 || clen(1) != 0`), `chain_commit` replaces that
+call for area 4: instead of the copy it appends the working copy as the current `(pattern, bar)`
+entry. So area 4 slot *n+1* keeps the pattern's **own** steps, which is exactly what an unrecorded
+bar plays, and the pattern is never overwritten with one of its bars. A pattern with no side
+sequence keeps the stock commit, so its edits stay in area 4 and survive a reflash or an update.
+If the save names a pattern the patch has not loaded (the firmware also saves a pattern the panel
+only just selected), the working copy is that pattern and not a bar, so the stock commit runs
+instead. `A+B+CLEAR+pad` loads the pattern's own steps into slot 0 before clearing the lengths, so
+the save that the Ptn2 setter triggers stores the pattern, not the bar that happened to be loaded.
+The area-6 half of the save (weak accents, flams, the two side lengths) goes through the stock
+commit unchanged.
 
 **Side lengths.** Index 17 (global id `0x138`) holds the two lengths in one parameter: the low
 nibble is Na, the high nibble Nb, each 0..8 (0 = that side was never selected). It is written with
@@ -348,7 +404,8 @@ collide; a future combined build can use both. The earlier build's indices 15/16
 `0x137`) are no longer read or written. A firmware update erases the log blocks (the updater
 rewrites flash `0x30000`-`0x3DFFFF`, [UPDATE.md](UPDATE.md)), so the bars fall back to the pattern
 after an update; the side lengths survive, because they are ordinary pattern parameters in the
-user area. Another patch must not claim `0x3DA000`-`0x3DFFFF` while this one is installed.
+user area (stock firmware ignores them). Another patch must not claim `0x3DA000`-`0x3DFFFF` while
+this one is installed (see "What is lost, and when").
 
 **Backup caveats.** The USB backup stores named parameters only, so neither the Ptn2 side lengths
 nor the bar log is in it: after a restore, the patterns are back to their own steps and every bar
@@ -356,23 +413,41 @@ falls back to the pattern. Also, the backup reads area 4 slot 0, which is the se
 bar is selected, so take a backup with no side sequence set (or after a fresh start) to capture
 the pattern's own steps.
 
+**What is lost, and when** ([DEVELOPING.md](DEVELOPING.md) section 7, rule 6):
+
+| Event | Bars in the log (`0x3DB000`-`0x3DFFFF`; the scratch block at `0x3DA000` holds their copies during a compaction) | Pattern slots (user area) | Side lengths (Ptn2 `0x138`) |
+|---|---|---|---|
+| Power cut while saving a bar | The newest save only, and only if its program was torn. Every older bar survives; a cut during compaction is finished from the scratch block on the next boot. | Unchanged | Unchanged |
+| A program the chip drops | The bar being saved is retried by the next save. If it fails during a compaction, the compaction stops before anything is lost, the scratch block keeps the rest, saves are refused until the next boot, and that boot recovers them from it. | Unchanged | Unchanged |
+| Flash stock firmware | **Lost**: the updater rewrites flash `0x30000`-`0x3DFFFF`. | Pattern edits made while that pattern had a chain lived only in the log, so they revert to the last stock save; patterns with no chain were saved normally. Kits are untouched. | Kept in flash but ignored by stock firmware; they become usable again if this build is flashed back with the same data intact |
+| Flash another patch | Same as stock firmware if the patch goes through the updater; a patch that installs without rewriting `0x30000`-`0x3DFFFF` keeps the log, but any patch that claims `0x3DA000`-`0x3DFFFF` collides with it. | As above | As above |
+| Firmware update (Roland) | **Lost**, same rewrite. | Patterns and kits survive (they are above the rewritten blocks); bar edits revert as above | Kept in the user area, ignored by stock firmware |
+
+While a side sequence is set the chain never writes area 4 slot *n+1*: its bar edits go only to
+the log. The two side lengths are ordinary pattern parameters, saved by the stock area-6 commit.
+That is why a reflash can lose bars — and with them the edits made while a chain was set — but
+never the patterns' stock step content.
+
 ### Code space
 
 The chain used to share the two developer-dump regions with `motion` and `poly`. They are too
-small for all of it (the eight-bar index alone is 128 bytes), so this build uses the **grow the
-image** method ([FINDINGS.md](FINDINGS.md) section 12, [DEVELOPING.md](DEVELOPING.md) "Code
+small for it now (the code, its 128-byte index and the 2 KB playback cache), so this build uses
+the **grow the image** method ([FINDINGS.md](FINDINGS.md) section 12, [DEVELOPING.md](DEVELOPING.md) "Code
 space"):
 
 | What | Where | Size |
 |---|---|---|
-| Code, `.data` | `0x60281200`-`0x60281B7C` in the application image | 2428 + 1 bytes |
-| Bar index and other state | `0x60281B80`-`0x60281C9B` (`.bss`, in the image) | 284 bytes |
+| Code, `.data` | `0x60281200`-`0x60281E67` in the application image | 3174 + 1 bytes |
+| Bar index, playback cache and other state | `0x60281E68`-`0x60282794` (`.bss`, in the image) | 2348 bytes |
+
+The cache alone is 2048 bytes (`bar_ram[2][8][32]`), so the patcher reserves 8 KB for the payload
+region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x60282794`.
 
 The firmware's bss ends at `0x60280987` (the startup code zeroes it) and the RTOS pool starts at
 `0x60280988`. The zero-fill bounds are their own startup literals (`0x601264EC` at `0x6000015C`,
 size `0x15A49C` at `0x60000160`), so the pool move does not extend the zeroing over the chain. The
 patcher writes the payload at `0x60281200` and **extends the decompressed image
-to `0x60281C9C`** with zeros; the boot loader decompresses that size to `0x60000000` without a
+to `0x60282794`** with zeros; the boot loader decompresses that size to `0x60000000` without a
 fixed cap (it is bounded only by `destination + decompressed size`, verified in `FUN_01000B3C` /
 `0x01000C76`). The startup zero-fill still stops at `0x60280987`, so the code and its state
 survive. The patcher then moves the RTOS pool start literal (`0x600104A8`) from `0x60280988` to
@@ -386,11 +461,11 @@ their sites plus these sites ([`tools/merge_payloads.py`](../tools/merge_payload
 build is the exception: it is still the old cave build (`probe.c`, `probe.ld`, 568 + 14 bytes,
 stock pool start), because it only exists to show the gesture on a unit.
 
-The image growth costs about 164 KB of compressed application (0xA5CF7 -> 0xCEA45 bytes): the
-zeros between the old image end and the new code compress well, and the module still ends at file
-offset 0x0FEA85, far below `appB` at 0x280000. The update file keeps its fixed 4 MB size. The
-patched application is recompressed by `tr8fw.pack` / the web flasher's compressor, and both
-produce the same bytes.
+The image growth costs about 164 KB of compressed application (0xA5CF7 -> 0xCEDDD bytes, from
+0x1309E0 to 0x282794 decompressed): the zeros between the old image end and the new code compress
+well, and the module still ends at file offset 0xFEE1D, far below `appB` at 0x280000. The update
+file keeps its fixed 4 MB size. The patched application is recompressed by `tr8fw.pack` / the web
+flasher's compressor, and both produce the same bytes.
 
 ## Why not a real 32- or 64-step pattern
 
@@ -442,7 +517,7 @@ writes a side length, a bar or the pattern:
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 220 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 249 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..8` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, `A/B + CLEAR + pad n` sets one side to exactly *n* in both directions without touching the
@@ -551,7 +626,7 @@ writes a side length, a bar or the pattern:
   compaction's free-slot invariant. Pads 1..8 select a bar; 9..16 keep their stock function, and
   LAST STEP still wins. Emulation passes (220 checks). **Confirmed on the unit** (hardware test
   below); kept as `work/TR8_UPD_chain_b4.BIN`.
-- Eleventh build (this one): **the chain becomes a module**. The code and the 128-byte index move
+- Eleventh build: **the chain becomes a module**. The code and the 128-byte index move
   out of the cave and into the application image at `0x60281200`; the patcher grows the
   decompressed image to `0x60281C9C` and moves the RTOS pool start by 64 KB
   (`0x60280988` -> `0x60290988`). The cave is left to `motion`, `poly` and `motion-poly`, so the
@@ -561,6 +636,21 @@ writes a side length, a bar or the pattern:
   beyond the image, like the Python one. The tenth build's flash log, log blocks and Ptn2 lengths
   are unchanged. Emulation: 224 chain checks and the combinations; the probe is still the cave
   build. Hardware: not tested yet — the boot path is the new part.
+- Twelfth build (this one): **review fixes and the storage contract**. The sequencer no longer
+  reads the flash or shares a buffer with the panel: the panel task fills a two-buffer RAM copy of
+  each bar (`bar_ram`, 2 KB) and the sequencer copies from it. `store_init` finishes an interrupted
+  compaction from the scratch block. The pattern-save redirect applies only while the pattern has
+  a side sequence, so ordinary patterns keep the stock commit and survive a reflash; `A+B+CLEAR`
+  reloads the pattern first. `seqn` starts from the first valid entry, so 0x8000..0xFFFF is
+  handled; `store_gc` checks a slot before using its key; a failed program leaves the index and
+  the clean hash alone and shows `FAIL` on the next save; the same holds for both copies of a
+  compaction, which also keeps the scratch block and refuses further saves until the next boot.
+  The image region grows from 4 KB to 8 KB for the cache. Emulation passes 249 chain checks,
+  including the section 7 fault tests: a dropped program (at the save and at every program of a
+  compaction), a power cut after each of the 19 flash operations of a compaction, torn slots
+  inside the compacted block, `seqn` across 0x8000, a pattern change with VARI = 2, an A+B start
+  after selecting a B bar while stopped, and checks that the sequencer issues no flash read or
+  write. Hardware: not tested yet.
 
 ## Hardware test (2026-11-13): the tenth build passed
 

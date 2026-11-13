@@ -93,16 +93,52 @@ def fl_erase(off, through_chip=False):
         PROTECT["refused"] += 1
         return
     FL[off:off + 0x1000] = b"\xff" * 0x1000
+    if through_chip:
+        CUT["ops"] += 1
+        _cut_now()
 
 def fl_prog(off, n, src, through_chip=False):
     if through_chip and PROTECT["on"]:
         PROTECT["refused"] += 1
         return
+    if through_chip and DROP["after"] is not None:
+        if DROP["after"] == 0:
+            DROP["after"] = None
+            return                     # the chip drops it: the read-back sees the old bytes
+        DROP["after"] -= 1
     for i, b in enumerate(uc.mem_read(src, n)):
         FL[off + i] &= b               # programming can only clear bits
+    if through_chip:
+        CUT["ops"] += 1
+        _cut_now()
 
 def fl_read(off, n, dst):              # reads work in either mode
     uc.mem_write(dst, bytes(FL[off:off + n]))
+
+# Fault injection for the storage contract (docs/DEVELOPING.md section 7). CUT["after"] = k runs
+# k flash operations and then unwinds the payload as if the power went away; DROP["after"] = k
+# drops program k of this save (the chip does not take it, so the read-back shows the old bytes).
+class PowerCut(Exception):
+    pass
+
+CUT = {"after": None, "hit": False, "ops": 0}
+DROP = {"after": None}
+
+def cut_after(n):
+    CUT["after"], CUT["hit"], CUT["ops"] = n, False, 0
+
+def drop_next_program():
+    DROP["after"] = 0
+
+def drop_program(k):
+    DROP["after"] = k
+
+def _cut_now():
+    if CUT["after"] is not None:
+        if CUT["after"] == 0:
+            CUT["hit"] = True
+            raise PowerCut
+        CUT["after"] -= 1
 
 def entry(i):
     o = ent_off(i)
@@ -122,6 +158,7 @@ def bar_entry(pat, bar):
 
 log = []
 WRITES = {"prog": 0, "erase": 0}        # flash traffic, to check that playback stays quiet
+READS = {"n": 0}                        # flash reads, to check that the sequencer has none
 held = set()
 STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E152: "apply",
          0x60013B34: "press", 0x60013B56: "release", 0x600095F0: "restart",
@@ -182,6 +219,7 @@ def hook(uc, addr, size, _):
             log.append(("led", r0, r1, r2, uc.reg_read(UC_ARM_REG_R3) & 0xFFFFFFFF,
                         struct.unpack("<I", uc.mem_read(sp, 4))[0]))
         elif name == "fl_read":
+            READS["n"] += 1
             fl_read(r0, r1, r2)
         uc.reg_write(UC_ARM_REG_R0, ret)
         uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR) | 1)
@@ -192,7 +230,10 @@ def call(fn, *args):
         uc.reg_write(reg, v & 0xFFFFFFFF)
     uc.reg_write(UC_ARM_REG_SP, 0x7000E000)
     uc.reg_write(UC_ARM_REG_LR, RET | 1)
-    uc.emu_start(fn | 1, RET, count=400000)
+    try:
+        uc.emu_start(fn | 1, RET, count=400000)
+    except PowerCut:
+        PROTECT["on"] = True           # the power is gone: the chip is not left writable
     if not PROTECT["on"]:
         PROTECT["left_open"] += 1      # the payload returned with the chip still writable
     return uc.reg_read(UC_ARM_REG_R0)
@@ -276,6 +317,11 @@ def release(n, *buttons):
     held.clear()
     return list(log)
 
+def sync_panel():
+    """The panel task's scan + cache fill. chain_press syncs on every button, pad or not."""
+    call(S["chain_press"], 0xFF)       # no pad id: the sequencer guard catches up, no edit
+    log.clear()
+
 SCALE = [8, 4, 6, 3]                  # pattern scale word -> player struct +0x1C
 def slot_addr(s):
     return A4 + 4 * C4 * s
@@ -308,6 +354,7 @@ def set_pattern(p):
     if old != p:
         uc.mem_write(p2base(old + 1), bytes(uc.mem_read(PTN2, 4 * C6)))
         uc.mem_write(PTN2, bytes(uc.mem_read(p2base(p + 1), 4 * C6)))
+        uc.mem_write(slot_addr(0), bytes(uc.mem_read(slot_addr(p + 1), 4 * C4)))
     w32(SETUP + 8, p)
     w32(SETUP + 0x3C, p)
 
@@ -407,8 +454,9 @@ if "--probe" in sys.argv:
                led_call(fn, 0x0F, 0x2A, held=(A,)), L(0x0F, *GREEN))
 else:
     set_counts(3, 2)                    # A = three bars, B = two
-    w32(RUN, 0)                         # stopped: each side's head is the bar being edited
+    w32(RUN, 0)                         # stopped: each side's head is the bar last selected
     uc.mem_write(S["chain_row"], b"\0\0")
+    uc.mem_write(S["chain_sel"], b"\0\0")
     for fn, args, c0 in RAW_SETTERS:
         expect(f"LED raw setter 0x{fn:08x}: A held, three green bars, bar 1 blinks yellow",
                row(fn, args, (A,)), want_row([BLINK, GREEN, GREEN, OFF]))
@@ -432,21 +480,25 @@ else:
         expect(f"LED palette setter 0x{fn:08x}: non-pad LEDs pass through",
                led_call(fn, 0x0F, 0x2A, held=(A,)), L(0x0F, *GREEN))
 
-    # Each side has its own head; the row blinks it whatever the panel is doing.
-    uc.mem_write(S["chain_row"], bytes([2, 1]))     # A head = bar 3, B head = bar 2
+    # Each side has its own head; the row blinks it whatever the panel is doing. Stopped, the
+    # head is the bar last selected (chain_sel); running, the bar being played (chain_row).
+    uc.mem_write(S["chain_sel"], bytes([2, 1]))     # stopped: A head = bar 3, B head = bar 2
     expect("LED: A head bar 3 -> pad 3 blinks yellow, pads 1-2 green",
            row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, BLINK, OFF]))
     expect("LED: B head bar 2 -> pad 2 blinks yellow, pad 1 green",
            row(0x6001773A, (1, 7, 7), (B,)), want_row([GREEN, BLINK, OFF, OFF]))
+    uc.mem_write(S["chain_row"], bytes([2, 1]))     # running: the sequencer owns the head
     w32(RUN, 1)
     expect("LED: running does not change the head mapping",
            row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, BLINK, OFF]))
     w32(RUN, 0)
     uc.mem_write(S["chain_row"], b"\0\0")
+    uc.mem_write(S["chain_sel"], b"\0\0")
 
     # Eight bars fill pads 1-8; pad 9 is the first one past the side's last bar.
     set_counts(8, 0)
     uc.mem_write(S["chain_row"], b"\0\0")
+    uc.mem_write(S["chain_sel"], b"\0\0")
     expect("LED: eight bars fill pads 1-8, the head bar 1 blinking yellow",
            [led_call(0x6001773A, PAD(n), 1, 7, 7, held=(A,)) for n in range(1, 9)],
            [L(PAD(1), *BLINK)] + [L(PAD(n), *GREEN) for n in range(2, 9)])
@@ -662,6 +714,7 @@ def set_chain(a, b):
 seed_ram()
 cold_boot()
 FL[:] = b"\xff" * len(FL)          # a clean log: every bar is the pattern itself
+sync_panel()                       # the panel task scans the log and fills the bar cache
 
 # A three-bar phrase on side A.
 set_chain(3, 0)
@@ -712,6 +765,7 @@ expect("A+B: back to A bar 1", wrap(), (0, 0, 0))
 seed_ram()
 cold_boot()
 FL[:] = b"\xff" * len(FL)
+sync_panel()
 set_chain(4, 0)
 w32(VARI, 0)
 expect("jump: nothing selected, a start begins at A bar 1", start(vari=0), (0, 0, 0))
@@ -751,8 +805,8 @@ expect("row: the A sequence starts with A bar 1 blinking",
 wrap()
 expect("row: ... and moves to A bar 2",
        row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, BLINK, GREEN, OFF]))
-expect("row: the B side keeps its own head (bar 2 from the A+B passes)",
-       row(0x6001773A, (1, 7, 7), (B,)), want_row([GREEN, BLINK, OFF, OFF]))
+expect("row: the B side has not played yet, so its head is its first bar",
+       row(0x6001773A, (1, 7, 7), (B,)), want_row([BLINK, GREEN, OFF, OFF]))
 w32(RUN, 0)
 
 # A side never selected: with the panel on A the stock variation runs; B still has its own
@@ -922,6 +976,7 @@ set_chain(3, 0)
 w32(VARI, 0)
 # The index is in the image and zeroed at boot; cold_boot clears the payload's .bss the same way.
 cold_boot()
+sync_panel()
 expect("power cycle: the log is rescanned and bar 2 still has the edit",
        (start(vari=0), wrap(), struct_rows()[5]),
        ((0, 0, 0), (0, 0, 1), (0x7777, 0x8888)))
@@ -947,6 +1002,7 @@ old_entry(0, 1, 0x1111)                       # pad 2, i.e. bar index 1
 old_entry(32, 2, 0x3333)                      # pad 3
 set_chain(3, 0)
 cold_boot()
+sync_panel()
 expect("upgrade: the old log is read back at its addresses", start(vari=0), (0, 0, 0))
 expect("upgrade: old entry 0 is bar 2", (wrap(), struct_rows()[5]), ((0, 0, 1), (0x1111, 0x1112)))
 expect("upgrade: old entry 32 is bar 3", (wrap(), struct_rows()[5]), ((0, 0, 2), (0x3333, 0x3334)))
@@ -1030,13 +1086,280 @@ expect("sequence wrap: ... which is the second one", slot_rows(0)[0], (0x3333, 0
 w32(slot_addr(0) + 4 * 4, 0x7777)
 call(S["chain_commit"], 0, 4, 2, 0)
 expect("sequence wrap: the next save starts at 0",
-       [e["seq"] for e in entries() if e["rows"][0][0] == 0x7777], [1])
+       [e["seq"] for e in entries() if e["rows"][0][0] == 0x7777], [0])
 cold_boot()
 w32(SETUP + 8, 1)
 w32(SETUP + 0x3C, 1)
 press(3, A)
 expect("sequence wrap: after a power cycle the bar written after the wrap still wins",
        slot_rows(0)[0], (0x7777, 0x4444))
+
+# --- the panel task owns the flash; a direct start has to wait for it --------------
+# chain_var runs in the sequencer task and never scans the log. Until the panel task has seen
+# this pattern it plays one stock pass and asks for a repaint; the next boundary uses the chain.
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+set_chain(3, 0)
+w32(RUN, 0)
+w32(VARI, 0)
+uc.mem_write(HMI, b"\0\0")
+before = struct_rows()
+log.clear()
+READS["n"] = 0
+uc.mem_write(S["chain_wrapping"], b"\0")
+call(S["chain_var"], PTN)
+expect("sync: a start before the panel scanned plays stock",
+       (struct_rows(), r8(HMI) & 0x04, READS["n"]), (before, 0x04, 0))
+sync_panel()                                    # the panel task catches up
+expect("sync: the panel scanned and cached the bars", READS["n"] > 0, True)
+expect("sync: the next start follows the chain", start(vari=0), (0, 0, 0))
+
+# The sequencer never touches the flash: no read, no program, no erase.
+READS["n"] = 0
+WRITES["prog"] = WRITES["erase"] = 0
+start(vari=0); wrap(); wrap()
+start(vari=1); wrap()
+start(vari=2); wrap(); wrap()
+expect("sync: playback issues no flash read", READS["n"], 0)
+expect("sync: playback writes no flash", (WRITES["prog"], WRITES["erase"]), (0, 0))
+
+# --- a pattern whose own variation is A+B keeps it across the change ---------------
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+sync_panel()
+w32(slot_addr(2), 2)                   # pattern 1's own VARI: A+B
+set_pattern(1)
+sync_panel()                           # the panel picks the new pattern up (load writes the side)
+expect("pattern: A+B survives the bar load of the new pattern", r32(slot_addr(0)), 2)
+set_counts(2, 0)
+w32(VARI, 2)
+expect("pattern: ... and the A+B phrase starts on the A side", start(vari=2), (0, 0, 0))
+expect("pattern: ... then bar 2", wrap(), (0, 0, 1))
+expect("pattern: ... and wraps to bar 1", wrap(), (0, 0, 0))
+set_pattern(0)
+sync_panel()
+
+# --- A+B: a B bar selected while stopped starts the B leg there --------------------
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+sync_panel()
+set_chain(3, 4)
+w32(VARI, 2)
+press(3, B)                            # stopped: select B bar 3
+expect("A+B jump: a start begins at the selected B bar",
+       start(vari=2), (1, 1, 2))
+expect("A+B jump: ... then B bar 4", wrap(), (1, 1, 3))
+expect("A+B jump: ... and wraps to A bar 1", wrap(), (0, 0, 0))
+
+# --- 7.2 a flash that drops one program -------------------------------------------
+# store_save keeps the index, the clean hash and the cache when the read-back fails, so the
+# next save of the same bar tries again instead of believing a write that never happened.
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+sync_panel()
+press(2, A)                                   # bar 2 of pattern 0, A side
+w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x3333)
+w32(slot_addr(0) + 4 * (5 + 2 * 5), 0x4444)
+drop_next_program()
+log.clear()
+call(S["chain_commit"], 0, 4, 1, 0)
+expect("drop: the dropped program stored nothing", bar_entry(0, 1), None)
+call(S["chain_commit"], 0, 4, 1, 0)           # no drop this time: the same bar is retried
+expect("drop: ... and the retry stores the bar",
+       (bar_entry(0, 1) or {}).get("rows")[5], (0x3333, 0x4444))
+w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x5555)   # an edit that is then lost
+drop_next_program()
+r = press(1, A)                               # leaving the bar retries the save and fails
+expect("drop: a lost edit is shown to the user", "FAIL" in texts(r), True)
+expect("drop: ... and the stored bar keeps its old value",
+       (bar_entry(0, 1) or {}).get("rows")[5], (0x3333, 0x4444))
+expect("drop: ... bar 1 is loaded", "  A1" in texts(r), True)
+press(2, A)
+expect("drop: ... so bar 2 comes back as it was stored", slot_rows(0)[5], (0x3333, 0x4444))
+
+# --- 7.4 sequence numbers survive 0x7FFF -> 0x8000 --------------------------------
+seed_ram()
+FL[:] = b"\xff" * len(FL)
+def put_seq(i, seq, mark):
+    e = [MAGIC, seq | (1 << 16) | (0 << 20), 0, 0, mark | ((mark + 1) << 16)] + [0] * 27
+    e[3] = crc(e)
+    struct.pack_into("<32I", FL, ent_off(i), *e)
+put_seq(0, 0x7FFE, 0x1000)
+put_seq(1, 0x7FFF, 0x2000)
+put_seq(2, 0x8000, 0x3000)
+put_seq(3, 0x8001, 0x4000)
+put_seq(4, 0x7FFE, 0x5000)                    # older duplicate above the newest: scan wins
+cold_boot()
+w32(SETUP + 8, 1)
+w32(SETUP + 0x3C, 1)
+press(1, A)                                   # pattern 1 bar 1
+expect("seq 0x8000: the first valid entry starts the search, not 0",
+       slot_rows(0)[0], (0x4000, 0x4001))
+
+# --- 7.3 erased and half-written slots are skipped outside the boot scan -----------
+# A full log (160 non-erased first words, so the next append needs a compaction): block 0 has
+# four live entries among half-written ones, the other blocks hold the remaining 124 bars. The
+# compaction of block 0 must copy the four live entries and skip every torn slot.
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+
+def put_bar(i, seq, key, mark):
+    e = [0] * 32
+    e[0] = MAGIC
+    e[1] = seq | ((key // 8) << 16) | ((key % 8) << 20)
+    e[2] = 0
+    e[4] = mark | (((0x8000 + mark) & 0xFFFF) << 16)
+    e[3] = crc(e)
+    struct.pack_into("<32I", FL, ent_off(i), *e)
+
+def junk(i, kind):
+    if kind:
+        e = [MAGIC, 1, 0, 0] + [0] * 28       # right magic, wrong checksum
+    else:
+        e = [0] * 32                          # first word programmed, nothing else
+    struct.pack_into("<32I", FL, ent_off(i), *e)
+
+for i in range(32):
+    junk(i, i % 2)
+for i, key in ((0, 124), (10, 125), (20, 126), (30, 127)):
+    put_bar(i, 2, key, 0x2000 + key)
+for key in range(124):
+    put_bar(32 + key, 2, key, 0x2000 + key)
+for i, key in ((156, 0), (157, 1), (158, 2), (159, 3)):
+    put_bar(i, 1, key, 0x1000 + key)
+
+cold_boot()
+sync_panel()
+bad = [key for key in range(128)
+       if (bar_entry(key // 8, key % 8) or {}).get("rows", [(0, 0)])[0][0] != 0x2000 + key]
+expect("torn: the boot scan skips every half-written slot", bad, [])
+
+press(1, A)                                   # pattern 0 bar 1, A side
+w32(slot_addr(0) + 4 * 4, 0x3000)
+call(S["chain_commit"], 0, 4, 1, 0)           # slot 0 is used: compacts block 0
+bad = [key for key in range(128)
+       if (bar_entry(key // 8, key % 8) or {}).get("rows", [(0, 0)])[0][0]
+       != (0x3000 if key == 0 else 0x2000 + key)]
+expect("torn: a compaction copies the live entries and skips the torn ones", bad, [])
+expect("torn: no torn slot became a valid entry", len(entries()), 133)
+
+# --- 7.1 power cut at every step of a compaction ----------------------------------
+# The log is full: 120 live bars and 40 older duplicates, so the next append picks block 4 (the
+# block with the fewest live entries, 8) and copies it through the scratch block. For each flash
+# operation the payload makes, the power is cut right after it; a cold boot must then still find
+# every one of the 120 bars that was stored before the save.
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+for key in range(96):
+    put_bar(key, 2, key, 0x2000 + key)
+for key in range(96, 112):
+    put_bar(key, 2, key, 0x2000 + key)
+for key in range(16):
+    put_bar(112 + key, 1, key, 0x1000 + key)
+for i, key in enumerate(range(112, 120)):
+    put_bar(128 + i, 2, key, 0x2000 + key)
+for key in range(16, 40):
+    put_bar(136 + key - 16, 1, key, 0x1000 + key)
+set_pattern(15)
+snapshot = bytes(FL)
+
+def cut_save(cut):
+    FL[:] = snapshot
+    cold_boot()
+    w32(SETUP + 8, 15)
+    w32(SETUP + 0x3C, 15)
+    set_counts(1, 0)                          # pattern 15 has an A side, so saves are redirected
+    sync_panel()                              # loads bar 1; scan + recovery, no cut armed
+    w32(slot_addr(0) + 4 * 4, 0x3000)
+    cut_after(cut)
+    log.clear()
+    call(S["chain_commit"], 0, 4, 16, 0)
+    hit = CUT["hit"]
+    cut_after(None)
+    cold_boot()
+    sync_panel()                              # the boot scan finishes any interrupted compaction
+    return hit
+
+def stored_bad():
+    return [key for key in range(120)
+            if (bar_entry(key // 8, key % 8) or {}).get("rows", [(0, 0)])[0][0]
+            != 0x2000 + key]
+
+# Count the operations of one save (the cut is disarmed but every op is counted).
+FL[:] = snapshot
+cold_boot()
+w32(SETUP + 8, 15)
+w32(SETUP + 0x3C, 15)
+set_counts(1, 0)
+sync_panel()
+w32(slot_addr(0) + 4 * 4, 0x3000)
+CUT["ops"] = 0
+call(S["chain_commit"], 0, 4, 16, 0)
+OPS = CUT["ops"]
+expect("power cut: the save compacts the eight-entry block (1+8+1+8+1 ops)", OPS, 19)
+
+lost = []
+for k in range(OPS):
+    if not cut_save(k):
+        lost.append((k, "no cut"))
+        continue
+    bad = stored_bad()
+    if bad:
+        lost.append((k, bad[:4]))
+    # The bar being saved is new: either it never landed or it is complete and valid.
+    e = bar_entry(15, 0)
+    if e is not None and e["rows"][0][0] != 0x3000:
+        lost.append((k, "new bar torn"))
+expect("power cut: every stored bar survives a cut at every flash operation", lost, [])
+cut_save(None)
+expect("power cut: the completed save stores the new bar",
+       (bar_entry(15, 0) or {}).get("rows")[0][0], 0x3000)
+
+# --- 7.2b a flash that drops one program during a compaction ------------------------
+# Both copies are read back: a dropped copy stops the compaction before the source is gone (the
+# copy-to-scratch phase) or keeps the scratch block as the only copy of the entries that were not
+# written back (the copy-back phase), and no further save is written until the next boot recovers
+# them. A dropped final program is an ordinary failed save: the next save retries.
+def drop_save(k):
+    FL[:] = snapshot
+    cold_boot()
+    w32(SETUP + 8, 15)
+    w32(SETUP + 0x3C, 15)
+    set_counts(1, 0)
+    sync_panel()
+    w32(slot_addr(0) + 4 * 4, 0x3000)
+    log.clear()
+    drop_program(k)
+    call(S["chain_commit"], 0, 4, 16, 0)
+    first = bar_entry(15, 0)
+    CUT["ops"] = 0
+    call(S["chain_commit"], 0, 4, 16, 0)       # a retry with the chip working again
+    ops = CUT["ops"]
+    cold_boot()
+    sync_panel()                              # the boot scan recovers from the scratch block
+    return first, ops, stored_bad(), bar_entry(15, 0)
+
+bad = []
+for k in range(17):                            # 8 copies out + 8 copies back + the save
+    e, ops, lost, after = drop_save(k)
+    if e is not None:
+        bad.append((k, "the dropped save landed"))
+    if lost:
+        bad.append((k, "stored bar lost", lost[:3]))
+    if k < 16:                                 # a compaction step failed
+        if ops:
+            bad.append((k, "a retry wrote after a failed compaction"))
+        if after is not None:
+            bad.append((k, "the bar landed without a save"))
+    elif after is None or after["rows"][0][0] != 0x3000:
+        bad.append((k, "the retried save did not land"))
+expect("drop during compaction: every stored bar survives and nothing else is written", bad, [])
 
 # chain_wrap marks the restart as a wrap for the duration of the firmware restart call.
 w32(S["chain_wrapping"], 0)

@@ -205,7 +205,9 @@ bytes `{u8 slot, u8 area}`: `0` for the current slot of the area, `1` for anothe
 copy sites `0x6000F294`, `0x6000F380`, `0x6000F45A` and the setters' `0x6000F31C`, `0x6000F3BA`
 pass 0 and 1 respectively). `FUN_60050F70` may also flush an event queue first. This is how the
 screens learn that the working copy changed, and it is what makes a bar selected while the
-machine is stopped show up immediately (the chain patch sends `{0, 4}` after loading it).
+machine is stopped show up immediately. Do not send it from a payload hook: an early chain build
+sent `{0, 4}` from the press dispatch and the synchronous observer walk froze the unit. The chain
+patch sets the repaint bit `0x04` of `TR8_HMI_PANEL` instead.
 
 `FUN_6000FC78(_, area, slot, _)` is the **commit**: it copies area slot 0 into slot `slot` and
 writes the result to flash (disassembly `0x6000FC82`-`0x6000FCC2`: `FUN_6000F3C2`, `FUN_6000F3EC`,
@@ -213,10 +215,12 @@ then `FUN_60010E92` store). The firmware calls it on a pattern change, so it is 
 for a patch to persist the pattern being left. Only this one touches flash; the copies above are
 RAM only.
 
-The chain patch redirects the area-4 half of that save (`0x6001B7F4`, inside `FUN_6001B7D8`) and
-keeps the area-6 half stock: area 4 slot *n+1* keeps the pattern's own steps and the edited bar is
-appended to a 128-byte-entry log in the unused flash at `0x3DB000`-`0x3DFFFF` (four blocks of 32
-entries from `0x3DF000` down, scratch block at `0x3DB000`, newest entry per pattern/bar wins).
+The chain patch redirects the area-4 half of that save (`0x6001B7F4`, inside `FUN_6001B7D8`)
+while the current pattern has a side sequence, and keeps the area-6 half stock: area 4 slot *n+1*
+keeps the pattern's own steps and the edited bar is appended to a 128-byte-entry log in the
+unused flash at `0x3DB000`-`0x3DFFFF` (five blocks of 32 entries, entry *i* at
+`0x3DB000 + i * 128`, scratch block at `0x3DA000`, newest entry per pattern/bar wins;
+[CHAIN.md](CHAIN.md) "Storage"). A pattern with no side sequence keeps the stock commit.
 That range is erased by any firmware update: the updater rewrites blocks over flash
 `0x30000`-`0x3DFFFF` (section 3), so the bars are lost on an update, while the two side lengths
 survive in the user area. The raw primitives used are `FUN_60003E54(off, len, src)` (program, chunks <=
@@ -567,14 +571,15 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   the image (`0x601309E0`) would be erased, because the bss zero-fill covers
   `0x601264EC`-`0x60280987`. Instead:
   1. extend the decompressed size so that the image reaches the new code. The bytes between
-     `0x601309E0` and the code are zeros and compress well: reaching `0x60281C9C` costs about
-     164 KB of compressed application (0xA5CF7 -> 0xCEA45), and the module still ends at file
-     offset 0x0FEA85, far below `appB` at 0x280000. `tr8patch.py` and the web flasher extend the
+     `0x601309E0` and the code are zeros and compress well: reaching `0x60282794` costs about
+     164 KB of compressed application (0xA5CF7 -> 0xCEDDD), and the module still ends at file
+     offset 0xFEE1D, far below `appB` at 0x280000. `tr8patch.py` and the web flasher extend the
      application array themselves when a payload lies beyond the current end.
   2. put the new code and data at `0x60281200` (above the bss, so it is not zeroed). Not
      `0x60280988`: `motion-poly`'s patch RAM occupies `0x60280A00`-`0x60281183`, and the 64 KB
      below the moved pool is that reservation. The chain's `.text` is
-     `0x60281200`-`0x60281B7C` (2428 bytes) and its `.bss` runs to `0x60281C9C`.
+     `0x60281200`-`0x60281E66` (3174 bytes) and its `.bss` (including the 2 KB playback cache)
+     runs to `0x60282794`; the patcher reserves 8 KB, `0x60281200`-`0x60283200`.
   3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8`
      (`FUN_60010430`) becomes `0x60290988`, the same move `motion-poly` makes. The other copy at
      `0x6012A2FC` is the startup stack top, not the pool (see the next item). The bss zero-fill
@@ -583,7 +588,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
      **not** extend the zeroing over the new code.
   The boot loader decompresses any size into SDRAM: `FUN_01000B3C` reads the decompressed size
   from the header and `FUN_01000C76` is bounded only by `destination + size`, with no fixed cap.
-  The updater only checks sizes and sums. Emulation passes (224 chain checks and the three
+  The updater only checks sizes and sums. Emulation passes (249 chain checks and the three
   combinations); a unit run is pending, and the first boot is the thing to watch.
 - **Patch RAM by moving the pool start (used by `motion-poly`).** The pool setup `FUN_60010430`
   (called once at boot from `0x60010482`, before the RTOS starts) reads its start from the
