@@ -174,6 +174,36 @@ must stay short and should not change HMI state directly. To act on the panel si
 sequencer, post an event (`TR8_POST_CTRL`): the panel FIFO push is inside a critical section and
 the panel task applies it with the normal code. The motion patch does exactly this.
 
+**Know the task of every hook.** A patch with two or more hooks often has hooks in different
+tasks, and then any state they share is shared between tasks. Before you write a hook, find which
+task runs its site, and write it down in the patch document (a table: hook, site, task, tag).
+
+| Site | Task | Tag |
+|---|---|---|
+| Per-step code, `bl FUN_6000978E` at `0x60009862` / `0x60009808` | sequencer | [unit] |
+| Clock tick `FUN_6000989C` and everything it calls (`FUN_600095F0` on a wrap) | sequencer | [code] |
+| Control event, `bl FUN_60013242` at `0x600138C8` | panel | [unit] |
+| HMI dispatcher, screens, button press/release | panel | [code] |
+
+A function with more than one caller can run in more than one task: `FUN_600095F0` runs on a
+wrap (sequencer) and on a start; check every caller before you assume one task.
+
+Not known yet (each needs a `[code]` or `[unit]` answer before a patch depends on it):
+
+- The task priorities, and whether the sequencer task can preempt the panel task in the middle
+  of a payload function.
+- Whether a flash read through the mapping is safe while another task has a write session open
+  (`FUN_600108AA` switches the chip to indirect mode, see FINDINGS.md).
+
+Until these are known, use these rules:
+
+1. **Flash program and erase only in the panel task.** The raw primitives have no lock.
+2. **No flash access from the sequencer task**, reads included. Read what the sequencer needs in
+   the panel task, into RAM, before the sequencer needs it.
+3. **No buffer or variable that two tasks write.** Give each task its own buffer. A value that
+   one task writes and the other only reads must be one aligned word or byte, written last, after
+   the data it describes.
+
 ## 4. Testing
 
 ### Emulation (before every flash)
@@ -215,16 +245,62 @@ Two kinds of tests are needed:
 - The button-held bitmap (`FUN_60013168`) makes button combinations easy and was confirmed on the
   unit.
 
+### Pitfalls found in review
+
+- `VARI` (the panel variation) is 0 = A, 1 = B, **2 = A+B**. Do not reduce it with `& 1`, and do
+  not write a 0/1 side back into it. Keep the panel setting and the side being played as two
+  different values (`TR8_SEQ_VARI` and `TR8_SEQ_VARIATION` are two different words).
+- When A+B plays two sequences one after the other, a bar index inside one side is not a position
+  in the A+B sequence. Convert between them in one function, and test a start and a jump on the
+  B side with VARI = 2.
+- A value read from flash is not valid until its magic and its checksum are checked. Never use a
+  field of an unchecked slot as an array index: an erased slot reads `0xFFFFFFFF`.
+- A comment or a document that describes the code must change in the same commit as the code.
+  Addresses, block counts and sizes in FINDINGS.md that no longer match the code mislead the next
+  author and the reviewer.
+
 ## 6. Adding a patch: checklist
 
-1. Find the hook sites and the state you need; write them down in FINDINGS.md with tags.
+1. Find the hook sites and the state you need; write them down in FINDINGS.md with tags. For each
+   hook, write down its task (section 3, "Task context").
 2. Create `patches/<name>/` with the C file, `link.ld`, `build.sh` (copy from `motion`).
 3. Add the `PATCHES` entry in `tools/tr8patch.py` (sites with original bytes, allowed regions,
    protected ranges).
 4. Write `tests/emu_<name>.py` with unit and integration scenarios; add it to `tests/run_all.sh`.
-5. Write `docs/<NAME>.md`: use, behaviour, how it works, limitations, history.
-6. Flash, test, record the result.
-7. To offer it on the web flasher, add it to `SHOWN` in `tools/build_site.py`, run
+5. Write `docs/<NAME>.md`: use, behaviour, how it works, limitations, history. If the patch
+   stores data, add the section 7 items.
+6. Before a pull request, read section 7 (if the patch stores data), the pitfalls in section 5
+   and [CLAUDE.md](../CLAUDE.md) "Review criteria": a review checks the same list.
+7. Flash, test, record the result.
+8. To offer it on the web flasher, add it to `SHOWN` in `tools/build_site.py`, run
    `python3 -I tools/build_site.py` and commit `site/patches.json`. `tests/run_all.sh` checks that
    the site builds the same file as `tr8patch.py` (needs Node). Pushing `site/` to `main`
    publishes it (`.github/workflows/pages.yml`).
+
+## 7. Patches that store data: the contract
+
+A patch that keeps data across a power cycle (unused pattern parameters, or its own flash area)
+must meet each rule below. Write in the patch document how it meets each one, and add an
+emulation test for each rule that has a "Test" line.
+
+1. **A power cut at any point loses nothing that was already stored.** This includes every step
+   of a compaction or garbage collection. If live data is moved to a scratch area and its old
+   place is erased, the boot scan must also read the scratch area.
+   Test: stop the payload after each flash program and each erase, rescan, check every bar or
+   value.
+2. **A failed write changes no state in RAM.** Update the index, the "clean" hash and the write
+   pointer only after the read-back confirms the write, so that the next save tries again. Show
+   the failure to the user.
+   Test: a flash that drops one program.
+3. **Every slot is checked before use** (magic, checksum, the key it claims). Erased and torn
+   slots are skipped everywhere, not only in the boot scan.
+   Test: a block with erased and half-written slots, then a compaction of it.
+4. **Sequence numbers survive their wrap.** Take the first valid entry as the starting point of
+   the newest-entry search, not 0.
+   Test: entries near 0x7FFF, 0x8000 and 0xFFFF.
+5. **Flash program and erase run only in the panel task** (section 3).
+6. **State what is lost, and when.** The patch document must say, for the patch's own data and for
+   the stock data (patterns, kits), what happens on: a power cut, flashing the stock firmware,
+   flashing another patch, and a firmware update. Note that the updater rewrites flash
+   `0x30000`-`0x3DFFFF` (FINDINGS.md section 3), so any data stored there is erased by every
+   update.
