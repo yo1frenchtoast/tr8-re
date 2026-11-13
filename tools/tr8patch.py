@@ -91,7 +91,9 @@ PATCHES["chain"] = {
         (0x60011E04, thumb_bl(0x60011E04, 0x600113B2), "nop"),          # dev dump 2 (frees the cave)
         (0x60009614, thumb_bl(0x60009614, 0x6000E404), "chain_var"),    # restart: variation of the pass
         (0x600098CA, thumb_bl(0x600098CA, 0x600095F0), "chain_wrap"),   # pattern wrap: mark it as a wrap
-        (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),    # step pad: A/B held -> paint
+        (0x60013842, thumb_bl(0x60013842, 0x60013B34), "chain_press"),  # button press: before the screen
+        (0x600137D2, thumb_bl(0x600137D2, 0x60013B56), "chain_release"),# matching release of that pad
+        (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),    # LAST STEP pad branch: keep it stock
     ],
 }
 

@@ -42,6 +42,7 @@ BITS, LEN = 15, 16                    # Ptn2 indices: ids 0x136, 0x137
 log = []
 held = set()
 STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E152: "apply",
+         0x60013B34: "press", 0x60013B56: "release",
          0x6001B736: "ptn_get", 0x6001B280: "f", 0x6001B12E: "setup_get",
          0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6004FB34: "f", 0x6000066E: "f",
          0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f",
@@ -65,6 +66,10 @@ def hook(uc, addr, size, _):
             log.append(("notify", tuple(uc.mem_read(r1, 2))))
         elif name == "text":
             log.append(("text", bytes(uc.mem_read(r1, 4)).decode()))
+        elif name == "press":
+            log.append(("press", r0))
+        elif name == "release":
+            log.append(("release", r0))
         uc.reg_write(UC_ARM_REG_R0, ret)
         uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR) | 1)
 uc.hook_add(UC_HOOK_CODE, hook)
@@ -107,18 +112,45 @@ def pad(n, *buttons):
     held.clear()
     return list(log)
 
-# The three hook sites point at the payload
-for site, sym in ((0x60009614, "chain_var"), (0x600098CA, "chain_wrap"), (0x600199F6, "chain_pad")):
+# Pad press through the press dispatch, the site that runs before the screen: the payload
+# replaces "bl FUN_60013B34" with chain_press(id) (id in r0, held bit already set by the
+# type 5 handler). A press the payload does not take must reach the firmware helper.
+def press(n, *buttons):
+    held.clear(); held.update(buttons); log.clear()
+    call(S["chain_press"], n - 1)
+    held.clear()
+    return list(log)
+
+def release(n, *buttons):
+    held.clear(); held.update(buttons); log.clear()
+    call(S["chain_release"], n - 1)
+    held.clear()
+    return list(log)
+
+# The hook sites point at the payload
+for site, sym in ((0x60009614, "chain_var"), (0x600098CA, "chain_wrap"),
+                  (0x60013842, "chain_press"), (0x600137D2, "chain_release"),
+                  (0x600199F6, "chain_pad")):
     t = bl_target(site)
     expect(f"site 0x{site:08x} branches to {sym}", (t & ~1) == (S[sym] & ~1), True)
 
 if "--probe" in sys.argv:
     # patches/chain/probe.c: display only, no pattern writes, LAST STEP does not set a length.
-    expect("probe: plain pad reports no modifier", texts(pad(3)), [" 3--"])
-    expect("probe: A + pad 1", texts(pad(1, A)), [" 1A-"])
-    expect("probe: B + pad 12", texts(pad(12, B)), ["12B-"])
-    expect("probe: A+B + pad 3", texts(pad(3, A, B)), [" 3C-"])
-    expect("probe: A+B+LAST STEP + pad 3", texts(pad(3, A, B, LAST)), [" 3CL"])
+    # Press dispatch (the site that runs on the unit).
+    expect("probe: plain pad is shown after the firmware handled it", press(3),
+           [("press", 2), ("text", " 3--")])
+    expect("probe: A + pad 1", press(1, A), [("text", " 1A-")])
+    expect("probe: B + pad 12", press(12, B), [("text", "12B-")])
+    expect("probe: A+B + pad 3", press(3, A, B), [("text", " 3C-")])
+    expect("probe: A+B+LAST STEP + pad 3 goes to the firmware first",
+           press(3, A, B, LAST), [("press", 2), ("text", " 3CL")])
+    expect("probe: LAST STEP + pad 8 goes to the firmware first",
+           press(8, LAST), [("press", 7), ("text", " 8-L")])
+    expect("probe: the taken press swallows its release", (press(5, A), release(5)),
+           ([("text", " 5A-")], []))
+    # The LAST STEP branch inside the firmware button handler still shows what it sees.
+    expect("probe: global pad branch, plain pad", texts(pad(3)), [" 3--"])
+    expect("probe: global pad branch, A + pad 1", texts(pad(1, A)), [" 1A-"])
     expect("probe: nothing written to the pattern", pget(BITS) + pget(LEN), 0)
     expect("probe: LAST STEP + pad does not set the length", pad(8, LAST), [("text", " 8-L")])
 
@@ -132,6 +164,39 @@ if "--probe" in sys.argv:
     expect("probe: start shows VARI 1", probe_start(1, 0), ["St11"])
     expect("probe: start shows VARI 2 (A+B), stock toggle", probe_start(2, 1), ["St20"])
     print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)
+
+# The gesture on the press dispatch (the path the unit takes; the screen never sees it).
+# The firmware Ptn2 setter notifies the observers ("notify"); not interesting here.
+def edits(entries):
+    return [e for e in entries if e[0] != "notify"]
+
+expect("press: plain pad goes to the firmware, no edit", press(3), [("press", 2)])
+expect("press: plain pad sets nothing", (pget(LEN), pget(BITS)), (0, 0))
+expect("press: A + pad 1 paints bar 1 A", edits(press(1, A)), [("text", "  1A")])
+expect("press: bar 1 is A, chain 1", (pget(LEN), pget(BITS)), (1, 0))
+expect("press: B + pad 4 paints bar 4 B", edits(press(4, B)), [("text", "  4B")])
+expect("press: chain 4 with bar 4 B", (pget(LEN), pget(BITS)), (4, 1 << 3))
+expect("press: B + pad 3 paints bar 3 B", edits(press(3, B)), [("text", "  3B")])
+expect("press: treating a B bar as A", edits(press(3, A)), [("text", "  3A")])
+expect("press: bar 3 back to A", (pget(LEN), pget(BITS)), (4, 1 << 3))
+expect("press: A+B + pad 2 sets the length", edits(press(2, A, B)), [("text", "CH 2")])
+expect("press: length 2", pget(LEN), 2)
+expect("press: A+B+CLEAR + pad 2 turns it off", edits(press(2, A, B, CLEAR)), [("text", "CH--")])
+expect("press: chain off, painted bars kept", (pget(LEN), pget(BITS)), (0, 1 << 3))
+expect("press: LAST STEP + pad keeps the stock path", press(8, LAST), [("press", 7)])
+expect("press: LAST STEP + A + pad keeps the stock path", press(2, LAST, A), [("press", 1)])
+expect("press: A+B+LAST STEP + pad keeps the stock path", press(2, A, B, LAST), [("press", 1)])
+expect("press: those presses changed no bar", (pget(LEN), pget(BITS)), (0, 1 << 3))
+# A swallowed press must swallow its release, or the screen sees a release without a press.
+expect("press: A + pad 5 is taken", edits(press(5, A)), [("text", "  5A")])
+expect("press: its release is swallowed", release(5), [])
+expect("press: other pads still release normally", release(6), [("release", 5)])
+expect("press: the same pad releases normally afterwards", release(5), [("release", 4)])
+
+# Leave the pattern as found for the tests below that start from "no chain".
+w32(PTN2 + 4 * BITS, 0)
+w32(PTN2 + 4 * LEN, 0)
+
 
 expect("no chain at boot", (pget(LEN), pget(BITS)), (0, 0))
 expect("pad alone: nothing set", texts(pad(4)), [])

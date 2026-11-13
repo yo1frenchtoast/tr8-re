@@ -22,10 +22,16 @@
  *   chain_wrap replaces the "bl FUN_600095F0" of the wrap path (0x600098CA) and marks the
  *   restart as a wrap. Both start paths (0x600091A2, 0x600098E4) go through the same
  *   function: without the mark the chain restarts at bar 1.
- *   chain_pad replaces the "bl FUN_60013168" (LAST STEP check) at the head of the step-pad
- *   branch of the button handler FUN_6001961E. The pad id is still in r6 there, so a naked
- *   trampoline moves it to r0. Returning 1 keeps the stock LAST STEP path, anything else
- *   leaves the pad handled-and-ignored, like a pad pressed without a modifier.
+ *   chain_press replaces the "bl FUN_60013B34" at 0x60013842, the first thing the button press
+ *   event does after setting the held bit. That is *before* the screen is offered the press:
+ *   the screen takes a bare pad press (step edit / sound), and the global button handler
+ *   FUN_6001961E only sees the presses the screen declines (LAST STEP + pad, variation A/B).
+ *   That is why the gesture cannot live in FUN_6001961E: on the unit it never got there.
+ *   chain_release replaces the matching "bl FUN_60013B56" at 0x600137D2 so a swallowed press
+ *   is not followed by a release the screen never saw a press for.
+ *   chain_pad still replaces the "bl FUN_60013168" (LAST STEP check) at the head of the
+ *   step-pad branch of FUN_6001961E: it keeps the stock LAST STEP path (return 1) and is a
+ *   fallback if a press ever reaches that branch with A/B held.
  *
  * Storage: the chain is two Ptn2 parameters of the current pattern, the unnamed ids that no
  * code reads but the firmware stores with every pattern (POLY.md "Storage"):
@@ -41,6 +47,7 @@
 
 uint8_t chain_pos;        /* bar being played, 0..len-1 */
 uint8_t chain_wrapping;   /* set by chain_wrap around the FUN_600095F0 call */
+uint16_t chain_swallow;   /* pads whose press we took: their release is swallowed too */
 
 static int clen(void)
 {
@@ -103,19 +110,12 @@ __attribute__((naked)) void chain_pad(void)
     __asm__("mov r0, r6\n\tb chain_pad_c\n");
 }
 
-int chain_pad_c(int pad)
+/* A or B + pad: paint bar n. A+B + pad: chain length. A+B+CLEAR + pad: chain off.
+ * a = VARIATION A held, b = VARIATION B held. */
+static void chain_edit(int pad, int a, int b)
 {
-    int a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1; /* VARIATION A */
-    int b = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1; /* VARIATION B */
-    int last = TR8_BTN_HELD(TR8_BTN_LAST_STEP) == 1;
-
-    if (!a && !b)                              /* normal pad: return the stock condition */
-        return last;
-    if (last)                                  /* LAST STEP wins (also the poly gesture) */
-        return 1;
-
     int n = pad + 1;                           /* pad 1..16 */
-    if (a && b) {                              /* A+B + pad: chain length */
+    if (a && b) {
         if (TR8_BTN_HELD(TR8_BTN_CLEAR) == 1) {
             TR8_PTN2_SET(0, CHAIN_LEN, 0);
             show_len(0);
@@ -123,7 +123,7 @@ int chain_pad_c(int pad)
             TR8_PTN2_SET(0, CHAIN_LEN, n);
             show_len(n);
         }
-        return 0;
+        return;
     }
 
     uint32_t bits = cbits();                   /* A or B + pad: paint one bar */
@@ -135,5 +135,44 @@ int chain_pad_c(int pad)
     if (n > clen())
         TR8_PTN2_SET(0, CHAIN_LEN, n);
     show_bar(n, b);
+}
+
+/* Replaces "bl FUN_60013B34" at 0x60013842: button press, id in r0, held bit already set.
+ * Runs before the screen, so this is the first code that can take the pad. */
+int chain_press(int id)
+{
+    if ((unsigned)id < 16) {
+        int a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1;
+        int b = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1;
+        if ((a || b) && TR8_BTN_HELD(TR8_BTN_LAST_STEP) != 1) {
+            chain_edit(id, a, b);
+            chain_swallow |= (uint16_t)(1u << id);
+            return 1;                          /* taken: the screen never sees this pad */
+        }
+    }
+    return TR8_FN_BTN_PRESS(id);
+}
+
+/* Replaces "bl FUN_60013B56" at 0x600137D2: button release, id in r0. */
+int chain_release(int id)
+{
+    if ((unsigned)id < 16 && (chain_swallow & (1u << id))) {
+        chain_swallow &= (uint16_t)~(1u << id);
+        return 0;                              /* the press was taken: swallow the release too */
+    }
+    return TR8_FN_BTN_RELEASE(id);
+}
+
+int chain_pad_c(int pad)
+{
+    int a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1; /* VARIATION A */
+    int b = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1; /* VARIATION B */
+
+    if (!a && !b)                              /* normal pad: return the stock condition */
+        return TR8_BTN_HELD(TR8_BTN_LAST_STEP) == 1;
+    if (TR8_BTN_HELD(TR8_BTN_LAST_STEP) == 1)  /* LAST STEP wins (also the poly gesture) */
+        return 1;
+
+    chain_edit(pad, a, b);
     return 0;
 }

@@ -383,6 +383,25 @@ handler is `FUN_6001961E(ctx, id)`:
 bitmap at `0x6014893C` (`0x60148924 + 0x18`), set by the type-5 event. The firmware uses it for
 button combinations; patches can use it the same way (the motion patch: TR-REC and CLEAR).
 
+### Press and release dispatch: the screen goes first
+
+A press (event type 5) goes to `FUN_600137DE`, which sets the held bit and then calls
+`FUN_60013B34(id)` (`bl` at `0x60013842`). That call offers the press to the **active screen**;
+the global button handler `FUN_6001961E` runs only if the screen declines it (`0x60013F74`, i.e.
+`FUN_60013F6A`). Releases (type 6) go to `FUN_6001377C`, which clears the held bit and calls
+`FUN_60013B56(id)` (`bl` at `0x600137D2`) with the same screen-first order (`0x60013F7E`).
+
+Consequences for patches:
+
+- A **bare step pad** press is taken by the screen (step edit, sound audition), so it never
+  reaches `FUN_6001961E`. LAST STEP + pad and the variation buttons are declined by the screen
+  and do reach it; that is why the stock LAST STEP gesture is implemented there.
+- A patch that must see **every** press (the bar chain, `docs/CHAIN.md`) has to replace the
+  `bl` at `0x60013842`, before the screen, and swallow the matching release at `0x600137D2` if
+  it takes the press.
+- The held bitmap is already set when the dispatch is called, so `FUN_60013168` inside such a
+  patch sees the pressing button itself as held. [unit: the first chain build's probe]
+
 ### Panel mode
 
 The mode chosen with the mode buttons is **Setup[0]** (object `0x60149F38`, global id `0x2A`),

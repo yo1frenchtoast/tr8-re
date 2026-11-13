@@ -4,7 +4,7 @@
 # Needs clang + ld.lld (LLVM). The patcher itself does not.
 set -euo pipefail
 cd "$(dirname "$0")"
-SYMS="chain_var chain_wrap chain_pad chain_pad_c chain_pos chain_wrapping"
+SYMS="chain_var chain_wrap chain_pad chain_pad_c chain_press chain_release chain_pos chain_wrapping chain_swallow"
 build() {   # $1 = output suffix, $2 = source
     local sfx=$1 src=$2
     clang --target=thumbv7m-none-eabi -mcpu=cortex-m3 -mthumb -Oz -ffreestanding -fno-builtin \

@@ -111,6 +111,16 @@ typedef int (*tr8_held_fn)(unsigned id);
 typedef void (*tr8_set_last_fn)(void *obj, int pad);
 #define TR8_FN_SET_LAST ((tr8_set_last_fn)0x6001B8D7)            /* [code] FUN_6001B8D6          */
 
+/* Button press and release dispatch. The type 5 (press) event handler FUN_600137DE sets the
+ * held bit, then calls FUN_60013B34(id) (bl at 0x60013842): the active screen is offered the
+ * press first and the global button handler FUN_6001961E only runs if the screen declines it
+ * (that is why LAST STEP + pad reaches FUN_6001961E but a bare pad press does not). The type 6
+ * (release) handler FUN_6001377C calls FUN_60013B56(id) (bl at 0x600137D2) the same way.
+ * A patch that must see every press, before the screen, hooks these two calls. */
+typedef int (*tr8_btn_fn)(int id);
+#define TR8_FN_BTN_PRESS   ((tr8_btn_fn)0x60013B35)              /* [code] FUN_60013B34          */
+#define TR8_FN_BTN_RELEASE ((tr8_btn_fn)0x60013B57)              /* [code] FUN_60013B56          */
+
 /* ---------------------------------------------------------------- parameters */
 
 /* HMI parameter databases. All take the object pointer as first argument. */
