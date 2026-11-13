@@ -110,8 +110,7 @@ static uint32_t ebuf[ENTW];
 
 static volatile uint32_t *area_slot(int area, int slot);
 
-/* .text.far: the second region is full and the first one has room for these twelve bytes. */
-__attribute__((section(".text.far"))) static uint32_t ent_off(int i)
+static uint32_t ent_off(int i)
 {
     return FL_BASE + (uint32_t)i * ENTB;
 }
@@ -531,7 +530,7 @@ void chain_led4(void *obj, int led, int a, int b, int c)
     int p = led - TR8_LED_STEP(0);
     int hb = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1;
 
-    if ((unsigned)p <= 15 && (TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) != hb) {
+    if ((unsigned)p <= 15 && (TR8_BTN_HELD(TR8_BTN_VARI_A)) != hb) {
         int n = clen(hb);                  /* holding B shows the B side's bars */
         int cur;
 
@@ -548,7 +547,8 @@ void chain_led4(void *obj, int led, int a, int b, int c)
 }
 
 /* A or B + pad 1..4: make bar n the working copy and paint it with that side; that side becomes
- * at least n bars long. A+B + pad: both sides n bars. A+B+CLEAR + pad: both sides stock.
+ * at least n bars long. A/B + CLEAR + pad n: that side becomes exactly n bars long (shrink).
+ * A+B + pad: both sides n bars. A+B+CLEAR + pad: both sides stock.
  * a = VARIATION A held, b = VARIATION B held. */
 /* .text.far (the first region, link.ld); noinline keeps clang from folding it into chain_press,
  * which overflowed the second region. */
@@ -556,9 +556,10 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
 {
     int bar = pad;
     int saved;
+    int ex = TR8_BTN_HELD(TR8_BTN_CLEAR) == 1;
 
     if (a && b) {
-        int n = TR8_BTN_HELD(TR8_BTN_CLEAR) == 1 ? 0 : bar + 1;
+        int n = ex ? 0 : bar + 1;
 
         TR8_PTN2_SET(0, CHAIN_COUNTS, n | (n << 4));
         show_ab(n);
@@ -579,12 +580,13 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
         uint32_t w = TR8_PTN2_CUR[CHAIN_COUNTS];
         int na = (int)(w & 0xF);
         int nb = (int)((w >> 4) & 0xF);
+        int n = ex ? bar + 1 : 0;          /* CLEAR: exactly this bar, so the side can shrink */
 
         if (b) {
-            if (bar + 1 > nb)
+            if (n || bar + 1 > nb)
                 nb = bar + 1;
         } else {
-            if (bar + 1 > na)
+            if (n || bar + 1 > na)
                 na = bar + 1;
         }
         TR8_PTN2_SET(0, CHAIN_COUNTS, na | (nb << 4));
@@ -611,7 +613,7 @@ int chain_press(int id)
             goto stock;
         a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1;
         b = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1;
-        if ((a || b) && TR8_BTN_HELD(TR8_BTN_LAST_STEP) != 1) {
+        if ((a || b) && !TR8_BTN_HELD(TR8_BTN_LAST_STEP)) {
             chain_edit(id, a, b);
             chain_swallow |= (uint8_t)(1u << id);
             return 1;                          /* taken: the screen never sees this pad */

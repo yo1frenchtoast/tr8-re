@@ -91,7 +91,8 @@ typedef void (*tr8_ctrl_apply_fn)(int id, int value);
 
 /* ---------------------------------------------------------------- buttons */
 
-/* 1 while the button is held. Bitmap at 0x6014893C. */
+/* 1 while the button is held. FUN_60013168 returns exactly 0 or 1 (bit `id` of the bitmap at
+ * 0x6014893C), so a caller may use the result as a boolean or a side index. */
 typedef int (*tr8_held_fn)(unsigned id);
 #define TR8_BTN_HELD ((tr8_held_fn)0x60013169)                  /* [unit] FUN_60013168          */
 

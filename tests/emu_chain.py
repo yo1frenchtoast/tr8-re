@@ -554,6 +554,24 @@ expect("press: ... and the recorded bar is still there", (bar_entry(0, 1) or {})
        (0x7777, 0x8888))
 expect("press: A+B+LAST STEP + pad keeps the stock path", press(2, A, B, LAST), [("press", 1)])
 
+# A/B + CLEAR + pad n sets that one side to exactly n bars, so a side can shrink without touching
+# the other. The bars beyond the new length are hidden, not deleted: growing the length again
+# brings them back (the log still holds them).
+set_counts(4, 2)
+expect("shrink: A + CLEAR + pad 2 sets A to exactly two bars", edits(press(2, A, CLEAR)),
+       [("text", "  A2")])
+expect("shrink: ... Ptn2 holds two A bars and two B bars", pget(CNT), 0x22)
+expect("shrink: A + CLEAR + pad 4 grows A back to four", edits(press(4, A, CLEAR)),
+       [("text", "  A4")])
+expect("shrink: ... four A bars, B untouched", pget(CNT), 0x24)
+expect("shrink: B + CLEAR + pad 1 sets B to one bar", edits(press(1, B, CLEAR)),
+       [("text", "  B1")])
+expect("shrink: ... and leaves A alone", pget(CNT), 0x14)
+set_counts(3, 0)
+expect("shrink: A + pad 1 without CLEAR still only selects, no shrink", edits(press(1, A)),
+       [("text", "  A1")])
+expect("shrink: ... three A bars are kept", pget(CNT), 0x03)
+
 # A swallowed press must swallow its release, or the screen sees a release without a press.
 expect("press: A + pad 3 is taken", edits(press(3, A)), [("text", "  A3")])
 clear_repaint()
@@ -614,6 +632,13 @@ expect("A chain: bar 1 masks applied with A", log[-1], ("apply", 0))
 expect("A chain: bar 2", wrap(), (0, 0, 1))
 expect("A chain: bar 3", wrap(), (0, 0, 2))
 expect("A chain: wraps back to bar 1", wrap(), (0, 0, 0))
+
+# Shrinking a side while it plays: the playhead is clamped at the next wrap, so the phrase
+# restarts from bar 1 instead of playing a bar the side no longer has.
+expect("A chain: bar 2 again", wrap(), (0, 0, 1))
+set_counts(2, 0)
+expect("A chain: shrunk to two bars, the next wrap starts over at bar 1", wrap(), (0, 0, 0))
+set_chain(3, 0)
 
 # Two bars on side B, selected on the panel.
 set_chain(0, 2)

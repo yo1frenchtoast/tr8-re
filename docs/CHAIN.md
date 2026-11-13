@@ -13,7 +13,7 @@ side that was never selected stays stock.
 Every pattern has its own four bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 188 checks). The eighth build (per-side
+Status: **works in emulation** (`tests/emu_chain.py`, 198 checks). The eighth build (per-side
 sequences, green/blink row, stopped editing, bar jump) is confirmed on hardware; the step view
 following the bar that is playing is emulation-tested and pending on the unit.
 Like the other patches it is built from your own copy of Roland's v1.61 file.
@@ -31,6 +31,8 @@ it uses the two developer-dump regions, and so do `motion` and `poly`.
 |---|---|
 | Hold **VARIATION A**, press pad 1..4 | Bar *n* becomes the bar being edited, on its **A** steps, and the A side becomes at least *n* bars long. The display shows `  A1`..`  A4` |
 | Hold **VARIATION B**, press pad 1..4 | The same bar on its **B** steps; the B side becomes at least *n* bars long. The display shows `  B1`..`  B4` |
+| Hold **A + CLEAR**, press pad 1..4 | The A side becomes **exactly** *n* bars long, so it can shrink; the B side is untouched. The display shows `  A1`..`  A4` |
+| Hold **B + CLEAR**, press pad 1..4 | The same for the B side. The display shows `  B1`..`  B4` |
 | Hold **A + B**, press pad 1..4 | Both sides are *n* bars long (extend or shrink). The display shows `AB 1`..`AB 4` |
 | Hold **A + B + CLEAR**, press a pad | Both sides back to stock (no bar sequence). The display shows `AB--` |
 | Press **A** (no pad) | Play the A sequence: bars 1..Na, A steps |
@@ -38,8 +40,11 @@ it uses the two developer-dump regions, and so do `motion` and `poly`.
 | Press **A + B** (no pad) | Play the A sequence and then the B sequence, wrapping |
 
 A side's length is the highest bar selected on it, so `A + pad 3` gives A three bars and `B + pad 2`
-gives B two. Selecting a lower bar again does not shrink that side; use `A+B + pad n` to set both
-sides to *n*, or `A+B+CLEAR + pad` to reset them. A side that has never been selected stays stock:
+gives B two. Selecting a lower bar again does not shrink that side; use `A + CLEAR + pad n` (or
+`B + CLEAR + pad n`) to set one side to exactly *n* bars — that is how a phrase is shortened — or
+`A+B + pad n` to set both sides to *n*, and `A+B+CLEAR + pad` to reset them. A bar that is cut off
+this way is not erased: the log still has it, so growing the side again brings it back. A side that
+has never been selected stays stock:
 on the panel, A with no A bars loops the working copy's A side exactly as before. Bars that were
 never selected are the pattern's own steps.
 
@@ -87,7 +92,10 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
 - **Each side has its own length and plays its own bars.** Na and Nb live in the pattern's own
   Ptn2 parameter (below). A plays bars 1..Na with the A steps, B plays 1..Nb with the B steps, and
   A+B plays the A sequence then the B sequence. A side whose length is 0 is never selected: with
-  the panel on that side the stock variation runs, and A+B plays only the other side.
+  the panel on that side the stock variation runs, and A+B plays only the other side. `A + pad n`
+  only grows a side; `A + CLEAR + pad n` sets it to exactly *n*, so a phrase can be shortened. A
+  bar above a shortened side's length is hidden, not erased: its content stays in the log and
+  returns if the side grows again.
 - **A plain pattern change never rewrites a sequence.** Each pattern's bars and lengths are its
   own.
 - **Every sequence starts at bar 1** on a sequencer start and advances one bar per pattern wrap;
@@ -230,9 +238,9 @@ working copy:
    the machine being stopped made that obvious. The earlier build sent the firmware's synchronous
    slot-0 notification here instead; that walk of the screen observers from inside the press
    dispatch froze the unit, so the deferred bit is used now,
-5. the side's length in Ptn2 is raised to at least the bar number (A+B sets both lengths),
-   with the firmware's own Ptn2 setter (which marks the pattern changed and leads to the normal
-   save).
+5. the side's length in Ptn2 is raised to at least the bar number (A+B sets both lengths, and
+   CLEAR makes that side's length exactly the bar number, so it can shrink), with the firmware's
+   own Ptn2 setter (which marks the pattern changed and leads to the normal save).
 
 Nothing here depends on the transport: `A + pad` while stopped loads the bar for editing exactly
 as it does while playing, and `A + pad` again switches to another bar.
@@ -326,20 +334,21 @@ the pattern's own steps.
 ### Code space
 
 The payload uses the two developer-dump regions
-(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 776 bytes of `.text.far` plus 6 bytes of
-`.data` in the first (788 available, 6 free), 1624 bytes of `.text` plus 212 bytes of `.bss` in
+(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 772 bytes of `.text.far` plus 6 bytes of
+`.data` in the first (788 available, 10 free), 1624 bytes of `.text` plus 212 bytes of `.bss` in
 the second (1838 available, 2 free). The literal pool between them (`0x60011464`-`0x60011484`) is
 live firmware data and is never written. The probe build (`payload_probe.json`) needs 568 + 14
 bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
 combined build needs the "grow the image" method or another dead-code region
 ([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths and the follow needed
 `-fno-inline`; the first region carries `sync`, `clen`, `struct_bar`, `slot_load`, `chain_edit`,
-`chain_commit`, `ecrc`, `ent_off` and `save_dirty` plus the display buffer and the pattern byte,
-the second everything else. Dropping the synchronous notification gave the first region back 12
+`chain_commit`, `ecrc` and `save_dirty` plus the display buffer and the pattern byte, the second
+everything else. Dropping the synchronous notification gave the first region back 12
 bytes, and the follow fits in the second because `store_gc`, `store_init` and the display helpers
 were rewritten to do less arithmetic (walking the player struct and the row loop, one `eok` that
 also checks the key, one shared `show4`). The follow itself, the hash check and the `sync` guard at
-the top of `chain_view` then take the second region back to 2 free bytes.
+the top of `chain_view` take the second region back to 2 free bytes; the shrink gesture lives in
+`chain_edit`, so it costs the first region (10 free).
 
 ## Why not a real 32- or 64-step pattern
 
@@ -390,10 +399,12 @@ writes a side length, a bar or the pattern:
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 188 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 198 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..4` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
-  both, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar selection
+  both, `A/B + CLEAR + pad n` sets one side to exactly *n* in both directions without touching the
+  other side, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar
+  selection
   and the working copy (bar 1 = pattern, bar 2 loaded after a save, last steps and B side; the
   same round trip while stopped: `A + pad 3`, edit a step, `A + pad 1`, back to `A + pad 3` with
   the edit, and the step-view repaint bit `0x04` set after every load but not after the A+B
@@ -479,8 +490,11 @@ writes a side length, a bar or the pattern:
   copy and skips the flash write when the hash matches the one taken at load, so steady playback
   writes nothing. The log addressing became a plain `FL_BASE + i * 128` (same bytes, so the bars of
   the eighth build stay readable), and `store_init`, `store_gc` and the display helpers were
-  rewritten to keep the payload inside the two regions: 782/788 bytes in the first region (6 free)
-  and 1836/1838 in the second (2 free). Emulation passes (188 checks). Hardware check pending.
+  rewritten to keep the payload inside the two regions: 778/788 bytes in the first region (10
+  free) and 1836/1838 in the second (2 free). The same build adds `A/B + CLEAR + pad n`, which sets
+  one side to exactly *n* bars: plain `A + pad n` only grows a side, so a phrase could not be
+  shortened without `A+B + pad n` (which also touched the other side) or a reset. Emulation passes
+  (198 checks). Hardware check pending.
 - Hardware checklist for this build:
   0. **Freeze check (do this first):** hold VARIATION A alone for a few seconds and release it
      (the smallest failing case of the previous build); then `A + pad 5` while stopped; then,
@@ -513,6 +527,11 @@ writes a side length, a bar or the pattern:
      bar they show, and `A + pad n` still selects for editing as before. Play for a while with no
      edits: the display must not show `FAIL` and the unit must not slow down (a bar boundary
      writes nothing when the bar was not edited).
+  4d. **Shrinking a side.** With four A bars, `A + CLEAR + pad 2`: the row now shows only two A
+     bars (pads 3-4 dark while A is held) and A plays two bars; B is unchanged. `A + CLEAR + pad 4`
+     brings bars 3-4 back with their steps (they were hidden, not erased). Repeat with
+     `B + CLEAR + pad n`. Plain `A + pad 2` must still only select bar 2 and leave the length
+     alone.
   5. Record different steps into A bar 1, A bar 2 and B bar 1; play A, B and A+B: each bar's own
      steps come back. Select a bar again: the display follows the pad and the steps are restored.
   6. **Stopped bar editing:** with the sequencer stopped, `A + pad 2`, record a step, `A + pad 1`,
