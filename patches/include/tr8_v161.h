@@ -191,8 +191,10 @@ typedef void (*tr8_scale_fn)(void *obj, int scale);
 typedef int (*tr8_get_fn)(void *db, int idx, int def);
 #define TR8_HMI_SETUP ((void *)0x60149F38)                      /* [code] Setup database object */
 /* Low halfword bits of the panel's screen object (same object): the dispatcher FUN_60016C08
-   serves 0x01..0x40 in order (0x40 = redraw the default numeric text with FUN_60015986) and
-   clears each bit. Setting 0x40 hands the display back after a temporary message. */
+   serves 0x01..0x40 in order and clears each bit. 0x04 repaints the view-0 step pads
+   (FUN_60016386); 0x40 redraws the default numeric text (FUN_60015986). Setting a bit asks the
+   panel task to repaint on its next pass, which is safe from inside a button handler. */
+#define TR8_HMI_REPAINT_PADS 0x04                                /* [code] step pads, view 0 */
 #define TR8_HMI_REPAINT 0x40                                    /* [code] default numeric text */
 #define TR8_SETUP_GET ((tr8_get_fn)0x6001B12F)                  /* [code] Setup idx n = global 0x2A+n */
 #define TR8_SYSTEM_GET ((tr8_get_fn)0x6001B433)                 /* [code] FUN_6001B432          */

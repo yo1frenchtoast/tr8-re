@@ -448,12 +448,13 @@ expect("press: pads beyond the four bars go to the firmware", press(9, A), [("pr
 expect("press: LAST STEP + pad keeps the stock path", press(8, LAST), [("press", 7)])
 expect("press: LAST STEP + A + pad keeps the stock path", press(2, LAST, A), [("press", 1)])
 
+# A load marks the panel's "repaint the step pads" bit and lets the panel task do the drawing
+# on its next pass; the payload does not notify the screens from inside the press dispatch.
+uc.mem_write(HMI, b"\0\0")
 r = press(1, A)
 expect("press: A + pad 1 shows bar 1 A", edits(r), [("text", "  A1")])
 expect("press: ... and plays A", applied(r), [("apply", 0)])
-# (the length setter above also notifies, with its own event; the slot-0 event is {0, 4})
-expect("press: ... and tells the screens the working copy changed",
-       [e for e in r if e == ("notify", (0, 4))], [("notify", (0, 4))])
+expect("press: ... and marks the step pads for the panel to repaint", r8(HMI) & 0x04, 0x04)
 expect("press: bar 1 is the pattern itself", slot_rows(0), slot_rows(1))
 expect("press: the A side is now one bar", pget(CNT), 0x01)
 expect("press: bar 1 was stored", (bar_entry(0, 0) or {}).get("rows"), slot_rows(1))
@@ -511,10 +512,10 @@ expect("stopped: ... bar 1 is the pattern itself", slot_rows(0), slot_rows(1))
 expect("stopped: A + pad 3 loads the edited bar again", edits(press(3, A)), [("text", "  A3")])
 expect("stopped: ... with the step edited while stopped", slot_rows(0)[8], (0x0123, 0x5108))
 
+uc.mem_write(HMI, b"\0\0")
 r = press(3, A, B)
 expect("press: A+B + pad 3 sets both sides to three bars", edits(r), [("text", "AB 3")])
-expect("press: ... without reloading the working copy",
-       [e for e in r if e == ("notify", (0, 4))], [])
+expect("press: ... without reloading the working copy or asking for a repaint", r8(HMI) & 0x04, 0)
 expect("press: three bars on both sides", pget(CNT), 0x33)
 expect("press: A+B+CLEAR + pad 2 resets both sides", edits(press(2, A, B, CLEAR)), [("text", "AB--")])
 expect("press: no side sequence, painted bars kept", pget(CNT), 0)

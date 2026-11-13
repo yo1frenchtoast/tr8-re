@@ -42,10 +42,10 @@ on the panel, A with no A bars loops the working copy's A side exactly as before
 never selected are the pattern's own steps.
 
 Selecting a bar does not depend on the transport: with the machine **stopped**, `A + pad 2`
-loads bar 2 into the working copy and redraws the screen at once, so the step pads and TR-REC edit
-bar 2; `A + pad 1` stores bar 2 and switches to bar 1, and `A + pad 2` brings it back. The load
-sends the firmware's own "slot 0 changed" notification (the one a stock pattern load sends), which
-is what draws the newly selected bar.
+loads bar 2 into the working copy and redraws the step view at once, so the step pads and TR-REC
+edit bar 2; `A + pad 1` stores bar 2 and switches to bar 1, and `A + pad 2` brings it back. The
+load sets the screen's "repaint the step view" bit (`0x04` in the halfword at `0x60149F38`), which
+the panel dispatcher serves on its next pass; see the note on the hardware freeze below.
 
 The pads only ever choose a bar 1..4; pads 5..16 stay ordinary step pads and LAST STEP + pad
 still sets the pattern length (the poly gesture), because LAST STEP wins over A/B in the patch.
@@ -80,9 +80,12 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
   the A+B sequence wraps from the last B bar back to the first A bar.
 - **The selected bar is what TR-REC edits, playing or stopped.** Selecting a bar loads its steps
   into the working copy (area 4 slot 0) and applies them to the sound; the stock step pads,
-  TR-REC, LAST STEP and CLEAR then work on that bar. The load ends with the notification a stock
-  pattern load sends (`FUN_60010148`), so the screen redraws the newly selected bar at once
-  instead of waiting for some other change; selecting another bar stores the one you leave.
+  TR-REC, LAST STEP and CLEAR then work on that bar. The load marks the panel's step view for a
+  repaint (`0x04` in the screen object's bit word), so the screen redraws the newly selected bar
+  on its next pass instead of waiting for some other change; selecting another bar stores the one
+  you leave. The repaint is deliberately deferred: an earlier build called the firmware's
+  synchronous "slot 0 changed" notification (`FUN_60010148(dispatcher, {0, 4})`) from inside the
+  button dispatch, which froze the unit (see the hardware note below).
 - **A bar carries its steps, its LAST_A/LAST_B and its scale.** The scale is in the log entry, so
   a scale change is kept with the bar (the redirected save never writes the pattern slot).
   Weak accents and flams are area-6 parameters and stay with the pattern, shared by its bars.
@@ -185,10 +188,12 @@ working copy:
    side); a bar with no log entry copies the whole pattern slot,
 3. the player struct and the sound masks are filled from slot 0, so the bar plays while it is
    edited,
-4. the notifications the firmware sends after a load into slot 0 go out (`FUN_60050F70` returns
-   the dispatcher, `FUN_60010148(dispatcher, {0, 4})` tells its observers), so every view redraws
-   the bar that was loaded. Without this the step view kept the previous bar until something
-   else refreshed it — the machine being stopped made that obvious,
+4. the screen's step-view repaint bit (`0x04` in the halfword at `0x60149F38`) is set, so the
+   panel redraws the step pads and the view on its next pass and they show the bar that was
+   loaded. Without this the step view kept the previous bar until something else refreshed it —
+   the machine being stopped made that obvious. The earlier build sent the firmware's synchronous
+   slot-0 notification here instead; that walk of the screen observers from inside the press
+   dispatch froze the unit, so the deferred bit is used now,
 5. the side's length in Ptn2 is raised to at least the bar number (A+B sets both lengths),
    with the firmware's own Ptn2 setter (which marks the pattern changed and leads to the normal
    save).
@@ -273,16 +278,16 @@ the pattern's own steps.
 ### Code space
 
 The payload uses the two developer-dump regions
-(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 784 bytes of `.text.far` plus 1 byte of
-`.data` in the first (788 available, 3 free), 1624 bytes of `.text` plus 212 bytes of `.bss` in
+(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 772 bytes of `.text.far` plus 1 byte of
+`.data` in the first (788 available, 15 free), 1624 bytes of `.text` plus 212 bytes of `.bss` in
 the second (1838 available, 2 free). The literal pool between them (`0x60011464`-`0x60011484`) is
 live firmware data and is never written. The probe build (`payload_probe.json`) needs 568 + 14
 bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
 combined build needs the "grow the image" method or another dead-code region
-([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths and the slot-0 notification needed
-`-fno-inline`; `struct_bar`, `clen` and `show_fail` live in the first region, `show_ab` is back in
-the second, and `slot_notify` is inlined into `chain_edit` (a separate function no longer fits).
-The release-time display hand-back is what took the second region to 2 free bytes.
+([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths needed
+`-fno-inline`; `struct_bar`, `clen` and `show_fail` live in the first region and `show_ab` is back
+in the second. Dropping the synchronous notification gave the first region back 12 bytes. The
+release-time display hand-back is what took the second region to 2 free bytes.
 
 ## Why not a real 32- or 64-step pattern
 
@@ -339,8 +344,9 @@ writes a side length, a bar or the pattern:
   both, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar selection
   and the working copy (bar 1 = pattern, bar 2 loaded after a save, last steps and B side; the
   same round trip while stopped: `A + pad 3`, edit a step, `A + pad 1`, back to `A + pad 3` with
-  the edit, and the slot-0 `{0, 4}` notification after every load but not after the A+B length
-  gesture); the display hand-back (releasing VARIATION A or B sets the screen's `0x40` repaint
+  the edit, and the step-view repaint bit `0x04` set after every load but not after the A+B
+  length gesture, and no slot-0 notification at all); the display hand-back (releasing VARIATION
+  A or B sets the screen's `0x40` repaint
   bit, a swallowed pad release leaves it clear, another button does not touch it); the
   pattern-save redirect (no pattern slot written, one log entry with the 26 rows and LAST_A/B,
   area 4 slot *n+1* unchanged); playback of an A sequence, a B sequence and the A+B A-then-B
@@ -375,11 +381,26 @@ writes a side length, a bar or the pattern:
 - Hardware, fourth build (bar row on all four pad setters): the four bars played and recorded and
   the row was correct on every screen. Confirmed on the unit; the old chain build is recoverable
   from git (`bd94eef`, write-session fix `bfdc63d`).
-- This build (sequential per-side playback and the green/blink row) adds the two side lengths, the
-  per-side sequences and the A+B A-then-B order. Emulation passes; hardware check pending. The
-  first hardware build of *this* change must confirm the order, the row and the counts; if a side
-  misbehaves, flash the probe build and report which display string it shows.
+- Hardware, fifth build (the same change with the display hand-back, `8941d9e`): the unit froze
+  when a bar was changed during playback. The only new runtime code between the confirmed build
+  and that one is the synchronous slot-0 notification in `chain_edit`
+  (`FUN_60010148(dispatcher, {0, 4})`, added with the stopped-editing build) and the release-time
+  `0x40` repaint. The notification walks the screen observers from inside the press dispatch,
+  which is not where the firmware ever sends it (a stock load sends it from the pattern/sequencer
+  task); it is removed and replaced with the panel's deferred step-view repaint bit `0x04`. The
+  automatic bar-change path is the one confirmed in the fourth build. Build `8941d9e` remains
+  flashable for a bisect; `bd47883` is the confirmed baseline.
+- This build (sequential per-side playback, the green/blink row and the deferred repaint) adds the
+  two side lengths, the per-side sequences and the A+B A-then-B order. Emulation passes; hardware
+  check pending. The first hardware build of *this* change must confirm the order, the row, the
+  counts and that neither a bar change during playback nor selecting a bar while playing freezes
+  the unit; if a side misbehaves, flash the probe build and report which display string it shows.
 - Hardware checklist for this build:
+  0. **Freeze check:** press A and let the bars advance on their own through a full loop; then,
+     while playing, select bars with `A + pad n` and `B + pad n` and release A/B each time. The
+     unit must not freeze, the screen must come back to its normal text after the release, and
+     audio must keep running. Repeat while stopped. If it freezes, note whether it was the
+     automatic advance or the selection, and whether the display stayed on a bar number.
   1. Plain pattern, no side selected: A, B and A+B behave exactly as stock; while A or B is held
      the row shows just bar 1 (the pattern itself) blinking yellow and pads 2-16 dark.
   2. Give A four bars (`A + pad 1`, then 2, 3, 4): the display shows `  A1`..`  A4`, and each

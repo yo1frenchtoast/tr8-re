@@ -518,7 +518,11 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   The tick `FUN_60016D00` counts down and tail-calls the dispatcher, and the setter
   `FUN_60016D58(obj, value)` writes `value` at +8, sets `0x40` and lets the dispatcher draw it
   (`str r1,[r0,#8]; ldrh; orr #0x40; strh; bx lr`). So a patch can show its own text and then set
-  `0x40` to have the screen paint its normal value again on the next tick. [code]
+  `0x40` to have the screen paint its normal value again on the next tick. The chain patch uses
+  `0x04` to redraw the step view after it loads a bar into area 4 slot 0 (the same effect the
+  firmware gets by notifying the screens, but done on the panel's own pass). [code] Do not call
+  the slot-0 notification `FUN_60010148` from inside the button dispatch: the chain build that
+  did froze the unit when a bar was changed. [unit]
 - **LEDs:** `FUN_6001A7EC(id, a, b, c)` calls the fast-code function `0x01000536` with the LED
   object `0x601488D0`. Seen: `FUN_6001A7EC(0x2A, 1, 0, 0x10)`, instrument LEDs 0x1D-0x25. The
   argument meaning is not decoded. [hyp]
@@ -550,7 +554,8 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   `0x60011488`-`0x60011BB5` (1838 bytes) are free. The literal pool `0x60011464`-`0x60011483` is
   still used and must stay. The motion patch uses 737 + 1568 bytes; `motion-poly` uses about
   340 + 730 bytes, its zeroed data is in patch RAM (below); `chain` uses both regions too
-  (785 + 1836 bytes, 3 + 2 free), so it is standalone for the same reason.
+  (772 + 1 = 773 of 788 in the first, 15 free; 1624 + 212 of 1838 in the second, 2 free), so it
+  is standalone for the same reason.
 - **Grow the image (design, not tested on a unit).** Code appended at the end of the image
   (`0x601309E0`) would be erased, because the bss zero-fill covers `0x601264EC`-`0x60280987`.
   Instead:

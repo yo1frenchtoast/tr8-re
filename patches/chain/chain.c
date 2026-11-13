@@ -293,19 +293,6 @@ __attribute__((section(".text.far"))) static void slot_load(int pat, int bar, in
     d[0] = (uint32_t)side;
 }
 
-/* Tell the screens that slot 0 of `area` changed, exactly like the firmware's own copy does
- * after a load into the working copy (see TR8_FN_NOTIFY). Without it a bar loaded while the
- * machine is stopped is in slot 0 and in the player struct, but the views keep showing the bar
- * the panel last drew until some other change refreshes them. */
-__attribute__((always_inline)) static inline void slot_notify(int area)
-{
-    uint8_t ev[2];
-
-    ev[0] = 0;                         /* 0 = slot 0, the current slot of the area */
-    ev[1] = (uint8_t)area;
-    TR8_FN_NOTIFY(TR8_FN_DISPATCH(), ev);
-}
-
 /* Fill the player struct from the working copy (the bar being edited). */
 static void struct_slot0(void)
 {
@@ -551,8 +538,11 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
         }
         TR8_PTN2_SET(0, CHAIN_COUNTS, na | (nb << 4));
     }
-    slot_notify(TR8_AREA_PATTERN);      /* stopped: redraw the bar that was just loaded */
-    show_bar(bar + 1, b);               /* last, so the confirmation is what stays on the display */
+    /* The bar is in slot 0 and in the player struct; ask the panel to repaint its step pads on
+     * its next pass instead of notifying the screens from inside the press dispatch (that
+     * synchronous observer walk is what froze the unit). */
+    *(volatile uint8_t *)TR8_HMI_SETUP |= TR8_HMI_REPAINT_PADS;
+    show_bar(bar + 1, b);               /* the confirmation of the pad press */
     if (!saved)
         show_fail();
 }
