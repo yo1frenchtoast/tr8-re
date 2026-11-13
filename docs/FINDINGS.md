@@ -577,7 +577,10 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
      `0x60281200`-`0x60281B7C` (2428 bytes) and its `.bss` runs to `0x60281C9C`.
   3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8`
      (`FUN_60010430`) becomes `0x60290988`, the same move `motion-poly` makes. The other copy at
-     `0x6012A2FC` is the startup stack top, not the pool (see the next item).
+     `0x6012A2FC` is the startup stack top, not the pool (see the next item). The bss zero-fill
+     has its own bounds, literals `0x601264EC` at `0x6000015C` and size `0x15A49C` at
+     `0x60000160` (startup code `bl 0x6000009E` at `0x60000078`), so moving the pool start does
+     **not** extend the zeroing over the new code.
   The boot loader decompresses any size into SDRAM: `FUN_01000B3C` reads the decompressed size
   from the header and `FUN_01000C76` is bounded only by `destination + size`, with no fixed cap.
   The updater only checks sizes and sums. Emulation passes (224 chain checks and the three

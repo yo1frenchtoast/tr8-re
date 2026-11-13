@@ -369,7 +369,9 @@ space"):
 | Bar index and other state | `0x60281B80`-`0x60281C9B` (`.bss`, in the image) | 284 bytes |
 
 The firmware's bss ends at `0x60280987` (the startup code zeroes it) and the RTOS pool starts at
-`0x60280988`. The patcher writes the payload at `0x60281200` and **extends the decompressed image
+`0x60280988`. The zero-fill bounds are their own startup literals (`0x601264EC` at `0x6000015C`,
+size `0x15A49C` at `0x60000160`), so the pool move does not extend the zeroing over the chain. The
+patcher writes the payload at `0x60281200` and **extends the decompressed image
 to `0x60281C9C`** with zeros; the boot loader decompresses that size to `0x60000000` without a
 fixed cap (it is bounded only by `destination + decompressed size`, verified in `FUN_01000B3C` /
 `0x01000C76`). The startup zero-fill still stops at `0x60280987`, so the code and its state
