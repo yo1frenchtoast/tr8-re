@@ -182,8 +182,8 @@ their state apart:
 
 | Hook | Site | Task | Tag |
 |---|---|---|---|
-| `chain_var` | `0x60009614`, inside `FUN_600095F0` (start and every wrap) | sequencer | [code] |
-| `chain_wrap` | `0x600098CA`, inside `FUN_6000989C` (pattern wrap) | sequencer | [code] |
+| `chain_var` | `0x60009614`, inside `FUN_600095F0` (start and every wrap) | sequencer; panel during TAP + START/STOP (open point 1) | [code] |
+| `chain_wrap` | `0x600098CA`, inside `FUN_6000989C` (pattern wrap) | sequencer; panel during TAP + START/STOP (open point 1) | [code] |
 | `chain_view` | `0x60016C44`, inside the HMI dispatcher `FUN_60016C08` (bit `0x04`) | panel | [code] |
 | `chain_press` | `0x60013842`, inside `FUN_600137DE` (press dispatch) | panel | [code] |
 | `chain_release` | `0x600137D2`, inside `FUN_6001377C` (release dispatch) | panel | [code] |
@@ -528,6 +528,36 @@ writes a side length, a bar or the pattern:
 | ` 3CL` (A+B + LAST STEP + pad 3) | the same with both variation buttons held: LAST STEP wins, no bar selection |
 | pads 5-16 dark while A is held | the bar row: the probe has no side lengths and still lights its four-bar row (all four yellow); the real build shows pads 1..8 of that side only, the bars green with the head blinking yellow, the rest off |
 | nothing at all | the payload is not running: the build is not the patched one |
+
+## Open points (to do)
+
+None of these has been seen as a fault on the unit. Each one is a review rule 1 or rule 2 question
+([CLAUDE.md](../CLAUDE.md)) that still needs an answer, a fix or a test.
+
+1. **The restart on the fly runs `chain_var` in the panel task.** TAP + START/STOP while playing
+   calls `FUN_600099B6` from the panel task: stop, start and one tick, with no lock against the
+   sequencer (FINDINGS section 5, [POLY.md](POLY.md) "Tasks"). The restart `FUN_600095F0`, and
+   with it `chain_var` and `chain_wrap`, then run in the panel task, so `chain_pos`, `chain_side`,
+   `chain_row`, `chain_wrapping` and `jump_seen` can be written by two tasks, and the sequencer can
+   preempt the panel between two of them. To do: decide whether a preemption can leave a
+   wrong pair (for example a side from one pass and a row from another, or `chain_wrapping` set
+   during the other task's start) and, if so, make the state one word written once (as poly did
+   with `poly_n`). A quick check of TAP + START/STOP on a three-bar sequence showed nothing wrong.
+2. **`chain_edit` writes the sequencer's state from the panel task.** A/B + pad loads the bar
+   and then calls `struct_bar`, writes `TR8_SEQ_VARI` and `TR8_SEQ_VARIATION` and calls
+   `TR8_FN_APPLY` on the player struct `0x6012FA64`, all from the panel task, while the sequencer
+   reads (and at a wrap rewrites) the same struct. A wrap that preempts in the middle can play one
+   pass with a mix of the old and the new bar. To do: decide whether to keep the immediate change
+   (the stock firmware writes the struct from the panel too) or only publish `chain_jump` and let
+   the next pass load the bar.
+3. **Flash reads during a write session.** The log code opens a write session (`FUN_600108AA`,
+   indirect mode) around each program or erase, in the panel task. Whether a read through the
+   flash mapping by another task (the sequencer, which can preempt in the middle of a session) is
+   safe in that mode is not known ([DEVELOPING.md](DEVELOPING.md) section 3). The chain's sequencer
+   code reads only RAM (`bar_ram`), so the patch does not do such a read itself; the question is
+   whether any stock code that the sequencer or another task runs reads the mapped flash. To do:
+   find the readers of the mapped flash range in the disassembly (`tools/callgraph.py refs`), or
+   test on the unit with saves during playback.
 
 ## Test history
 

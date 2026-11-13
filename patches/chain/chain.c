@@ -57,7 +57,8 @@
  * recorded. A pattern with no side sequence keeps the stock commit, so its edits survive a
  * reflash.
  *
- * Tasks (docs/DEVELOPING.md section 3): chain_var and chain_wrap run in the sequencer task;
+ * Tasks (docs/DEVELOPING.md section 3): chain_var and chain_wrap run in the sequencer task (and
+ * in the panel task during TAP + START/STOP, docs/CHAIN.md "Open points" 1);
  * chain_view, chain_press, chain_edit, chain_led4, chain_commit and the log/store code run in
  * the panel task. The sequencer never touches the flash: it reads a RAM copy of the bars that
  * the panel task fills (bar_ram). State has one writer: the sequencer writes chain_pos,
