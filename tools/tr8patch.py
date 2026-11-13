@@ -22,13 +22,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = 0x60000000
 APPA_SHA256 = "3685edab8bbeaef8752df9ef08a73a9fd2a2e69ba8210016132f6d141f6b452e"  # v1.61, decompressed
 
-def thumb_bl(src, dst):
+def thumb_bl(src, dst, link=True):
+    """Thumb-2 BL (link=True) or B.W (link=False, a tail call) from src to dst."""
     off = dst - (src + 4)
     assert -(1 << 24) <= off < (1 << 24) and off % 2 == 0
     s = (off >> 24) & 1; i1 = (off >> 23) & 1; i2 = (off >> 22) & 1
     j1 = (~i1 ^ s) & 1; j2 = (~i2 ^ s) & 1
     h1 = 0xF000 | (s << 10) | ((off >> 12) & 0x3FF)
-    h2 = 0xD000 | (j1 << 13) | (j2 << 11) | ((off >> 1) & 0x7FF)
+    h2 = (0xD000 if link else 0x9000) | (j1 << 13) | (j2 << 11) | ((off >> 1) & 0x7FF)
     return struct.pack("<HH", h1, h2)
 
 NOP_W = bytes.fromhex("aff30080")
@@ -41,7 +42,8 @@ PATCHES = {
         "allowed": [(0x60011150, 0x60011464), (0x60011488, 0x60011BB6)],
         "keep": [(0x60011464, 0x60011484)],
         "sites": [
-            # (address, original bytes, replacement: "nop" or a payload symbol to bl to)
+            # (address, original bytes, replacement: "nop", a payload symbol to bl to, or
+            # "b:symbol" to b.w to, for a tail call)
             (0x60011E00, thumb_bl(0x60011E00, 0x6001114E), "nop"),          # dev dump 1 (frees the cave)
             (0x60011E04, thumb_bl(0x60011E04, 0x600113B2), "nop"),          # dev dump 2 (frees the cave)
             (0x600138C8, thumb_bl(0x600138C8, 0x60013242), "motion_knob"),  # HMI knob event -> screen
@@ -61,11 +63,11 @@ PATCHES["motion-probe"] = dict(PATCHES["motion"], doc="Motion hooks hardware pro
                                payload="patches/motion/payload_probe.json")
 
 # Per-instrument pattern length (patches/poly/poly.c, docs/POLY.md).
-# Uses the first motion region alone: cannot be combined with motion.
+# Code in the first developer-dump region, data in the second (motion + poly is "motion-poly").
 PATCHES["poly"] = {
     "doc": "Per-instrument length: hold LAST STEP + instrument, press a pad (docs/POLY.md)",
     "payload": "patches/poly/payload.json",
-    "allowed": [(0x60011150, 0x60011464)],
+    "allowed": [(0x60011150, 0x60011464), (0x60011488, 0x60011BB6)],
     "keep": [(0x60011464, 0x60011484)],
     "sites": [
         (0x60011E00, thumb_bl(0x60011E00, 0x6001114E), "nop"),          # dev dump 1 (frees the cave)
@@ -78,6 +80,7 @@ PATCHES["poly"] = {
         (0x600096AE, thumb_bl(0x600096AE, 0x60026894), "poly_run"),     # sequencer stop
         (0x60019A10, thumb_bl(0x60019A10, 0x6001B8D6), "poly_last"),    # pad with LAST STEP held
         (0x60016438, thumb_bl(0x60016438, 0x6001774E), "poly_led"),     # step LEDs, LAST STEP view
+        (0x60016B56, thumb_bl(0x60016B56, 0x60017722, link=False), "b:poly_lsled"),  # LAST STEP LED
     ],
 }
 
@@ -199,7 +202,9 @@ def apply(app, spec):
         if isinstance(repl, bytes):                     # raw replacement (a literal)
             app[o:o + 4] = repl
         else:
-            app[o:o + 4] = NOP_W if repl == "nop" else thumb_bl(addr, syms[repl] & ~1)
+            app[o:o + 4] = NOP_W if repl == "nop" else \
+                thumb_bl(addr, syms[repl[2:]] & ~1, link=False) if repl.startswith("b:") else \
+                thumb_bl(addr, syms[repl] & ~1)
     for r in pay["regions"]:
         a, data = r["addr"], bytes.fromhex(r["data"])
         if not any(lo <= a and a + len(data) <= hi for lo, hi in spec["allowed"]):

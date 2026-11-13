@@ -227,6 +227,9 @@ typedef void (*tr8_ptn2_set_fn)(void *db, int idx, int value);
 
 /* Setup[0] = panel mode: 0 TR-REC, 3 INST REC (others not identified). */
 #define TR8_SETUP_MODE 0                                        /* [code]                       */
+/* Setup[7] = selected row: row button - 0x1D (0..3 AC RV EC SC, 4.. the instruments in button
+ * order, see TR8_BTN_INST). Written by FUN_6001961E with Setup[8] = 1 on every row press. */
+#define TR8_SETUP_ROW  7                                        /* [code]                       */
 
 /* Sound parameters travel as internal MIDI control changes {0x0B, 0xB0, cc, value}.
  * The cc numbers are the TR-8 MIDI implementation numbers (BD tune = 20, ...). */
@@ -260,6 +263,14 @@ typedef void (*tr8_step_led_fn)(int led, unsigned colour);
 typedef void (*tr8_led_set_fn)(void *obj, int led, int a, int b, int c);
 #define TR8_FN_LED_SET ((tr8_led_set_fn)0x6004BB4D)              /* [code] FUN_6004BB4C veneer   */
 #define TR8_LED_OBJ    ((void *)0x601488D0)                      /* [code] LED object            */
+
+/* Button LED setter FUN_60017722(id, a, b) = FUN_6004BB4C(LED object, id, a, b, 0). The panel
+ * repaint FUN_600169A4 lights LAST STEP (id 9) with a = 1, b = 9 when the pattern is shorter
+ * than 16 steps [code]. b = 0 is the blink flag on the step pads [unit, CHAIN.md]; on a button
+ * LED [hyp]. */
+typedef void (*tr8_led3_fn)(int id, int a, int b);
+#define TR8_FN_LED3    ((tr8_led3_fn)0x60017723)                 /* [code] FUN_60017722          */
+#define TR8_LED_LASTSTEP 9                                       /* [code]                       */
 
 /* LED control, arguments not decoded: FUN_6001A7EC(id, a, b, c). */
 typedef void (*tr8_led_fn)(int id, int a, int b, int c);

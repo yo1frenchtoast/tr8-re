@@ -26,7 +26,8 @@
  *             and 0x60009A50 (delayed flam trigger);
  *   poly_run  replaces "bl FUN_60026894" at 0x6000966E (start) and 0x600096AE (stop);
  *   poly_last replaces "bl FUN_6001B8D6" at 0x60019A10 (step pad pressed with LAST STEP held);
- *   poly_led  replaces "bl FUN_6001774E" at 0x60016438 (step LED loop of the LAST STEP view).
+ *   poly_led  replaces "bl FUN_6001774E" at 0x60016438 (step LED loop of the LAST STEP view);
+ *   poly_lsled replaces the tail call "b.w FUN_60017722" at 0x60016B56 (LAST STEP button LED).
  *
  * Storage: the length of instrument i is the Ptn2 parameter of index TR8_PTN2_SPARE + i
  * (global id 0x12B + i), one of the unnamed pattern parameters that the firmware stores
@@ -108,6 +109,24 @@ void poly_led(int led, unsigned colour)
         break;
     }
     TR8_FN_STEP_LED(led, colour);
+}
+
+/* Replaces the tail call "b.w FUN_60017722" at 0x60016B56 at the end of the panel repaint
+ * FUN_600169A4 (bit 0x02). With LAST STEP released it sets LED 9 (lit if the pattern is shorter
+ * than 16 steps); with LAST STEP held the same call sets LED 7. In TR-REC, when the selected row
+ * is an instrument with its own length, LAST STEP blinks instead. Panel task. A row press
+ * requests this repaint (FUN_6001961E ORs 0x16 into the panel bits). */
+void poly_lsled(int id, int a, int b)
+{
+    if (id == TR8_LED_LASTSTEP &&
+        TR8_SETUP_GET(TR8_HMI_SETUP, TR8_SETUP_MODE, 0) == 0) {
+        int t = TR8_SETUP_GET(TR8_HMI_SETUP, TR8_SETUP_ROW, 0) - 4;   /* button order */
+        if (t >= 0 && t < NI && len(t == 5 ? 6 : t == 6 ? 5 : t)) {  /* RS/HC swapped */
+            a = 1;
+            b = 0;                                /* blink flag */
+        }
+    }
+    TR8_FN_LED3(id, a, b);
 }
 
 void poly_run(void *p, int a, int run)

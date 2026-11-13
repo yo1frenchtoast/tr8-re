@@ -20,7 +20,7 @@ space is zero-initialised data, which does not need to be in the image at all.
 | What | Where | Size |
 |---|---|---|
 | Motion code + `.data` | `0x60011150`-`0x60011463` (region A) | about 340 bytes |
-| Poly code + RAM init + `.data` | `0x60011488`-`0x60011BB5` (region B) | about 730 bytes |
+| Poly code + RAM init + `.data` | `0x60011488`-`0x60011BB5` (region B) | about 840 bytes |
 | All zero-initialised data (motion table, masks, poly heads) | **patch RAM** `0x60280A00` | 1924 bytes |
 
 **Patch RAM.** The RTOS memory pool starts right after the firmware bss, at `0x60280988`. The

@@ -569,6 +569,14 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 - **LEDs:** `FUN_6001A7EC(id, a, b, c)` calls the fast-code function `0x01000536` with the LED
   object `0x601488D0`. Seen: `FUN_6001A7EC(0x2A, 1, 0, 0x10)`, instrument LEDs 0x1D-0x25. The
   argument meaning is not decoded. [hyp]
+- **Button LEDs.** `FUN_60017722(id, a, b)` calls `FUN_6004BB4C(object, id, a, b, 0)`. The panel
+  repaint `FUN_600169A4` (bit `0x02`) sets with it: LED `9` = LAST STEP, `(9, 1, 9)` when the
+  pattern of the current variation is shorter than 16 steps, `(9, 0, 9)` at 16; while LAST STEP is
+  held `(9, 3, 9)`, or `(9, 1, 9)` when Setup[3] = -1 (what `a = 3` looks like is not known). LEDs
+  `6`/`7` are set next to it (variation A/B) [hyp], `8` and `0x42 + n` (n = 0..3, the scale) [hyp]. The
+  last LED call of that repaint is a tail call (`b.w` at `0x60016B56`). `b = 0` blinks a pad
+  (play colour `(1, 0, 2)`) [unit]; that it also blinks a button LED is the guess of the poly
+  LAST STEP hook ([POLY.md](POLY.md), hardware test 5). [code]
 - **Step/pad pads and the palette.** Pads (step LEDs) are ids `0x1D`+step (`0x1D`-`0x2C`). All
   screens paint them through four small setters, and every one of them ends in
   `bl FUN_6004BB4C`, a veneer to the fast-code LED function `0x01000537` called as

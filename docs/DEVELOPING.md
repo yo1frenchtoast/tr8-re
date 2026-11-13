@@ -84,6 +84,12 @@ Find a site in `work/appA.dis`; `thumb_bl(src, dst)` gives the bytes of `bl dst`
 patcher can verify them. Prefer sites where the firmware calls a function on the path you need
 (event handlers, per-step functions) over patching inside a function body.
 
+A call at the end of a function is often a tail call: `pop.w {..., lr}` then `b.w target`. Hook
+it with a `b.w` of your own, never a `bl`, which would overwrite the restored `lr` and lose the
+way back. The replacement `"b:my_fn"` writes `b.w my_fn`, and `thumb_bl(src, dst, link=False)`
+gives the original bytes; `my_fn` then returns to the caller of the hooked function. Example: the
+LAST STEP LED hook at `0x60016B56` (`patches/poly`, [POLY.md](POLY.md)).
+
 ### Compiling
 
 `patches/motion/build.sh` is the template:

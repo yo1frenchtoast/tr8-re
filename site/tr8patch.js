@@ -15,12 +15,12 @@ const sum32 = (b) => { let s = 0; for (let i = 0; i < b.length; i++) s = (s + b[
 const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const unhex = (s) => Uint8Array.from(s.match(/../g) || [], (x) => parseInt(x, 16));
 
-export function thumbBl(src, dst) {
+export function thumbBl(src, dst, link = true) {   // BL, or B.W (a tail call) without link
   const off = dst - (src + 4);
   const s = (off >> 24) & 1, i1 = (off >> 23) & 1, i2 = (off >> 22) & 1;
   const j1 = (~i1 ^ s) & 1, j2 = (~i2 ^ s) & 1;
   const h1 = 0xf000 | (s << 10) | ((off >> 12) & 0x3ff);
-  const h2 = 0xd000 | (j1 << 13) | (j2 << 11) | ((off >> 1) & 0x7ff);
+  const h2 = (link ? 0xd000 : 0x9000) | (j1 << 13) | (j2 << 11) | ((off >> 1) & 0x7ff);
   return [h1 & 255, h1 >> 8, h2 & 255, h2 >> 8];
 }
 
@@ -136,7 +136,9 @@ export function applyPatch(app, spec, log) {
     const o = s.addr - BASE, orig = unhex(s.orig);
     for (let k = 0; k < 4; k++)
       if (app[o + k] !== orig[k]) throw new PatchError(`unexpected bytes at 0x${s.addr.toString(16)} (patches cannot be combined?)`);
-    app.set(s.repl.bytes ? unhex(s.repl.bytes) : s.repl === "nop" ? NOP_W : thumbBl(s.addr, syms[s.repl] & ~1), o);
+    app.set(s.repl.bytes ? unhex(s.repl.bytes) : s.repl === "nop" ? NOP_W
+            : s.repl.startsWith("b:") ? thumbBl(s.addr, syms[s.repl.slice(2)] & ~1, false)
+            : thumbBl(s.addr, syms[s.repl] & ~1), o);
   }
   for (const r of spec.regions) {
     const data = unhex(r.data), a = r.addr;

@@ -40,7 +40,9 @@ pr = lambda i: r32(P + 4 * i)
 
 log = []
 held = set()                                   # buttons held (FUN_60013168)
+SETUP = {3: -1}                                # Setup[n] read through FUN_6001B12E; default 0
 STUBS = {0x6001774E: "led", 0x6001B736: "ptn_get", 0x6001B280: "f", 0x60013168: "held", 0x6001B8D6: "set_last", 0x60015980: "text", 0x6001B12E: "setup_get",
+         0x60017722: "led3", 0x6001A29A: "f",
          0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6004FB34: "f", 0x6000066E: "f",
          0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f", 0x600522E4: "range", 0x600521E8: "f"}
 during = []                                    # callbacks run at the first engine call
@@ -54,7 +56,9 @@ def hook(uc, addr, size, _):
         elif name == "held":
             ret = 1 if r0 in held else 0
         elif name == "setup_get":
-            ret = 0xFFFFFFFF if r1 == 3 else 0     # Setup[3] == -1: the firmware's own pad condition
+            ret = SETUP.get(r1, 0) & 0xFFFFFFFF    # Setup[3] == -1: the firmware's own pad condition
+        elif name == "led3":
+            log.append(("led3", r0, r1, uc.reg_read(UC_ARM_REG_R2)))
         elif name == "led":
             log.append((r0 - 0x1D, r1))
         elif name == "ptn_get":
@@ -149,6 +153,30 @@ expect("LAST STEP + CH (length 3): steps 1-3 lit, rest off", leds(LASTSTEP, INST
 expect("LAST STEP + RS (length 5, RS button 0x27)", leds(LASTSTEP, INSTBTN(RS)), [IN] * 5 + [OFF] * 11)
 expect("running: CH play position shown", leds(LASTSTEP, INSTBTN(CH), running=1, pos=1), [IN, PLAY, IN] + [OFF] * 13)
 uc.mem_write(0x6007E102, bytes([0]))
+
+# LAST STEP button LED, through the firmware's own panel repaint FUN_600169A4 (bit 0x02). Its
+# last call, the tail call "b.w FUN_60017722" at 0x60016B56, sets LED 9 (LAST STEP) when LAST
+# STEP is not held. In TR-REC (Setup[0] = 0), with an instrument that has a length as the
+# selected row (Setup[7] = button - 0x1D), the LED blinks: (9, 1, 0), b = 0 is the blink flag.
+# Otherwise it is the stock (9, lit if the pattern is shorter than 16 steps, 9).
+ROW = lambda i: INSTBTN(i) - 0x1D
+def last_led(row, mode=0, *buttons):
+    SETUP[0], SETUP[7] = mode, row
+    held.clear(); held.update(buttons); log.clear()
+    call(0x600169A4, 0x60149B8C)
+    held.clear(); SETUP[0] = SETUP[7] = 0
+    return [x[1:] for x in log if x[0] == "led3" and x[1] in (7, 9)]
+BLINK, STOCK = (9, 1, 0), (9, 0, 9)               # stock: LAST = step 16, LED off
+expect("LAST STEP LED: TR-REC, CH selected (length 3) blinks", last_led(ROW(CH)), [BLINK])
+expect("LAST STEP LED: RS (length 5, button 0x27) blinks", last_led(ROW(RS)), [BLINK])
+expect("LAST STEP LED: HC (no length, button 0x26) is stock", last_led(ROW(HC)), [STOCK])
+expect("LAST STEP LED: BD (no length) is stock", last_led(ROW(BD)), [STOCK])
+expect("LAST STEP LED: AC row is stock", last_led(0), [STOCK])
+expect("LAST STEP LED: other panel mode (3, INST REC) is stock", last_led(ROW(CH), 3), [STOCK])
+held_leds = last_led(ROW(CH), 0, LASTSTEP)
+expect("LAST STEP held: LED 9 is the firmware's own (a = 1 with Setup[3] = -1), LED 7 through the hook unchanged",
+       held_leds, [(9, 1, 9), (7, 1, 9)])
+expect("LAST STEP held: no blink", BLINK in held_leds, False)
 
 setup()
 pw(POS, 15)                                    # as after a stop: the next advance plays step 0
