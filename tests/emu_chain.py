@@ -7,15 +7,17 @@ A pattern is four bars; each bar has its own A and B step set. The payload keeps
 a small flash log and makes the bar the working copy (area 4 slot 0) so the stock TR-REC, step
 pads and LAST STEP edit it. Tested here:
 
-  - the gesture: A/B + pad 1..4 selects and paints a bar, A+B + pad sets the length, A+B+CLEAR +
-    pad turns the chain off, through the press dispatch (the site that runs on the unit, before
-    the screen) and, as a fallback, through the LAST STEP branch of FUN_6001961E.
+  - the gesture: A/B + pad 1..4 selects and paints a bar and makes that side at least that many
+    bars long, A+B + pad sets both sides to n, A+B+CLEAR + pad resets both, through the press
+    dispatch (the site that runs on the unit, before the screen) and, as a fallback, through the
+    LAST STEP branch of FUN_6001961E.
   - the store: one 128-byte log entry per saved bar (magic, sequence, pattern, bar, LAST_A/B,
     scale and the 26 A/B mask rows), appended through the firmware's raw flash primitives
     (simulated here); the pattern save is redirected, so area 4 slot n+1 keeps the pattern's own
     steps; compaction, the ring and the 16-bit sequence wrap keep the newest entry per bar.
   - playback: chain_var fills the player struct 0x6012FA64 from the bar's log entry (or from the
-    pattern slot when the bar was never recorded) and applies the bar's A/B side.
+    pattern slot when the bar was never recorded); A plays bars 1..Na with A steps, B plays
+    1..Nb with B steps, A+B plays the A sequence then the B one.
   - power cycle: the payload state is cleared, the log is rescanned, and the recorded bars play.
 """
 import struct, sys, json, os
@@ -49,7 +51,8 @@ SETUP = 0x60143DBC                    # area 1 slot 0: Setup[n] at SETUP + 4*n
 A4, C4 = 0x60144EA0, 56               # area 4 (Ptn), 17 slots; slot 0 = working copy
 PTN = 0x6012FA64                      # player struct
 VARI, EFF = 0x6012FA70, 0x6012FA74    # panel VARI, effective variation (= TR8_SEQ_VARIATION)
-BITS, LEN = 15, 16                    # Ptn2 indices for the chain (ids 0x136, 0x137)
+RUN = 0x6007E102                      # sequencer running
+CNT = 17                              # Ptn2 index for the two side lengths (id 0x138)
 
 # The flash log (chain.c): 4 blocks of 32 entries, 128 bytes each, top block first.
 ENT, EPB, TOP, MAGIC = 128, 32, 0x3DF000, 0x31524256
@@ -235,10 +238,22 @@ def seed_ram():
     w32(slot_addr(0) + 4 * 56, 0)                # keep word 56 clear (not part of a slot)
     w32(SETUP + 8, 0)          # Setup[2] = pattern 0
     w32(SETUP + 0x3C, 0)       # Setup[0xF] = 0
-    w32(PTN2 + 4 * BITS, 0)    # no chain
-    w32(PTN2 + 4 * LEN, 0)
+    uc.mem_write(PTN2, b"\0" * (4 * C6 * 17))   # no side lengths, all pattern slots empty
     w32(VARI, 2)               # panel VARIATION A+B
     w32(EFF, 0)
+    w32(RUN, 0)
+
+def set_counts(a, b):
+    w32(PTN2 + 4 * CNT, (a & 0xF) | ((b & 0xF) << 4))
+
+def set_pattern(p):
+    """Mirror the panel: area 6 slot 0 is the current pattern, slot p+1 the stored one."""
+    old = r32(SETUP + 8) & 0xF
+    if old != p:
+        uc.mem_write(p2base(old + 1), bytes(uc.mem_read(PTN2, 4 * C6)))
+        uc.mem_write(PTN2, bytes(uc.mem_read(p2base(p + 1), 4 * C6)))
+    w32(SETUP + 8, p)
+    w32(SETUP + 0x3C, p)
 
 def cold_boot():
     """Power cycle: .data is reloaded, .bss cleared, the flash log stays."""
@@ -279,15 +294,14 @@ for site, sym in SITES:
     expect(f"site 0x{site:08x} branches to {sym}", (t & ~1) == (S[sym] & ~1), True)
 
 # --- the bar row ------------------------------------------------------------------
-# Pads are LED ids 0x1D..0x2C. While exactly one of VARIATION A/B is held pads 1-4 are the four
-# bars (the selected one in the play triple 1,0,2 = palette 0, the rest 1,9,6 = palette 3) and
-# pads 5-16 are off (0,0,2 = palette 0x2D). Everything else, and every pad with neither/both
-# buttons held, must reach the LED veneer unchanged. There are two raw and two palette setters;
-# all four are exercised, since different screens use different ones.
+# Pads are LED ids 0x1D..0x2C. While exactly one of VARIATION A/B is held the pads show that
+# side's bars: the bars the side has are green (1,9,2), the one being played blinks green
+# (1,0,2 = the play colour), and every other pad is off (0,0,2). Stopped, the selected bar
+# blinks. The probe has no side lengths: pads 1-4 are all yellow (1,9,6) and 5-16 off, which is
+# exactly the hook check it exists for.
 LED_OBJ = 0x601488D0
 PAD = lambda n: 0x1C + n             # pad 1..16 = LED 0x1D..0x2C
-PLAY, YELLOW, OFF = (1, 0, 2), (1, 9, 6), (0, 0, 2)
-BAR1 = PLAY if "--probe" not in sys.argv else YELLOW   # the probe has no current bar
+PLAY, GREEN, YELLOW, OFF = (1, 0, 2), (1, 9, 2), (1, 9, 6), (0, 0, 2)
 
 def led_call(fn, led, *args, **buttons):
     held.clear(); held.update(buttons.get("held", ())); log.clear()
@@ -298,43 +312,92 @@ def led_call(fn, led, *args, **buttons):
 def L(led, a, b, c):
     return [("led", LED_OBJ, led, a, b, c)]
 
+def row(fn, args, buttons):
+    return [led_call(fn, PAD(n), *args, held=buttons) for n in (1, 2, 3, 4, 5, 9, 12, 16)]
+
+def want_row(cols, offs=(5, 9, 12, 16)):
+    out = [L(PAD(n), *cols[n - 1]) for n in (1, 2, 3, 4)]
+    return out + [L(PAD(n), *OFF) for n in offs]
+
 # Raw setters: FUN_6001773A(led, a, b, c) and the copy FUN_60017E08(led, a, b), which always
 # passes c = 0. Palette setters: FUN_6001774E(led, colour) and its copy FUN_60017E1E.
 RAW_SETTERS = ((0x6001773A, (1, 7, 7), 7), (0x60017E08, (1, 7), 0))
 PAL_SETTERS = (0x6001774E, 0x60017E1E)
 
-for fn, args, c0 in RAW_SETTERS:
-    expect(f"LED raw setter 0x{fn:08x}: A held, bar 1 is the play triple",
-           led_call(fn, PAD(1), *args, held=(A,)), L(PAD(1), *BAR1))
-    expect(f"LED raw setter 0x{fn:08x}: A held, bars 2-4 are yellow",
-           [led_call(fn, PAD(n), *args, held=(A,)) for n in (2, 3, 4)],
-           [L(PAD(n), *YELLOW) for n in (2, 3, 4)])
-    expect(f"LED raw setter 0x{fn:08x}: A held, pads 5-16 are off",
-           [led_call(fn, PAD(n), *args, held=(A,)) for n in (5, 9, 12, 16)],
-           [L(PAD(n), *OFF) for n in (5, 9, 12, 16)])
-    expect(f"LED raw setter 0x{fn:08x}: B held lights the same row",
-           led_call(fn, PAD(3), *args, held=(B,)), L(PAD(3), *YELLOW))
-    expect(f"LED raw setter 0x{fn:08x}: nothing held passes through",
-           led_call(fn, PAD(1), *args), L(PAD(1), 1, 7, c0))
-    expect(f"LED raw setter 0x{fn:08x}: A+B (length gesture) passes through",
-           led_call(fn, PAD(1), *args, held=(A, B)), L(PAD(1), 1, 7, c0))
-    expect(f"LED raw setter 0x{fn:08x}: non-pad LEDs pass through",
-           led_call(fn, 0x2D, *args, held=(A,)), L(0x2D, 1, 7, c0))
+if "--probe" in sys.argv:
+    for fn, args, c0 in RAW_SETTERS:
+        expect(f"LED probe raw setter 0x{fn:08x}: A held, pads 1-4 yellow, rest off",
+               row(fn, args, (A,)), want_row([YELLOW] * 4))
+        expect(f"LED probe raw setter 0x{fn:08x}: B held, same",
+               row(fn, args, (B,)), want_row([YELLOW] * 4))
+        expect(f"LED probe raw setter 0x{fn:08x}: nothing held passes through",
+               led_call(fn, PAD(1), *args), L(PAD(1), 1, 7, c0))
+        expect(f"LED probe raw setter 0x{fn:08x}: A+B passes through",
+               led_call(fn, PAD(1), *args, held=(A, B)), L(PAD(1), 1, 7, c0))
+        expect(f"LED probe raw setter 0x{fn:08x}: non-pad LEDs pass through",
+               led_call(fn, 0x2D, *args, held=(A,)), L(0x2D, 1, 7, c0))
+    for fn in PAL_SETTERS:
+        expect(f"LED probe palette setter 0x{fn:08x}: A held, pads 1-4 yellow, rest off",
+               row(fn, (0x2A,), (A,)), want_row([YELLOW] * 4))
+        expect(f"LED probe palette setter 0x{fn:08x}: B held, same",
+               row(fn, (0x2A,), (B,)), want_row([YELLOW] * 4))
+        expect(f"LED probe palette setter 0x{fn:08x}: nothing held passes through",
+               led_call(fn, PAD(1), 0x2A), L(PAD(1), *GREEN))
+        expect(f"LED probe palette setter 0x{fn:08x}: A+B passes through",
+               led_call(fn, PAD(1), 0x2A, held=(A, B)), L(PAD(1), *GREEN))
+        expect(f"LED probe palette setter 0x{fn:08x}: non-pad LEDs pass through",
+               led_call(fn, 0x0F, 0x2A, held=(A,)), L(0x0F, *GREEN))
+else:
+    set_counts(3, 2)                    # A = three bars, B = two
+    w32(RUN, 0)                         # stopped: the selected bar (0) blinks
+    for fn, args, c0 in RAW_SETTERS:
+        expect(f"LED raw setter 0x{fn:08x}: A held, three green bars, none playing, bar 1 blink",
+               row(fn, args, (A,)), want_row([PLAY, GREEN, GREEN, OFF]))
+        expect(f"LED raw setter 0x{fn:08x}: B held shows the B side's two bars",
+               row(fn, args, (B,)), want_row([PLAY, GREEN, OFF, OFF]))
+        expect(f"LED raw setter 0x{fn:08x}: nothing held passes through",
+               led_call(fn, PAD(1), *args), L(PAD(1), 1, 7, c0))
+        expect(f"LED raw setter 0x{fn:08x}: A+B passes through",
+               led_call(fn, PAD(1), *args, held=(A, B)), L(PAD(1), 1, 7, c0))
+        expect(f"LED raw setter 0x{fn:08x}: non-pad LEDs pass through",
+               led_call(fn, 0x2D, *args, held=(A,)), L(0x2D, 1, 7, c0))
+    for fn in PAL_SETTERS:
+        expect(f"LED palette setter 0x{fn:08x}: A held, three green bars, none playing, bar 1 blink",
+               row(fn, (0x2A,), (A,)), want_row([PLAY, GREEN, GREEN, OFF]))
+        expect(f"LED palette setter 0x{fn:08x}: B held shows the B side's two bars",
+               row(fn, (0x2A,), (B,)), want_row([PLAY, GREEN, OFF, OFF]))
+        expect(f"LED palette setter 0x{fn:08x}: nothing held passes the palette colour through",
+               led_call(fn, PAD(1), 0x2A), L(PAD(1), *GREEN))
+        expect(f"LED palette setter 0x{fn:08x}: A+B passes through",
+               led_call(fn, PAD(1), 0x2A, held=(A, B)), L(PAD(1), *GREEN))
+        expect(f"LED palette setter 0x{fn:08x}: non-pad LEDs pass through",
+               led_call(fn, 0x0F, 0x2A, held=(A,)), L(0x0F, *GREEN))
 
-for fn in PAL_SETTERS:
-    expect(f"LED palette setter 0x{fn:08x}: A held, bar 1 is the play triple",
-           led_call(fn, PAD(1), 0x2A, held=(A,)), L(PAD(1), *BAR1))
-    expect(f"LED palette setter 0x{fn:08x}: A held, bar 4 is yellow",
-           led_call(fn, PAD(4), 0x2A, held=(A,)), L(PAD(4), *YELLOW))
-    expect(f"LED palette setter 0x{fn:08x}: A held, pads 5-16 are off",
-           [led_call(fn, PAD(n), 0x2A, held=(A,)) for n in (5, 11, 16)],
-           [L(PAD(n), *OFF) for n in (5, 11, 16)])
-    expect(f"LED palette setter 0x{fn:08x}: nothing held passes the palette colour through",
-           led_call(fn, PAD(1), 0x2A), L(PAD(1), 1, 9, 2))
-    expect(f"LED palette setter 0x{fn:08x}: A+B passes through",
-           led_call(fn, PAD(1), 0x2A, held=(A, B)), L(PAD(1), 1, 9, 2))
-    expect(f"LED palette setter 0x{fn:08x}: non-pad LEDs pass through",
-           led_call(fn, 0x0F, 0x2A, held=(A,)), L(0x0F, 1, 9, 2))
+    # The playing bar blinks: A plays bar 3, then B plays bar 2.
+    w32(RUN, 1)
+    w32(VARI, 0)
+    uc.mem_write(S["chain_side"], b"\0")
+    uc.mem_write(S["chain_bar"], b"\2")
+    expect("LED: playing A bar 3 -> pad 3 blinks, pads 1-2 green",
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, PLAY, OFF]))
+    w32(VARI, 2)                        # A+B: bar 3 is still an A pass
+    expect("LED: A+B, A side, bar 3 still blinks on the A row",
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, PLAY, OFF]))
+    w32(VARI, 1)
+    uc.mem_write(S["chain_side"], b"\1")
+    uc.mem_write(S["chain_bar"], b"\1")
+    expect("LED: playing B bar 2 -> pad 2 blinks, pad 1 green",
+           row(0x6001773A, (1, 7, 7), (B,)), want_row([GREEN, PLAY, OFF, OFF]))
+    expect("LED: holding A while B plays -> A row steady (no blink)",
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, GREEN, GREEN, OFF]))
+    w32(RUN, 0)
+
+    # A side never selected: one default bar is shown; B keeps its own two.
+    set_counts(0, 2)
+    expect("LED: A side unset -> one default bar",
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([PLAY, OFF, OFF, OFF]))
+    expect("LED: B side still two bars",
+           row(0x6001773A, (1, 7, 7), (B,)), want_row([PLAY, GREEN, OFF, OFF]))
 
 if "--probe" in sys.argv:
     expect("probe: plain pad is shown after the firmware handled it", press(3),
@@ -350,7 +413,7 @@ if "--probe" in sys.argv:
            ([("text", " 5A-")], []))
     expect("probe: global pad branch, plain pad", texts(pad(3)), [" 3--"])
     expect("probe: global pad branch, A + pad 1", texts(pad(1, A)), [" 1A-"])
-    expect("probe: nothing written to the pattern", pget(BITS) + pget(LEN), 0)
+    expect("probe: nothing written to the pattern", pget(CNT), 0)
     expect("probe: LAST STEP + pad does not set the length", pad(8, LAST), [("text", " 8-L")])
     log.clear()
     expect("probe: the redirect site is a pass-through", call(S["chain_commit"], 0, 4, 1, 0), 0)
@@ -378,7 +441,7 @@ cold_boot()
 
 # --- the gesture ------------------------------------------------------------------
 expect("press: plain pad goes to the firmware", press(3), [("press", 2)])
-expect("press: plain pad sets nothing", (pget(LEN), pget(BITS)), (0, 0))
+expect("press: plain pad sets nothing", pget(CNT), 0)
 expect("press: pads beyond the four bars go to the firmware", press(9, A), [("press", 8)])
 expect("press: LAST STEP + pad keeps the stock path", press(8, LAST), [("press", 7)])
 expect("press: LAST STEP + A + pad keeps the stock path", press(2, LAST, A), [("press", 1)])
@@ -387,20 +450,22 @@ r = press(1, A)
 expect("press: A + pad 1 shows bar 1 A", edits(r), [("text", "  1A")])
 expect("press: ... and plays A", applied(r), [("apply", 0)])
 expect("press: bar 1 is the pattern itself", slot_rows(0), slot_rows(1))
-expect("press: chain is now bar 1", (pget(LEN), pget(BITS)), (1, 0))
+expect("press: the A side is now one bar", pget(CNT), 0x01)
 expect("press: bar 1 was stored", (bar_entry(0, 0) or {}).get("rows"), slot_rows(1))
 
 r = press(2, B)
 expect("press: B + pad 2 shows bar 2 B", edits(r), [("text", "  2B")])
 expect("press: ... and plays B", applied(r), [("apply", 1)])
 expect("press: the working copy is bar 2 of the pattern", slot_rows(0), slot_rows(1))
-expect("press: chain is now two bars, bar 2 on B", (pget(LEN), pget(BITS)), (2, 0b10))
+expect("press: the sides are one and two bars long", pget(CNT), 0x21)
 expect("press: the panel variation follows the bar", (r32(VARI), r32(EFF), r32(slot_addr(0))), (1, 1, 1))
 if "--probe" not in sys.argv:           # the probe has no current bar
-    expect("LED: after A/B + pad 2, pad 2 is the blinking bar",
-           led_call(0x6001773A, PAD(2), 1, 7, 7, held=(A,)), L(PAD(2), *PLAY))
-    expect("LED: ... and pad 1 is now a plain yellow bar",
-           led_call(0x6001773A, PAD(1), 1, 7, 7, held=(A,)), L(PAD(1), *YELLOW))
+    expect("LED: after A/B + pad 2, holding B blinks pad 2",
+           led_call(0x6001773A, PAD(2), 1, 7, 7, held=(B,)), L(PAD(2), *PLAY))
+    expect("LED: ... holding A shows only its single bar, steady",
+           led_call(0x6001773A, PAD(1), 1, 7, 7, held=(A,)), L(PAD(1), *GREEN))
+    expect("LED: ... so pad 2 is off on the A row",
+           led_call(0x6001773A, PAD(2), 1, 7, 7, held=(A,)), L(PAD(2), *OFF))
 
 # TR-REC records into the working copy; the firmware's pattern save is redirected to the log.
 w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x7777)
@@ -423,7 +488,7 @@ expect("save: area 4 slot 1 still holds the pattern's own steps", slot_rows(1), 
 # again (the working copy is what it is), so the entry must stay the one just edited.
 expect("press: bar 4", edits(press(4, A)), [("text", "  4A")])
 expect("press: bar 4 is the untouched pattern", slot_rows(0), slot_rows(1))
-expect("press: chain is four bars, 4 on A", (pget(LEN), pget(BITS)), (4, 0b010))
+expect("press: the A side is now four bars", pget(CNT), 0x24)
 r = press(2, B)
 expect("press: back to bar 2 B", edits(r), [("text", "  2B")])
 expect("press: ... with the recorded masks", slot_rows(0)[5], (0x7777, 0x8888))
@@ -431,10 +496,12 @@ expect("press: ... and its last steps", slot_scalars(0), (0x0C, 0x0D))
 expect("press: ... and its scale", r32(slot_addr(0) + 4), 2)
 expect("press: ... and the B side selected", (r32(VARI), r32(EFF)), (1, 1))
 
-expect("press: A+B + pad 3 sets the length", edits(press(3, A, B)), [("text", "CH 3")])
-expect("press: length 3", pget(LEN), 3)
-expect("press: A+B+CLEAR + pad 2 turns it off", edits(press(2, A, B, CLEAR)), [("text", "CH--")])
-expect("press: chain off, painted bars kept", (pget(LEN), pget(BITS)), (0, 0b010))
+expect("press: A+B + pad 3 sets both sides to three bars", edits(press(3, A, B)), [("text", "AB 3")])
+expect("press: three bars on both sides", pget(CNT), 0x33)
+expect("press: A+B+CLEAR + pad 2 resets both sides", edits(press(2, A, B, CLEAR)), [("text", "AB--")])
+expect("press: no side sequence, painted bars kept", pget(CNT), 0)
+expect("press: ... and the recorded bar is still there", (bar_entry(0, 1) or {}).get("rows")[5],
+       (0x7777, 0x8888))
 expect("press: A+B+LAST STEP + pad keeps the stock path", press(2, A, B, LAST), [("press", 1)])
 
 # A swallowed press must swallow its release, or the screen sees a release without a press.
@@ -444,88 +511,151 @@ expect("press: other pads still release normally", release(6), [("release", 5)])
 expect("press: the same pad releases normally afterwards", release(3), [("release", 2)])
 
 # --- playback ---------------------------------------------------------------------
+# Every sequence starts on bar 1 and advances one bar per wrap. A side and B side have their own
+# length; A+B plays the A sequence and then the B one.
 def start(**kw):
     w32(VARI, kw.get("vari", 2))
     w32(EFF, kw.get("eff", 0))
     log.clear()
     uc.mem_write(S["chain_wrapping"], b"\0")
     call(S["chain_var"], PTN)
-    return r32(EFF)
+    return (r32(EFF), r8(S["chain_side"]), r8(S["chain_bar"]))
 
 def wrap():
     uc.mem_write(S["chain_wrapping"], b"\1")
     call(S["chain_var"], PTN)
     uc.mem_write(S["chain_wrapping"], b"\0")
-    return r32(EFF)
+    return (r32(EFF), r8(S["chain_side"]), r8(S["chain_bar"]))
 
-def set_chain(bits, n):
-    w32(PTN2 + 4 * BITS, bits)
-    w32(PTN2 + 4 * LEN, n)
+def set_chain(a, b):
+    set_counts(a, b)
 
 seed_ram()
-w32(SETUP + 8, 0)
-set_chain(0b0100, 4)          # bars 1,2,4 = A, bar 3 = B
-expect("chain A A B A: start on bar 1 (A)", start(), 0)
-expect("bar 1 is the pattern slot", (struct_rows(), struct_scalars()),
-       (slot_rows(1), (0x11, 0x21, SCALE[1])))
-expect("bar 1 masks applied with A", log[-1], ("apply", 0))
-expect("bar 2: A", wrap(), 0)
-expect("bar 2 is the recorded bar 2", (struct_rows(), struct_scalars()),
-       ([(0x7777 if i == 5 else 0x4000 + (1 << 8) + i,
-          0x8888 if i == 5 else 0x5000 + (1 << 8) + i) for i in range(26)], (0x0C, 0x0D, SCALE[2])))
-expect("bar 3: B", wrap(), 1)
-expect("bar 3 is the untouched pattern, B side", (struct_rows(), struct_scalars()),
-       (slot_rows(1), (0x11, 0x21, SCALE[1])))
-expect("bar 4: A", wrap(), 0)
-expect("wrap: back to bar 1", wrap(), 0)
+cold_boot()
+FL[:] = b"\xff" * len(FL)          # a clean log: every bar is the pattern itself
 
-# Panel selects A or B: the chain is bypassed, that side of the working copy loops.
-w32(VARI, 1)
-expect("VARIATION B pressed: loops B (FUN_6000E404 as before)", (start(vari=1), r32(EFF)), (1, 1))
+# A three-bar phrase on side A.
+set_chain(3, 0)
 w32(VARI, 0)
-expect("VARIATION A pressed: loops A", (start(vari=0), r32(EFF)), (0, 0))
-w32(VARI, 2)
+expect("A chain: start on A bar 1", start(vari=0), (0, 0, 0))
+expect("A chain: bar 1 is the pattern slot", (struct_rows(), struct_scalars()),
+       (slot_rows(1), (0x11, 0x21, SCALE[1])))
+expect("A chain: bar 1 masks applied with A", log[-1], ("apply", 0))
+expect("A chain: bar 2", wrap(), (0, 0, 1))
+expect("A chain: bar 3", wrap(), (0, 0, 2))
+expect("A chain: wraps back to bar 1", wrap(), (0, 0, 0))
 
-# No chain: stock behaviour, A+B toggles every pass, no content is loaded.
+# Two bars on side B, selected on the panel.
+set_chain(0, 2)
+w32(VARI, 1)
+expect("B chain: start on B bar 1", start(vari=1), (1, 1, 0))
+expect("B chain: bar 1 is the pattern slot", struct_rows(), slot_rows(1))
+expect("B chain: bar 2", wrap(), (1, 1, 1))
+expect("B chain: wraps back to bar 1", wrap(), (1, 1, 0))
+
+# A+B: three A bars, then two B bars, then back to the A sequence.
+set_chain(3, 2)
+w32(VARI, 2)
+expect("A+B: A bar 1", start(vari=2), (0, 0, 0))
+expect("A+B: A bar 2", wrap(), (0, 0, 1))
+expect("A+B: A bar 3", wrap(), (0, 0, 2))
+expect("A+B: B bar 1", wrap(), (1, 1, 0))
+expect("A+B: B bar 2", wrap(), (1, 1, 1))
+expect("A+B: back to A bar 1", wrap(), (0, 0, 0))
+
+# A side never selected: with the panel on A the stock variation runs; B still has its own
+# sequence and A+B plays the B bars (there are no A bars).
+set_chain(0, 2)
+w32(PTN + 0x14, 0x7777)
+w32(PTN + 0x20, 0x1234)
+log.clear(); w32(VARI, 0); w32(EFF, 0)
+uc.mem_write(S["chain_wrapping"], b"\0")
+call(S["chain_var"], PTN)
+expect("A never selected, panel A: the stock variation runs, no bar is loaded",
+       (r32(EFF), r32(PTN + 0x14), r16(PTN + 0x20)), (0, 0x7777, 0x1234))
+expect("A never selected, panel B: B still plays its two bars", start(vari=1), (1, 1, 0))
+expect("A never selected, panel B: bar 2", wrap(), (1, 1, 1))
+expect("A never selected, A+B: the B bars play", start(vari=2), (1, 1, 0))
+expect("A never selected, A+B: bar 2", wrap(), (1, 1, 1))
+expect("A never selected, A+B: wraps to B bar 1", wrap(), (1, 1, 0))
+
+# No side selected at all: stock behaviour, A+B toggles every pass, no content is loaded.
 set_chain(0, 0)
 w32(PTN + 0x14, 0x7777)
 w32(PTN + 0x20, 0x1234)
 w32(EFF, 0)
-expect("no chain, A+B: stock toggle to B", (start(), r32(EFF)), (1, 1))
-expect("no chain: the player content was left alone",
+expect("no sequence, A+B: stock toggle to B", start(vari=2)[0], 1)
+expect("no sequence: the player content was left alone",
        (r32(PTN + 0x14), r16(PTN + 0x20)), (0x7777, 0x1234))
-expect("no chain, A+B: toggle back to A", (wrap(), r32(EFF)), (0, 0))
+expect("no sequence, A+B: toggle back to A", wrap()[0], 0)
 
-# --- another pattern: its own bars, its own chain ---------------------------------
-# Pattern 2 (area 4 slot 3) gets a recorded bar 1 and a chain of two bars.
+# --- a recorded bar in the sequence -----------------------------------------------
 seed_ram()
-w32(SETUP + 8, 2)
-w32(SETUP + 0x3C, 2)
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+press(2, A)                                   # bar 2 becomes the working copy
+w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x7777)
+w32(slot_addr(0) + 4 * (5 + 2 * 5), 0x8888)
+w32(slot_addr(0) + 4, 2)                      # SCALE
+w32(slot_addr(0) + 8, 0x0C)                   # LAST_A
+w32(slot_addr(0) + 12, 0x0D)                  # LAST_B
+call(S["chain_commit"], 0, 4, 1, 0)           # record bar 2
+set_chain(3, 0)
+w32(VARI, 0)
+expect("recorded bar: start on bar 1, still the pattern",
+       (start(vari=0), struct_rows(), struct_scalars()),
+       ((0, 0, 0), slot_rows(1), (0x11, 0x21, SCALE[1])))
+expect("recorded bar: bar 2 has the edit", (wrap(), struct_rows(), struct_scalars()),
+       ((0, 0, 1),
+        [(0x7777 if i == 5 else 0x4000 + (1 << 8) + i,
+          0x8888 if i == 5 else 0x5000 + (1 << 8) + i) for i in range(26)],
+        (0x0C, 0x0D, SCALE[2])))
+expect("recorded bar: bar 3 is the pattern again", (wrap(), struct_rows()), ((0, 0, 2), slot_rows(1)))
+expect("recorded bar: wraps to bar 1", wrap(), (0, 0, 0))
+
+# --- another pattern: its own bars, its own lengths -------------------------------
+# Pattern 2 (area 4 slot 3) gets a recorded bar 1 and a two-bar A sequence.
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+set_pattern(2)                        # the panel switches pattern; the Ptn2 slots follow
 expect("pattern 2: A + pad 1 selects its bar 1", edits(press(1, A)), [("text", "  1A")])
 expect("pattern 2: the working copy is pattern 2", slot_rows(0), slot_rows(3))
+expect("pattern 2: its own A length", pget(CNT), 0x01)
 w32(slot_addr(0) + 4 * (4 + 2 * 2), 0x6A6A)
 call(S["chain_commit"], 0, 4, 3, 0)
 expect("pattern 2: its bar was stored on its own", (bar_entry(2, 0) or {}).get("rows")[2][0], 0x6A6A)
-expect("pattern 2: pattern 0's bars are untouched", (bar_entry(0, 0) or {}).get("rows")[2][0],
-       0x4000 + (1 << 8) + 2)
-set_chain(0b10, 2)          # bar 1 = A, bar 2 = B
-w32(SETUP + 8, 2)
-expect("pattern 2 chain: bar 1 A", (start(), struct_rows()[2]),
-       (0, (0x6A6A, 0x5000 + (3 << 8) + 2)))
-expect("pattern 2 chain: bar 2 B", wrap(), 1)
-expect("pattern 2 chain: bar 2 is untouched", struct_rows(), slot_rows(3))
+expect("pattern 2: pattern 0 has no bars in this log", bar_entry(0, 0), None)
+set_counts(2, 0)
+w32(VARI, 0)
+expect("pattern 2 chain: bar 1 is its recorded bar", (start(vari=0), struct_rows()[2]),
+       ((0, 0, 0), (0x6A6A, 0x5000 + (3 << 8) + 2)))
+expect("pattern 2 chain: bar 2 is untouched", (wrap(), struct_rows()), ((0, 0, 1), slot_rows(3)))
+set_pattern(0)
+expect("pattern 0 keeps its own (unset) lengths", pget(CNT), 0)
 
 # --- power cycle ------------------------------------------------------------------
+# Record bar 2, then reset the payload state the way a power cycle does: .data reloaded, .bss
+# cleared, the flash log untouched. The Ptn2 lengths are part of the pattern's parameter area in
+# the stock store, so they survive too (the test keeps that RAM).
 seed_ram()
 cold_boot()
-w32(SETUP + 8, 0)
-w32(SETUP + 0x3C, 0)
-set_chain(0b0100, 4)
+FL[:] = b"\xff" * len(FL)
+press(2, A)
+w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x7777)
+w32(slot_addr(0) + 4 * (5 + 2 * 5), 0x8888)
+w32(slot_addr(0) + 8, 0x0C)
+w32(slot_addr(0) + 12, 0x0D)
+call(S["chain_commit"], 0, 4, 1, 0)
+set_chain(3, 0)
+w32(VARI, 0)
+cold_boot()
 expect("power cycle: the log is rescanned and bar 2 still has the edit",
-       (start(), wrap(), struct_rows()[5]),
-       (0, 0, (0x7777, 0x8888)))
+       (start(vari=0), wrap(), struct_rows()[5]),
+       ((0, 0, 0), (0, 0, 1), (0x7777, 0x8888)))
 expect("power cycle: the recorded bar keeps its last steps", struct_scalars()[0:2], (0x0C, 0x0D))
-expect("power cycle: bar 1 still the pattern", (wrap(), struct_rows()), (1, slot_rows(1)))
+expect("power cycle: bar 3 is still the pattern", (wrap(), struct_rows()), ((0, 0, 2), slot_rows(1)))
+expect("power cycle: back to bar 1", wrap(), (0, 0, 0))
 
 # --- the log does not lose a bar when a block is full -----------------------------
 seed_ram()

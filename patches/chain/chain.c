@@ -2,14 +2,21 @@
  * TR-8 v1.61 bar chain: a pattern becomes four bars, each with its own A and B step set.
  *
  * Panel (per pattern; nothing is carried to another pattern):
- *   hold VARIATION A, press pad 1..4 -> bar n is the working copy and plays its A steps.
- *   hold VARIATION B, press pad 1..4 -> the same bar, its B steps.
- *   hold A + B, press pad 1..4       -> the chain is n bars long.
- *   hold A + B + CLEAR, press a pad  -> chain off (stock single-bar A/B).
- *   The numeric display confirms each gesture ("  1A", "  4B", "CH 4", "CH--").
+ *   hold VARIATION A, press pad 1..4 -> bar n is the working copy and plays its A steps; the A
+ *                                     side becomes at least n bars long.
+ *   hold VARIATION B, press pad 1..4 -> the same bar, its B steps; the B side grows the same way.
+ *   hold A + B, press pad 1..4       -> both sides are n bars long (extend or shrink).
+ *   hold A + B + CLEAR, press a pad  -> both sides back to stock (no bar sequence).
+ *   The numeric display confirms each gesture ("  1A", "  4B", "AB 3", "AB--").
+ *
+ * Playback: variation A plays bars 1..Na with each bar's A steps, variation B plays bars 1..Nb
+ * with each bar's B steps, and A+B plays the A sequence then the B sequence. Every sequence
+ * starts at bar 1 on a sequencer start and loops at its end. A side and B side have their own
+ * length, so A can be a two-bar phrase while B is four bars. The length of a side is the highest
+ * bar selected on that side (1..4); a pattern whose sides were never selected stays stock.
  *
  * So pattern 1 keeps four private bars (A and B steps each), pattern 2 the same, and each
- * pattern's chain is its own 4-bar phrase. A bar that has never been recorded is the pattern
+ * pattern's two sides are its own phrases. A bar that has never been recorded is the pattern
  * itself (its A steps for the A side, its B steps for the B side), so a pattern sounds exactly
  * as before until a bar is edited.
  *
@@ -19,19 +26,21 @@
  *   LAST_B, scale, VARI) and the panel is then editing bar n. Selecting a bar saves the one we
  *   leave.
  *   Playback never switches patterns: chain_var replaces "bl FUN_6000E404" inside the restart
- *   FUN_600095F0 (start and every wrap), picks the bar and its A/B side, fills the player struct
+ *   FUN_600095F0 (start and every wrap), picks the side and bar, fills the player struct
  *   0x6012FA64 from the bar's content and applies the masks with FUN_6000E152.
  *   chain_wrap replaces the wrap call (0x600098CA) and marks the restart as a wrap, so a start
- *   begins at bar 1 and a wrap advances one bar.
+ *   begins at bar 1 and a wrap advances one bar (then A/B or the A->B handover).
  *   The gesture lives on the press dispatch (0x60013842, before the screen): the screen takes a
  *   bare pad press, so the global button handler never sees it (see the first hardware build).
  *   chain_release swallows the matching release.
- *   While VARIATION A or B is held, all 16 pads become the bar row (bars 1..4 lit, 5..16 off) by
- *   wrapping the four pad setters (chain_led4, see the bar row section).
+ *   While VARIATION A or B is held, all 16 pads become the bar row (the side's bars lit, 5..16
+ *   off) by wrapping the four pad setters (chain_led4, see the bar row section).
  *
  * Storage: the pattern's own step content is the pattern record (area 4), which stays the
- * source of the default bar. Extra bars live in a small log in the unused flash between the
- * application image and the user area (0x3DB000..0x3DFFFF, see docs/CHAIN.md "Storage"):
+ * source of the default bar. The two side lengths live in an unused Ptn2 parameter (id 0x138),
+ * so the stock area-6 commit saves them with the pattern. Extra bars live in a small log in the
+ * unused flash between the application image and the user area (0x3DB000..0x3DFFFF, see
+ * docs/CHAIN.md "Storage"):
  *   entry (128 bytes): magic, seq | pattern << 16 | bar << 20, LAST_A | LAST_B << 8, checksum,
  *   then 26 words, one per step row: A mask | B mask << 16, then the scale.
  * The log is append-only, so an edit costs one 128-byte program (no erase, the pattern is
@@ -44,8 +53,7 @@
 
 #define NBARS  4
 #define ROWS   26
-#define CHAIN_BITS 15
-#define CHAIN_LEN  16
+#define CHAIN_COUNTS 17           /* Ptn2 id 0x138: A bars | B bars << 4 */
 
 /* ---------------------------------------------------------------- flash log */
 
@@ -75,7 +83,9 @@ typedef void (*fl_sess_fn)(void);
 #define F_READ  ((fl_read_fn)0x60003EA3)
 #define F_ERASE ((fl_erase_fn)0x60003EDB)
 
-uint8_t chain_pos;        /* bar being played, 0..len-1 */
+uint8_t chain_pos;        /* position in this pass, 0..na+nb-1 (A+B) or 0..n-1 (A/B) */
+uint8_t chain_side;       /* side being played: 0 = A, 1 = B */
+uint8_t chain_bar;        /* bar being played on that side, 0..NBARS-1 */
 uint8_t chain_wrapping;   /* set by chain_wrap around the FUN_600095F0 call */
 uint16_t chain_swallow;   /* pads whose press we took: their release is swallowed too */
 
@@ -300,7 +310,8 @@ static void struct_slot0(void)
 }
 
 /* Fill the player struct from bar `bar` of pattern `pat`, without touching the working copy. */
-static void struct_bar(int pat, int bar)
+/* .text.far: the second region is full (see the bar row section). */
+__attribute__((section(".text.far"))) static void struct_bar(int pat, int bar)
 {
     volatile uint32_t *def = area_slot(TR8_AREA_PATTERN, pat + 1);
     volatile uint8_t *d = TR8_PTN_STRUCT;
@@ -331,20 +342,19 @@ static void struct_bar(int pat, int bar)
 
 /* ---------------------------------------------------------------- chain */
 
-static int clen(void)
+/* Bars of one side: 0 = never selected (that side stays stock), 1..4 = sequence length. */
+/* .text.far (the second region is full). */
+__attribute__((section(".text.far"))) static int clen(int side)
 {
-    uint32_t v = TR8_PTN2_CUR[CHAIN_LEN];
-    return v <= NBARS ? (int)v : 0;
+    uint32_t v = TR8_PTN2_CUR[CHAIN_COUNTS] >> (4 * side);
+    v &= 0xF;
+    return v <= NBARS ? (int)v : NBARS;
 }
 
-static uint32_t cbits(void)
-{
-    return TR8_PTN2_CUR[CHAIN_BITS] & 0xF;
-}
+static char txt[5];                   /* the four-character numeric display */
 
 static void show_bar(int n, int is_b)
 {
-    static char txt[5];
     txt[0] = ' ';
     txt[1] = ' ';
     txt[2] = (char)('0' + n);
@@ -352,20 +362,24 @@ static void show_bar(int n, int is_b)
     TR8_DISPLAY_TEXT(0, txt);
 }
 
-static void show_len(int n)
+/* .text.far (the second region is full). */
+__attribute__((section(".text.far"))) static void show_ab(int n)
 {
-    static char txt[5];
-    txt[0] = 'C';
-    txt[1] = 'H';
-    txt[2] = n ? ' ' : '-';
-    txt[3] = n ? (char)('0' + n) : '-';
+    txt[0] = 'A';
+    txt[1] = 'B';
+    txt[2] = '-';
+    txt[3] = '-';
+    if (n) {
+        txt[2] = ' ';
+        txt[3] = (char)('0' + n);
+    }
     TR8_DISPLAY_TEXT(0, txt);
 }
 
 /* The chip did not take the bar we just left (see F_BEGIN in the storage section). */
-static void show_fail(void)
+/* .text.far (the second region is full). */
+__attribute__((section(".text.far"))) static void show_fail(void)
 {
-    static char txt[5];
     txt[0] = 'F';
     txt[1] = 'A';
     txt[2] = 'I';
@@ -388,24 +402,47 @@ __attribute__((section(".text.far"))) static void sync(void)
     }
 }
 
-/* Replaces "bl FUN_6000E404" at 0x60009614: choose the bar and the side of this pass. */
+/* Replaces "bl FUN_6000E404" at 0x60009614: choose the bar and the side of this pass.
+ * A plays bars 1..Na, B bars 1..Nb, A+B the A sequence then the B one; all start at bar 1. */
 void chain_var(void *obj)
 {
-    int len;
+    int na, nb, v, pos, bar;
 
     sync();
-    len = clen();
-    if (!len || TR8_SEQ_VARI != 2) {           /* no chain, or the panel selected A or B */
-        TR8_FN_VARIATION(obj);
+    v = (int)TR8_SEQ_VARI;
+    na = clen(0);
+    nb = clen(1);
+    if ((!na && !nb) || (v == 0 && !na) || (v == 1 && !nb)) {
+        TR8_FN_VARIATION(obj);                  /* side was never selected: stock */
         return;
     }
-    {
-        int pos = chain_wrapping ? (chain_pos + 1) % len : 0;
-        chain_pos = (uint8_t)pos;
-        struct_bar(cur_pat, pos);
-        TR8_SEQ_VARIATION = (cbits() >> pos) & 1;
-        TR8_FN_APPLY(obj);
+    pos = chain_wrapping ? (int)chain_pos + 1 : 0;
+    if (v == 0) {
+        if (pos >= na)
+            pos = 0;
+        chain_side = 0;
+        bar = pos;
+    } else if (v == 1) {
+        if (pos >= nb)
+            pos = 0;
+        chain_side = 1;
+        bar = pos;
+    } else {
+        if (pos >= na + nb)
+            pos = 0;
+        if (pos >= na) {
+            chain_side = 1;
+            bar = pos - na;
+        } else {
+            chain_side = 0;
+            bar = pos;
+        }
     }
+    chain_pos = (uint8_t)pos;
+    chain_bar = (uint8_t)bar;
+    struct_bar(cur_pat, bar);
+    TR8_SEQ_VARIATION = chain_side;
+    TR8_FN_APPLY(obj);
 }
 
 /* Replaces "bl FUN_600095F0" at 0x600098CA (pattern wrap). */
@@ -418,36 +455,48 @@ void chain_wrap(void *obj)
 
 /* ---------------------------------------------------------------- bar row LEDs */
 
-/* While exactly one of VARIATION A/B is held the 16 pads are the bar row: pads 1..4 show the four
- * bars (the selected one in the firmware's blinking play colour 0, the other three in the panel's
- * yellow 3) and pads 5..16 are off, so only the four bars are lit. Releasing the button gives the
- * pads back to whatever the screen wants to show.
+/* While exactly one of VARIATION A/B is held the 16 pads are that side's bar row: bars 1..N are
+ * green (palette 0x2A, (1, 9, 2)), the bar that is playing blinks green (palette 0, (1, 0, 2))
+ * and pads 5..16 are off, so only the bars that side has are lit. When the sequencer is stopped
+ * the selected bar blinks instead, so A/B + pad still shows the bar being edited. Releasing the
+ * button gives the pads back to whatever the screen wants to show.
  *
  * Every screen paints pads through one of four tiny setters, so the hook is inside them, not on a
  * view: 0x60017748 (raw setter FUN_6001773A), 0x6001776C (palette setter FUN_6001774E),
  * 0x60017E18 (raw copy FUN_60017E08) and 0x60017E3A (palette copy FUN_60017E1E) are all
  * "bl FUN_6004BB4C" with (obj, led, a, b, c). Replacing those four calls with this one function
  * covers the sequencer, PTN SELECT, TR-REC, LAST STEP and every other view, and keeps working
- * after a pattern change (which switches the screen). The raw triples are the palette entries:
- * 0 = (1, 0, 2) blinking play, 3 = (1, 9, 6) yellow, 0x2D = (0, 0, 2) off. */
+ * after a pattern change (which switches the screen). */
 void chain_led4(void *obj, int led, int a, int b, int c)
 {
     int p = led - TR8_LED_STEP(0);
+    int hb = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1;
 
-    if ((unsigned)p <= 15
-        && (TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) != (TR8_BTN_HELD(TR8_BTN_VARI_B) == 1)) {
-        int row = p < NBARS;
-        int yel = row && p != (int)cur_bar;
+    if ((unsigned)p <= 15 && (TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) != hb) {
+        int n = clen(hb);                  /* holding B shows the B side's bars */
+        int cur = -1;
 
-        a = row;                       /* pads 5..16: off (palette 0x2D = 0, 0, 2) */
-        b = yel ? 9 : 0;
-        c = 2 + (yel ? 4 : 0);         /* row: 1,0,2 play or 1,9,6 yellow */
+        if (!n)
+            n = 1;                         /* nothing selected: the pattern itself */
+        if (p < n) {
+            cur = TR8_SEQ_RUNNING ? (chain_side == hb ? (int)chain_bar : -1)
+                                  : (int)cur_bar;
+            if ((unsigned)cur >= (unsigned)n)
+                cur = -1;
+        }
+        a = p < n;                         /* pads 5..16: off (palette 0x2D = 0, 0, 2) */
+        if (!a)
+            b = 0;
+        else
+            b = p == cur ? 0 : 9;          /* 0 = blink, 9 = steady */
+        c = 2;                             /* colour 2 = green */
     }
     TR8_FN_LED_SET(obj, led, a, b, c);
 }
 
-/* A or B + pad 1..4: make bar n the working copy and paint it with that side. A+B + pad:
- * chain length. A+B+CLEAR + pad: chain off. a = VARIATION A held, b = VARIATION B held. */
+/* A or B + pad 1..4: make bar n the working copy and paint it with that side; that side becomes
+ * at least n bars long. A+B + pad: both sides n bars. A+B+CLEAR + pad: both sides stock.
+ * a = VARIATION A held, b = VARIATION B held. */
 /* .text.far (the first region, link.ld); noinline keeps clang from folding it into chain_press,
  * which overflowed the second region. */
 __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, int a, int b)
@@ -456,13 +505,10 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
     int saved;
 
     if (a && b) {
-        if (TR8_BTN_HELD(TR8_BTN_CLEAR) == 1) {
-            TR8_PTN2_SET(0, CHAIN_LEN, 0);
-            show_len(0);
-        } else {
-            TR8_PTN2_SET(0, CHAIN_LEN, bar + 1);
-            show_len(bar + 1);
-        }
+        int n = TR8_BTN_HELD(TR8_BTN_CLEAR) == 1 ? 0 : bar + 1;
+
+        TR8_PTN2_SET(0, CHAIN_COUNTS, n | (n << 4));
+        show_ab(n);
         return;
     }
 
@@ -474,16 +520,18 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
     TR8_SEQ_VARIATION = (uint32_t)(b ? 1 : 0);
     TR8_FN_APPLY((void *)TR8_PTN_STRUCT);
     {
-        uint32_t bits = cbits();
-        int len = clen();
-        if (b)
-            bits |= 1u << bar;
-        else
-            bits &= ~(1u << bar);
-        if (bar + 1 > len)
-            len = bar + 1;
-        TR8_PTN2_SET(0, CHAIN_BITS, (int)bits);
-        TR8_PTN2_SET(0, CHAIN_LEN, len);
+        uint32_t w = TR8_PTN2_CUR[CHAIN_COUNTS];
+        int na = (int)(w & 0xF);
+        int nb = (int)((w >> 4) & 0xF);
+
+        if (b) {
+            if (bar + 1 > nb)
+                nb = bar + 1;
+        } else {
+            if (bar + 1 > na)
+                na = bar + 1;
+        }
+        TR8_PTN2_SET(0, CHAIN_COUNTS, na | (nb << 4));
     }
     show_bar(bar + 1, b);
     if (!saved)

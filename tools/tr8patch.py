@@ -80,9 +80,10 @@ PATCHES["poly"] = {
 
 # Bar chain (patches/chain/chain.c, docs/CHAIN.md).
 # Four bars per pattern, each with its own A and B step set: A/B + pad 1..4 selects the bar and
-# its side, A+B + pad sets the length. Same free regions as motion and poly: standalone.
+# grows that side's sequence, A+B + pad sets both lengths. Same free regions as motion and poly:
+# standalone.
 PATCHES["chain"] = {
-    "doc": "Bar chain: A/B + pad 1..4 selects a bar and its side, A+B + pad the length (docs/CHAIN.md)",
+    "doc": "Bar chain: A/B + pad 1..4 selects a bar and sets its side's length, A+B + pad both (docs/CHAIN.md)",
     "payload": "patches/chain/payload.json",
     "allowed": [(0x60011150, 0x60011464), (0x60011488, 0x60011BB6)],
     "keep": [(0x60011464, 0x60011484)],

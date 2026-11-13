@@ -4,9 +4,9 @@
 # Needs clang + ld.lld (LLVM). The patcher itself does not.
 set -euo pipefail
 cd "$(dirname "$0")"
-SYMS="chain_var chain_wrap chain_press chain_release chain_commit chain_led4 chain_pos chain_wrapping chain_swallow"
+SYMS="chain_var chain_wrap chain_press chain_release chain_commit chain_led4 chain_pos chain_side chain_bar chain_wrapping chain_swallow"
 # The probe keeps the LAST STEP fallback (chain_pad) to show what that branch sees.
-SYMS_PROBE="$SYMS chain_pad chain_pad_c"
+SYMS_PROBE="chain_var chain_wrap chain_press chain_release chain_commit chain_led4 chain_pos chain_wrapping chain_swallow chain_pad chain_pad_c"
 
 # ld.lld if it is on PATH, else the copy that ships with a Rust toolchain (rust-lld -flavor gnu).
 LD=""
@@ -19,7 +19,7 @@ if [ -z "$LD" ]; then echo "need ld.lld (LLVM) or a Rust toolchain" >&2; exit 1;
 
 build() {   # $1 = output suffix, $2 = source, $3 = symbols to keep and export
     local sfx=$1 src=$2 syms=$3
-    clang --target=thumbv7m-none-eabi -mcpu=cortex-m3 -mthumb -Oz -ffreestanding -fno-builtin \
+    clang --target=thumbv7m-none-eabi -mcpu=cortex-m3 -mthumb -Oz -fno-inline -ffreestanding -fno-builtin \
           -fno-common -ffunction-sections -fdata-sections -nostdlib -Wall -Wextra -I../include \
           -c $src -o chain$sfx.o
     $LD -T link.ld --gc-sections -e chain_var $(printf -- '-u %s ' $syms) chain$sfx.o -o chain$sfx.elf

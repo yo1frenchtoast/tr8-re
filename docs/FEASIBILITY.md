@@ -47,13 +47,15 @@ set, painted with VARIATION A/B + pad 1..4 and saved with the pattern. Bars are 
 content, not replays of the pattern's two passes: the selected bar is loaded into the working copy
 so TR-REC records it, and the pattern save is redirected to an append-only log in unused flash
 (`0x3DB000`-`0x3DFFFF`), which leaves the pattern's own steps intact as the default for unrecorded
-bars. Each pattern keeps its own four-bar loop and chain, so switching pattern switches the
-phrase. It is emulation-tested (114 checks, including a simulated power cycle, log compaction and
-the chip's write protection); the step engine is untouched and no pattern slot is spent on a bar.
-While VARIATION A or B is held, pads 1-4 show the four bars (selected bar blinking, the rest
-yellow) and pads 5-16 go dark, so only the four bars are lit; releasing the button returns the
-pads to whatever the screen was showing, on any screen, and the row keeps working after a pattern
-change.
+bars. Each side of a pattern has its own length: A plays bars 1..Na with its A steps, B plays
+1..Nb with its B steps, and A+B plays the A sequence then the B sequence. Each pattern keeps its
+own four bars and its own two lengths, so switching pattern switches the phrases. It is
+emulation-tested (132 checks, including a simulated power cycle, log compaction and the chip's
+write protection); the step engine is untouched and no pattern slot is spent on a bar. While
+VARIATION A or B is held, the pads show that side's bars: green, with the playing bar blinking
+green, and the remaining pads dark, so only the bars that side has are lit; releasing the button
+returns the pads to whatever the screen was showing, on any screen, and the row keeps working
+after a pattern change.
 
 ## C. Per-instrument length (polyrhythm): done
 

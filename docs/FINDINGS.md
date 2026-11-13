@@ -175,8 +175,9 @@ the group and notify (`FUN_60010148`), which leads to the save. `prm_storage_sub
 (`FUN_6000FD28`, `FUN_6000FE80`) copies whole areas between slots and to flash
 (`FUN_60010E92`; `storage\sf_bios.cpp` stores RAM ranges in 256-byte journaled pages).
 Ptn2 unnamed ids `0x127`, `0x128`, `0x12B`-`0x138` are read by no code and are 0 in all factory
-patterns; the poly patch uses `0x12B`-`0x135` (docs/POLY.md "Storage"). `FUN_600113B2`
-dumps the factory patterns as C text (`data_fact_ptn.inc`), a developer function.
+patterns; the poly patch uses `0x12B`-`0x135` (docs/POLY.md "Storage") and the chain patch index 17
+(id `0x138`, docs/CHAIN.md "Storage"). `FUN_600113B2` dumps the factory patterns as C text
+(`data_fact_ptn.inc`), a developer function.
 
 Low-level access: `FUN_6000F80E(ctx, area, n)` then `FUN_6000F844(ctx, id, &out)` reads a value by
 global id. Change handlers (`FUN_6000A15A`..`FUN_6000AFDC`) copy values into the pattern struct at
@@ -207,8 +208,8 @@ keeps the area-6 half stock: area 4 slot *n+1* keeps the pattern's own steps and
 appended to a 128-byte-entry log in the unused flash at `0x3DB000`-`0x3DFFFF` (four blocks of 32
 entries from `0x3DF000` down, scratch block at `0x3DB000`, newest entry per pattern/bar wins).
 That range is erased by any firmware update: the updater rewrites blocks over flash
-`0x30000`-`0x3DFFFF` (section 3), so the bars are lost on an update, while the chain bits survive
-in the user area. The raw primitives used are `FUN_60003E54(off, len, src)` (program, chunks <=
+`0x30000`-`0x3DFFFF` (section 3), so the bars are lost on an update, while the two side lengths
+survive in the user area. The raw primitives used are `FUN_60003E54(off, len, src)` (program, chunks <=
 0x100, 4-byte words), `FUN_60003EA2(off, len, dst)` (read through the mapping at `off + 0x03000000`)
 and `FUN_60003EDA(off)` (erase 4 KB); each saves and restores the flash mapping itself.
 
@@ -299,8 +300,8 @@ The struct is filled from area 4 **slot 0** (the working copy) just before that,
 `FUN_6000E0E0`, which maps 0->8, 1->4, 2->6, **3->3**), then the 26 mask pairs. So a restart
 always reloads the working copy; a patch that wants other content must write the struct after
 `FUN_6000E0FE` and before the last-step read (this is what the chain patch does at `0x60009614`,
-filling it from the selected bar while `VARI` = 2 and leaving `FUN_6000E404` as the stock
-fallback).
+filling it from the bar and side of this pass and leaving `FUN_6000E404` as the stock fallback for
+a side that has no sequence).
 
 `FUN_6000E4A6` (pass end, called from `0x60009964`) is gated by `FUN_6000E472` and only loads a
 *pending* pattern change, so it does not clobber content written by such a hook during playback.
@@ -530,7 +531,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   `0x60011488`-`0x60011BB5` (1838 bytes) are free. The literal pool `0x60011464`-`0x60011483` is
   still used and must stay. The motion patch uses 737 + 1568 bytes; `motion-poly` uses about
   340 + 730 bytes, its zeroed data is in patch RAM (below); `chain` uses both regions too
-  (733 + 1807 bytes, 55 + 31 free), so it is standalone for the same reason.
+  (785 + 1808 bytes, 3 + 30 free), so it is standalone for the same reason.
 - **Grow the image (design, not tested on a unit).** Code appended at the end of the image
   (`0x601309E0`) would be erased, because the bss zero-fill covers `0x601264EC`-`0x60280987`.
   Instead:
