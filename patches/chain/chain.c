@@ -1,26 +1,26 @@
 /*
- * TR-8 v1.61 bar chain: a pattern becomes four bars, each with its own A and B step set.
+ * TR-8 v1.61 bar chain: a pattern becomes up to eight bars, each with its own A and B step set.
  *
  * Panel (per pattern; nothing is carried to another pattern):
- *   hold VARIATION A, press pad 1..4 -> bar n is the working copy and plays its A steps; the A
+ *   hold VARIATION A, press pad 1..8 -> bar n is the working copy and plays its A steps; the A
  *                                     side becomes at least n bars long.
- *   hold VARIATION B, press pad 1..4 -> the same bar, its B steps; the B side grows the same way.
- *   hold A + B, press pad 1..4       -> both sides are n bars long (extend or shrink).
+ *   hold VARIATION B, press pad 1..8 -> the same bar, its B steps; the B side grows the same way.
+ *   hold A + B, press pad 1..8       -> both sides are n bars long (extend or shrink).
  *   hold A + B + CLEAR, press a pad  -> both sides back to stock (no bar sequence).
  *   The numeric display confirms each gesture ("  A1", "  B4", "AB 3", "AB--"); the bar number
  *   gives way to the screen's own text as soon as the variation button is released.
  *
  * Playback: variation A plays bars 1..Na with each bar's A steps, variation B plays bars 1..Nb
  * with each bar's B steps, and A+B plays the A sequence then the B sequence. A sequence loops at
- * its end. A side and B side have their own length, so A can be a two-bar phrase while B is four
- * bars. The length of a side is the highest bar selected on that side (1..4); a pattern whose
- * sides were never selected stays stock.
+ * its end. A side and B side have their own length, so A can be a two-bar phrase while B is
+ * eight bars. The length of a side is the highest bar selected on that side (1..8); a pattern
+ * whose sides were never selected stays stock.
  *
  * A bar select is also a jump: while playing, the next bar boundary plays the selected bar and
  * the sequence carries on from it; while stopped, the next start begins at the selected bar. A
  * fresh patch state and a pattern change put the playhead back on bar 1.
  *
- * So pattern 1 keeps four private bars (A and B steps each), pattern 2 the same, and each
+ * So pattern 1 keeps eight private bars (A and B steps each), pattern 2 the same, and each
  * pattern's two sides are its own phrases. A bar that has never been recorded is the pattern
  * itself (its A steps for the A side, its B steps for the B side), so a pattern sounds exactly
  * as before until a bar is edited.
@@ -38,13 +38,13 @@
  *   The gesture lives on the press dispatch (0x60013842, before the screen): the screen takes a
  *   bare pad press, so the global button handler never sees it (see the first hardware build).
  *   chain_release swallows the matching release.
- *   While VARIATION A or B is held, all 16 pads become the bar row (the side's bars lit, 5..16
+ *   While VARIATION A or B is held, all 16 pads become the bar row (the side's bars lit, 9..16
  *   off) by wrapping the four pad setters (chain_led4, see the bar row section).
  *
  * Storage: the pattern's own step content is the pattern record (area 4), which stays the
  * source of the default bar. The two side lengths live in an unused Ptn2 parameter (id 0x138),
  * so the stock area-6 commit saves them with the pattern. Extra bars live in a small log in the
- * unused flash between the application image and the user area (0x3DB000..0x3DFFFF, see
+ * unused flash between the application image and the user area (0x3DA000..0x3DFFFF, see
  * docs/CHAIN.md "Storage"):
  *   entry (128 bytes): magic, seq | pattern << 16 | bar << 20, LAST_A | LAST_B << 8, checksum,
  *   then 26 words, one per step row: A mask | B mask << 16, then the scale.
@@ -56,18 +56,19 @@
  */
 #include "tr8_v161.h"
 
-#define NBARS  4
+#define NBARS  8
 #define ROWS   26
 #define CHAIN_COUNTS 17           /* Ptn2 id 0x138: A bars | B bars << 4 */
 
 /* ---------------------------------------------------------------- flash log */
 
-/* The log is the 16 KB at 0x3DC000..0x3E0000, entry i at FL_BASE + i * 128: the same bytes the
- * first builds used, where entry i sat at 0x3DF000 - (i / 32) * 0x1000 + (i % 32) * 128, so an
- * upgrade keeps the bars already stored. The scratch block for compaction sits just below. */
-#define FL_BASE 0x3DC000u
-#define FL_SCR  0x3DB000u
-#define NBLK   4
+/* The log is the 20 KB at 0x3DB000..0x3E0000, entry i at FL_BASE + i * 128. The eighth build
+ * kept four blocks at 0x3DC000..0x3DFFFF (entry i at 0x3DF000 - (i / 32) * 0x1000 + (i % 32) *
+ * 128); those are now entries 32..159 — the same bytes at the same addresses — so an upgrade
+ * keeps the bars already stored. The scratch block for compaction sits just below. */
+#define FL_BASE 0x3DB000u
+#define FL_SCR  0x3DA000u
+#define NBLK   5
 #define EPB    32                 /* entries per 4 KB block                */
 #define NENT   (NBLK * EPB)
 #define ENTW   32                 /* words per entry                       */
@@ -97,7 +98,12 @@ uint8_t chain_row[2];     /* bar last selected or played on each side, for the b
 uint8_t chain_wrapping;   /* set by chain_wrap around the FUN_600095F0 call */
 uint8_t chain_swallow;    /* bit n: pad n's press was taken, its release is swallowed too */
 
-static uint8_t tab[NBARS * 16];  /* newest entry index + 1 per (pattern, bar), 0 = none */
+/* Newest entry index + 1 per (pattern, bar), 0 = none: 16 patterns x 8 bars. The two code
+ * regions have no room for 128 bytes of state, so it lives in patch RAM above the firmware bss
+ * (0x60280A00), which the patcher frees by moving the RTOS pool start by 64 KB — the same move
+ * motion-poly uses. Patch RAM is not zeroed at boot, but store_init clears tab before any other
+ * use, so that is enough. */
+__attribute__((section(".ram"))) static uint8_t tab[NBARS * 16];
 static uint8_t wr_i;             /* next log entry */
 static uint16_t seqn;            /* last sequence number written */
 static uint8_t inited;           /* the log has been scanned */
@@ -153,7 +159,7 @@ __attribute__((section(".text.far"))) static uint32_t ecrc(const uint32_t *e)
 /* (pattern, bar) of an entry, as an index into tab[]. */
 static int ekey(const uint32_t *e)
 {
-    return (int)((e[1] >> 16) & 0xF) * NBARS + (int)((e[1] >> 20) & 3);
+    return (int)((e[1] >> 16) & 0xF) * NBARS + (int)((e[1] >> 20) & 0xF);
 }
 
 /* A valid entry: magic, checksum, and the (pattern, bar) it claims to be, unless k is negative
@@ -214,8 +220,8 @@ static void store_init(void)
 }
 
 /* Move the live entries of the block with the fewest of them out of the way, erase it, put them
- * back at its start and continue there. There are at most 64 live entries (16 patterns x 4 bars),
- * so this block always ends up with fewer than EPB of them and keeps a free slot: compacting the
+ * back at its start and continue there. There are at most 128 live entries (16 patterns x 8 bars)
+ * in 160 slots, so the block with the fewest of them always keeps a free slot: compacting the
  * block at the write pointer would not help when all of its entries are live. A slot is live when
  * tab[] names it; any other valid entry in the block is an older duplicate and is dropped. */
 static void store_gc(void)
@@ -367,7 +373,7 @@ __attribute__((section(".text.far"))) static void struct_bar(int pat, int bar)
 
 /* ---------------------------------------------------------------- chain */
 
-/* Bars of one side: 0 = never selected (that side stays stock), 1..4 = sequence length. */
+/* Bars of one side: 0 = never selected (that side stays stock), 1..8 = sequence length. */
 /* .text.far (the second region is full). */
 __attribute__((section(".text.far"))) static int clen(int side)
 {
@@ -546,7 +552,7 @@ void chain_led4(void *obj, int led, int a, int b, int c)
     TR8_FN_LED_SET(obj, led, a, b, c);
 }
 
-/* A or B + pad 1..4: make bar n the working copy and paint it with that side; that side becomes
+/* A or B + pad 1..8: make bar n the working copy and paint it with that side; that side becomes
  * at least n bars long. A/B + CLEAR + pad n: that side becomes exactly n bars long (shrink).
  * A+B + pad: both sides n bars. A+B+CLEAR + pad: both sides stock.
  * a = VARIATION A held, b = VARIATION B held. */

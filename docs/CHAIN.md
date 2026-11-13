@@ -1,21 +1,22 @@
-# Bar chain: four bars per pattern, a sequence per variation side
+# Bar chain: up to eight bars per pattern, a sequence per variation side
 
-Play a pattern as **four bars**, each with its **own A and B step set**. Hold VARIATION A and
-press pad 1..4 to pick a bar and its A side, hold VARIATION B and press pad 1..4 for the same bar
-on its B side. A bar that has not been recorded is the pattern itself (its A steps on the A side,
+Play a pattern as **up to eight bars**, each with its **own A and B step set**. Hold VARIATION A
+and press pad 1..8 to pick a bar and its A side, hold VARIATION B and press pad 1..8 for the same
+bar on its B side. A bar that has not been recorded is the pattern itself (its A steps on the A side,
 its B steps on the B side), so a pattern sounds exactly as before until a bar is edited.
 
 Each side plays its bars in order: **A plays bars 1..Na with the A steps, B plays bars 1..Nb with
 the B steps, and A+B plays the A sequence and then the B sequence.** A side's length is the
-highest bar selected on that side (1..4), so A can be a two-bar phrase while B is four bars. A
+highest bar selected on that side (1..8), so A can be a two-bar phrase while B is eight bars. A
 side that was never selected stays stock.
 
-Every pattern has its own four bars and its own two lengths. Switching pattern switches the
+Every pattern has its own eight bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 198 checks). The eighth build (per-side
+Status: **works in emulation** (`tests/emu_chain.py`, 220 checks). The eighth build (per-side
 sequences, green/blink row, stopped editing, bar jump) is confirmed on hardware; the step view
-following the bar that is playing is emulation-tested and pending on the unit.
+following the bar that is playing and the eight-bar row are emulation-tested and pending on the
+unit.
 Like the other patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
@@ -29,11 +30,11 @@ it uses the two developer-dump regions, and so do `motion` and `poly`.
 
 | Gesture | Result |
 |---|---|
-| Hold **VARIATION A**, press pad 1..4 | Bar *n* becomes the bar being edited, on its **A** steps, and the A side becomes at least *n* bars long. The display shows `  A1`..`  A4` |
-| Hold **VARIATION B**, press pad 1..4 | The same bar on its **B** steps; the B side becomes at least *n* bars long. The display shows `  B1`..`  B4` |
-| Hold **A + CLEAR**, press pad 1..4 | The A side becomes **exactly** *n* bars long, so it can shrink; the B side is untouched. The display shows `  A1`..`  A4` |
-| Hold **B + CLEAR**, press pad 1..4 | The same for the B side. The display shows `  B1`..`  B4` |
-| Hold **A + B**, press pad 1..4 | Both sides are *n* bars long (extend or shrink). The display shows `AB 1`..`AB 4` |
+| Hold **VARIATION A**, press pad 1..8 | Bar *n* becomes the bar being edited, on its **A** steps, and the A side becomes at least *n* bars long. The display shows `  A1`..`  A8` |
+| Hold **VARIATION B**, press pad 1..8 | The same bar on its **B** steps; the B side becomes at least *n* bars long. The display shows `  B1`..`  B8` |
+| Hold **A + CLEAR**, press pad 1..8 | The A side becomes **exactly** *n* bars long, so it can shrink; the B side is untouched. The display shows `  A1`..`  A8` |
+| Hold **B + CLEAR**, press pad 1..8 | The same for the B side. The display shows `  B1`..`  B8` |
+| Hold **A + B**, press pad 1..8 | Both sides are *n* bars long (extend or shrink). The display shows `AB 1`..`AB 8` |
 | Hold **A + B + CLEAR**, press a pad | Both sides back to stock (no bar sequence). The display shows `AB--` |
 | Press **A** (no pad) | Play the A sequence: bars 1..Na, A steps |
 | Press **B** (no pad) | Play the B sequence: bars 1..Nb, B steps |
@@ -66,24 +67,28 @@ moves on by itself at every bar boundary. Stopped, the view stays on the bar you
 follow itself writes no flash: a bar nobody edited is never rewritten, so leaving it at a bar
 boundary costs nothing (see Storage).
 
-The pads only ever choose a bar 1..4; pads 5..16 stay ordinary step pads and LAST STEP + pad
+The pads only ever choose a bar 1..8; pads 9..16 stay ordinary step pads and LAST STEP + pad
 still sets the pattern length (the poly gesture), because LAST STEP wins over A/B in the patch.
 
 ## A typical session
 
 1. On pattern 1, hold **A** and press pads **1, 2, 3, 4** in turn: the panel selects bar 1, 2, 3,
    4, each on its A side, and the A side becomes four bars long. The display confirms each bar.
+   Pads **5..8** work the same way if the phrase needs more than four.
 2. With TR-REC, record different steps into bar 1 and bar 2. Selecting a bar loads its content, so
    each bar keeps its own steps.
 3. Hold **B** and press pad **1, 2**: the B side becomes two bars long. Record its steps.
-4. Press **A**: the four A bars play in order and wrap. Press **B**: the two B bars play. Press
+4. Press **A**: the A bars play in order and wrap. Press **B**: the two B bars play. Press
    **A + B**: the A sequence plays, then the B sequence. Hold A or B to see that side's bar row.
-5. Select pattern 2: it has its own four bars and its own two lengths. Pattern 1's bars are
+5. Select pattern 2: it has its own bars and its own two lengths. Pattern 1's bars are
    unchanged; select pattern 1 again to hear them.
 
 ## Behaviour
 
-- **Four bars per pattern.** Bars are numbered 1..4 by the pad; pads 5..16 do not select bars.
+- **Up to eight bars per pattern.** Bars are numbered 1..8 by the pad; pads 9..16 do not select
+  bars. Four bars were the first limit, because the length first lived in a 4-bit Ptn2 nibble;
+  the eight-bar row still fits the nibble (and the entry's bar field), so the limit is now the
+  pads: 8 bars x 2 sides is a 16-bar phrase of 256 steps.
 - **A and B are independent step sets of the same bar**, not the pattern's stock pair: a recorded
   bar has its own 26 step rows for A and for B, plus its own LAST_A/LAST_B. Both sides are
   recordable.
@@ -188,7 +193,7 @@ calls `FUN_60013B34(id)` (`bl` at `0x60013842`), which gives the screen the pres
 screen declines it does the global button handler `FUN_6001961E` run (`0x60013F74`). That is why
 LAST STEP + pad reaches `FUN_6001961E` (the screen declines LAST STEP) but a bare pad press never
 does: the screen takes it as a step edit or a sound audition. `chain_press` replaces the dispatch
-call itself, before the screen: with VARIATION A and/or B held, no LAST STEP and a pad 1..4 it
+call itself, before the screen: with VARIATION A and/or B held, no LAST STEP and a pad 1..8 it
 selects the bar and returns 1, so the screen never sees the pad; otherwise it forwards the id to
 `FUN_60013B34` unchanged. `chain_release` replaces the matching `bl FUN_60013B56` at `0x600137D2`
 and swallows the release of a pad whose press was taken, so the screen never gets a release
@@ -254,16 +259,18 @@ there is no area-6 reload. That is the difference from the earlier "bar = patter
 slot's step rows, so the stock handlers do the editing.
 
 **Bar log.** Extra bar content lives in the unused flash between the application image and the
-user area, `0x3DB000`-`0x3DFFFF`:
+user area, `0x3DA000`-`0x3DFFFF`:
 
 | Range | Use |
 |---|---|
-| `0x3DC000`..`0x3DFFFF` | four log blocks of 32 entries; entry *i* is at `0x3DC000 + i * 128` |
-| `0x3DB000` | scratch block for compaction |
+| `0x3DB000`..`0x3DFFFF` | five log blocks of 32 entries; entry *i* is at `0x3DB000 + i * 128` |
+| `0x3DA000` | scratch block for compaction |
 
-The first builds placed entry *i* at `0x3DF000 - (i / 32) * 0x1000 + (i % 32) * 128`, which covers
-the same 16 KB in the opposite block order: the addressing was made a plain multiply, so an
-upgrade keeps the bars already stored.
+The eighth build kept four blocks at `0x3DC000`..`0x3DFFFF`, entry *i* at
+`0x3DF000 - (i / 32) * 0x1000 + (i % 32) * 128`; those are now entries 32..159 — the same bytes at
+the same addresses — so an upgrade keeps the bars already stored and the scan finds them by their
+sequence numbers (the block order is irrelevant). The log was not moved; it grew downwards by one
+block, and the scratch block moved with it.
 
 An entry is 128 bytes (32 words):
 
@@ -301,10 +308,13 @@ The log is append-only: one save is one 128-byte program, no erase, so a torn wr
 the newest entry and never a pattern. When the write pointer reaches a block that is still in use,
 the block with the fewest live entries is compacted: its live entries (the newest per
 pattern/bar) are copied to the scratch block, the block is erased and they are written back. That
-block always keeps a free slot, because there are only 64 live entries (16 patterns x 4 bars) and
-128 slots. The newest entry per `(pattern, bar)` wins by sequence number, so the scan is correct
-after the ring wraps or a block is compacted; the log is scanned once on first use, after which a
-static index of 64 bytes points at each bar's newest entry.
+block always keeps a free slot, because there are at most 128 live entries (16 patterns x 8
+bars) in 160 slots. The newest entry per `(pattern, bar)` wins by sequence number, so the scan is
+correct after the ring wraps or a block is compacted; the log is scanned once on first use, after
+which a static index of 128 bytes points at each bar's newest entry. The index is 16 patterns x 8
+bars, which neither code region has room for, so it lives in patch RAM at `0x60280A00` and the
+image moves the RTOS pool start by 64 KB (the motion-poly move, [COMBO.md](COMBO.md)); see "Code
+space".
 
 **Pattern save is redirected.** The firmware's pattern save (`FUN_6001B7D8` -> `FUN_6000FC78`)
 normally copies area 4 slot 0 over slot *n+1*. `chain_commit` replaces that call for area 4:
@@ -316,14 +326,14 @@ that pattern and not a bar, so the stock commit runs instead. The area-6 half of
 accents, flams, the two side lengths) goes through the stock commit unchanged.
 
 **Side lengths.** Index 17 (global id `0x138`) holds the two lengths in one parameter: the low
-nibble is Na, the high nibble Nb, each 0..4 (0 = that side was never selected). It is written with
+nibble is Na, the high nibble Nb, each 0..8 (0 = that side was never selected). It is written with
 the firmware's Ptn2 setter and saved with the pattern by the stock area-6 commit, so each pattern
 keeps its own two sequences. The poly patch uses indices 4..14 (`0x12B`..`0x135`), so it does not
 collide; a future combined build can use both. The earlier build's indices 15/16 (`0x136`,
 `0x137`) are no longer read or written. A firmware update erases the log blocks (the updater
 rewrites flash `0x30000`-`0x3DFFFF`, [UPDATE.md](UPDATE.md)), so the bars fall back to the pattern
 after an update; the side lengths survive, because they are ordinary pattern parameters in the
-user area. Another patch must not claim `0x3DB000`-`0x3DFFFF` while this one is installed.
+user area. Another patch must not claim `0x3DA000`-`0x3DFFFF` while this one is installed.
 
 **Backup caveats.** The USB backup stores named parameters only, so neither the Ptn2 side lengths
 nor the bar log is in it: after a restore, the patterns are back to their own steps and every bar
@@ -334,36 +344,42 @@ the pattern's own steps.
 ### Code space
 
 The payload uses the two developer-dump regions
-(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 772 bytes of `.text.far` plus 6 bytes of
-`.data` in the first (788 available, 10 free), 1624 bytes of `.text` plus 212 bytes of `.bss` in
-the second (1838 available, 2 free). The literal pool between them (`0x60011464`-`0x60011484`) is
-live firmware data and is never written. The probe build (`payload_probe.json`) needs 568 + 14
-bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
+(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 764 bytes of `.text.far` plus 6 bytes of
+`.data` in the first (788 available, 18 free), 1660 bytes of `.text` plus 148 bytes of `.bss` in
+the second (1838 available, 30 free). The literal pool between them (`0x60011464`-`0x60011484`) is
+live firmware data and is never written. The bar index (`tab`, 128 bytes: 16 patterns x 8 bars)
+does not fit either region, so it is **patch RAM** at `0x60280A00`: the patcher moves the RTOS
+pool start literal (`0x600104A8`) from `0x60280988` to `0x60290988`, the same 64 KB reservation
+`motion-poly` makes ([COMBO.md](COMBO.md)); the payload lists the section but does not write it
+into the image, and `store_init` clears it before use (patch RAM is not zeroed at boot). The probe
+build (`payload_probe.json`) needs 568 + 14 bytes and keeps the stock pool start.
+That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
 combined build needs the "grow the image" method or another dead-code region
-([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths and the follow needed
-`-fno-inline`; the first region carries `sync`, `clen`, `struct_bar`, `slot_load`, `chain_edit`,
-`chain_commit`, `ecrc` and `save_dirty` plus the display buffer and the pattern byte, the second
-everything else. Dropping the synchronous notification gave the first region back 12
+([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the lengths, the follow and the eight-bar
+row needed `-fno-inline`; the first region carries `sync`, `clen`, `struct_bar`, `slot_load`,
+`chain_edit`, `chain_commit`, `ecrc` and `save_dirty` plus the display buffer and the pattern byte,
+the second everything else. Dropping the synchronous notification gave the first region back 12
 bytes, and the follow fits in the second because `store_gc`, `store_init` and the display helpers
 were rewritten to do less arithmetic (walking the player struct and the row loop, one `eok` that
 also checks the key, one shared `show4`). The follow itself, the hash check and the `sync` guard at
-the top of `chain_view` take the second region back to 2 free bytes; the shrink gesture lives in
-`chain_edit`, so it costs the first region (10 free).
+the top of `chain_view` take the second region back to 30 free bytes; the eight-bar arithmetic and
+the shrink gesture live in the first region (18 free).
 
 ## Why not a real 32- or 64-step pattern
 
 The step masks, the last-step values, the fills and the panel are all 16-step; a 32-step view
 needs a page selector that the 16 pads do not provide, and wider masks in every parameter and
-handler. Four bars per pattern give a 64-step phrase from bars that each already have 16 steps,
-with no change to the step engine. Each bar still has both A and B sides, so the usable material
-is 4 bars x 2 sides per pattern, independent for all 16 patterns.
+handler. Eight bars per pattern give a 128-step phrase from bars that each already have 16 steps,
+with no change to the step engine, and A+B chains the two sides into 256 steps. Each bar still
+has both A and B sides, so the usable material is 8 bars x 2 sides per pattern, independent for
+all 16 patterns.
 
 ## If the gesture does nothing
 
 1. **Variation buttons first, pad second.** Hold A (or B, or A+B) and *then* press the pad; the
    press of the pad is what the patch sees. Pressing the pad first and adding A afterwards does
    nothing.
-2. **Pads 1..4 only.** Pads 5..16 keep their stock step function.
+2. **Pads 1..8 only.** Pads 9..16 keep their stock step function.
 3. **LAST STEP wins.** LAST STEP + pad is the pattern length (and the poly gesture); do not hold
    it when selecting a bar.
 4. **Every side plays its own sequence.** With no side length set the pattern is stock. A side
@@ -389,22 +405,22 @@ writes a side length, a bar or the pattern:
 |---|---|
 | `St00` / `St11` / `St20` on start | payload runs; `St20` = panel VARI 2 (A+B), effective variation of the pass 0 |
 | ` 1A-` (A + pad 1) | hook runs and the firmware reports VARIATION A held: the press never reached the screen |
-| `12B-` (B + pad 12) | same for B, two-digit pad (pads 5..16 are not bars) |
+| `12B-` (B + pad 12) | same for B, two-digit pad (pads 9..16 are not bars) |
 | ` 3C-` (A+B + pad 3) | both variation buttons held |
 | ` 3--` (plain pad 3) | hook runs on every press and sees no modifier; the text is written after the firmware handled the pad |
 | ` 8-L` (LAST STEP + pad 8) | LAST STEP is held, so the press goes to the firmware first (pattern length) and the text is written after it |
 | ` 3CL` (A+B + LAST STEP + pad 3) | the same with both variation buttons held: LAST STEP wins, no bar selection |
-| pads 5-16 dark while A is held | the bar row: pads 1-4 lit (the probe has no side lengths, so all four are yellow; the real build shows only that side's bars, green, with the head blinking yellow), the rest off |
+| pads 5-16 dark while A is held | the bar row: the probe has no side lengths and still lights its four-bar row (all four yellow); the real build shows pads 1..8 of that side only, the bars green with the head blinking yellow, the rest off |
 | nothing at all | the payload is not running: the build is not the patched one |
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 198 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 220 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
-  1..4` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
+  1..8` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, `A/B + CLEAR + pad n` sets one side to exactly *n* in both directions without touching the
-  other side, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar
-  selection
+  other side, pads 9..16 forwarded, LAST STEP wins, display strings, release swallowed, `A + pad
+  8`/`B + pad 5` for the eight-bar row); bar selection
   and the working copy (bar 1 = pattern, bar 2 loaded after a save, last steps and B side; the
   same round trip while stopped: `A + pad 3`, edit a step, `A + pad 1`, back to `A + pad 3` with
   the edit, and the step-view repaint bit `0x04` set after every load but not after the A+B
@@ -421,7 +437,8 @@ writes a side length, a bar or the pattern:
   selected stays stock on the panel and contributes no A+B pass; stock A+B toggle with no lengths
   at all; a second pattern with its own bars and lengths (and its own Ptn2 slot); a power cycle
   rescanning the log; compaction after more than a block of saves; the ring wrapped and every
-  block compacted (192 saves over all 64 bars, each bar read back through the payload's index);
+  block compacted (256 saves over all 128 bars, the worst case of 128 live entries in 160 slots,
+  each bar read back through the payload's index);
   the sequence number wrapping from 0xFFFF to 0 (an entry written after the wrap still wins); the
   stock commit for a pattern the patch has not loaded; `chain_wrap` marks the restart. The
   simulated flash models the chip's block protection: program/erase outside a write session are
@@ -436,10 +453,12 @@ writes a side length, a bar or the pattern:
   old 32 is new 64) are read back and played. The bar row: all four pad setters (both raw, both
   palette) resolve that side's bars to green, the head bar to the blinking yellow triple and every
   other pad to off while exactly one of A/B is held, and forward the original triple when neither
-  or both are held and for every other LED; after a bar press the A row stays one bar and the B row
-  shows the new bar. The probe build (`--probe`, `payload_probe.json`, 47 checks): display strings
-  on the press path and on the global LAST STEP branch, a pass-through save redirect, no Ptn2
-  writes, `St` line on start.
+  or both are held and for every other LED; with eight bars pads 1-8 are lit, pad 9 off; after a
+  bar press the A row stays one bar and the B row shows the new bar. Also build-level: the RTOS
+  pool start literal is `0x60290988` and the bar index is 128 bytes at `0x60280a00`; eight-bar
+  playback wraps on the ninth bar. The probe build (`--probe`, `payload_probe.json`, 47 checks):
+  display strings on the press path and on the global LAST STEP branch, a pass-through save
+  redirect, no Ptn2 writes, `St` line on start.
 - Hardware, first build (pad branch of `FUN_6001961E`): LAST STEP + pad set the pattern length,
   stock A/B alternation worked, A + pad showed nothing. Diagnosis: the screen takes a bare pad
   press, so the global button handler never runs for it; the press dispatch is the first code
@@ -483,7 +502,7 @@ writes a side length, a bar or the pattern:
   buffer `txt` moved to the first region (`.data.far`), next to the other small state. Confirmed on
   the hardware: the jump works stopped and playing, and the four bars still record. Emulation
   passes (163 checks at that point).
-- Ninth build (this one): the step view **follows the bar that is playing**. `chain_view` replaces
+- Ninth build: the step view **follows the bar that is playing**. `chain_view` replaces
   the step-view paint call in the panel dispatcher (`0x60016C44`), so during playback the working
   copy and the step pads move to each bar as it starts and TR-REC edits the bar you hear; stopped,
   nothing follows. Leaving a bar is free when nobody edited it: `store_save` hashes the working
@@ -495,8 +514,19 @@ writes a side length, a bar or the pattern:
   one side to exactly *n* bars: plain `A + pad n` only grows a side, so a phrase could not be
   shortened without `A+B + pad n` (which also touched the other side) or a reset. Emulation passes
   (198 checks). Hardware check pending.
+- Tenth build (this one): **up to eight bars per side**. The bar index doubles to 128 bytes (16
+  patterns x 8 bars), which the two regions cannot hold, so it lives in patch RAM at
+  `0x60280A00`: the image moves the RTOS pool start from `0x60280988` to `0x60290988` (the
+  motion-poly move, [COMBO.md](COMBO.md)), and `store_init` clears the index, so it needs no
+  zeroing at boot. The log gained a fifth block: the ninth build's four blocks stay at
+  `0x3DC000`-`0x3DFFFF` (now entries 32..159, so its bars are kept) and the log grew downwards to
+  `0x3DB000`, with the scratch block at `0x3DA000`. 128 live entries in 160 slots keep
+  compaction's free-slot invariant. Pads 1..8 select a bar; 9..16 keep their stock function, and
+  LAST STEP still wins. Emulation passes (220 checks). Hardware check pending.
 - Hardware checklist for this build:
-  0. **Freeze check (do this first):** hold VARIATION A alone for a few seconds and release it
+  0. **Boot and freeze check (do this first):** after the update the unit must start normally
+     with its patterns and kits present, save a pattern and take a USB backup (the memory pool is
+     64 KB smaller). Then hold VARIATION A alone for a few seconds and release it
      (the smallest failing case of the previous build); then `A + pad 5` while stopped; then,
      while playing, `A + pad n` and `B + pad n`, releasing A/B each time; then `A+B + pad n`.
      Nothing may freeze, the normal text must come back after each release, and audio must keep
@@ -532,6 +562,12 @@ writes a side length, a bar or the pattern:
      brings bars 3-4 back with their steps (they were hidden, not erased). Repeat with
      `B + CLEAR + pad n`. Plain `A + pad 2` must still only select bar 2 and leave the length
      alone.
+  4e. **Eight bars.** Give A eight bars (`A + pad 1`..`8`): while A is held all eight pads are
+     green and the playing bar blinks yellow, pads 9-16 dark. A plays eight bars and wraps on the
+     ninth. `A + CLEAR + pad 5` shrinks A to five bars (pads 6-8 dark) and `A + CLEAR + pad 8`
+     brings bars 6-8 back with their steps. Repeat with B. Pad 5..8 must be a bar while A/B is
+     held even though they are ordinary step pads otherwise, and LAST STEP + pad 8 must still set
+     the pattern length.
   5. Record different steps into A bar 1, A bar 2 and B bar 1; play A, B and A+B: each bar's own
      steps come back. Select a bar again: the display follows the pad and the steps are restored.
   6. **Stopped bar editing:** with the sequencer stopped, `A + pad 2`, record a step, `A + pad 1`,

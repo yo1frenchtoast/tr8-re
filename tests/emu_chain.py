@@ -3,18 +3,20 @@
 
   python3 tests/emu_chain.py work/patched_chain/appA.bin
 
-A pattern is four bars; each bar has its own A and B step set. The payload keeps a bar's steps in
+A pattern is up to eight bars; each bar has its own A and B step set. The payload keeps a bar's steps in
 a small flash log and makes the bar the working copy (area 4 slot 0) so the stock TR-REC, step
 pads and LAST STEP edit it. Tested here:
 
-  - the gesture: A/B + pad 1..4 selects and paints a bar and makes that side at least that many
+  - the gesture: A/B + pad 1..8 selects and paints a bar and makes that side at least that many
     bars long, A+B + pad sets both sides to n, A+B+CLEAR + pad resets both, through the press
     dispatch (the site that runs on the unit, before the screen) and, as a fallback, through the
     LAST STEP branch of FUN_6001961E.
   - the store: one 128-byte log entry per saved bar (magic, sequence, pattern, bar, LAST_A/B,
     scale and the 26 A/B mask rows), appended through the firmware's raw flash primitives
     (simulated here); the pattern save is redirected, so area 4 slot n+1 keeps the pattern's own
-    steps; compaction, the ring and the 16-bit sequence wrap keep the newest entry per bar.
+    steps; compaction, the ring and the 16-bit sequence wrap keep the newest entry per bar, and
+    the 128 keys (16 patterns x 8 bars) fit the 160-slot log. The bar index itself lives in patch
+    RAM, so the image moves the RTOS pool start by 64 KB.
   - playback: chain_var fills the player struct 0x6012FA64 from the bar's log entry (or from the
     pattern slot when the bar was never recorded); A plays bars 1..Na with A steps, B plays
     1..Nb with B steps, A+B plays the A sequence then the B one.
@@ -58,11 +60,12 @@ HMI = 0x60149B8C                      # panel screen object: low halfword is the
 SETUP_DB = 0x60149F38                 # Setup database handle: writing it corrupts the database
 CNT = 17                              # Ptn2 index for the two side lengths (id 0x138)
 
-# The flash log (chain.c): 4 blocks of 32 entries, 128 bytes each, entry i at FL_BASE + i * 128.
-# The earlier builds put entry i at 0x3DF000 - (i // 32) * 0x1000 + (i % 32) * 128, which covers
-# the same 16 KB, so the same flash content stays readable.
-ENT, EPB, BASE, MAGIC = 128, 32, 0x3DC000, 0x31524256
-TOP = 0x3DF000                      # first block of the old numbering, still used to erase blocks
+# The flash log (chain.c): 5 blocks of 32 entries, 128 bytes each, entry i at FL_BASE + i * 128.
+# The eighth build kept 4 blocks at 0x3DC000..0x3DFFFF, entry i at 0x3DF000 - (i // 32) * 0x1000
+# + (i % 32) * 128: the same bytes in the opposite block order, now entries 32..159, so the same
+# flash content stays readable. Compaction uses the block just below the log.
+ENT, EPB, NBLK, BASE, MAGIC = 128, 32, 5, 0x3DB000, 0x31524256
+NENT, SCR = NBLK * EPB, 0x3DA000
 def ent_off(i):
     return BASE + i * ENT
 
@@ -105,12 +108,12 @@ def entry(i):
     e = list(struct.unpack_from("<32I", FL, o))
     if e[0] != MAGIC or e[3] != crc(e):
         return None
-    return {"pat": (e[1] >> 16) & 0xF, "bar": (e[1] >> 20) & 3, "seq": e[1] & 0xFFFF,
+    return {"pat": (e[1] >> 16) & 0xF, "bar": (e[1] >> 20) & 0xF, "seq": e[1] & 0xFFFF,
             "last": e[2], "scale": e[30] & 3,
             "rows": [(w & 0xFFFF, w >> 16) for w in e[4:30]]}
 
 def entries():
-    return [e for e in (entry(i) for i in range(4 * EPB)) if e]
+    return [e for e in (entry(i) for i in range(NENT)) if e]
 
 def bar_entry(pat, bar):
     found = [e for e in entries() if e["pat"] == pat and e["bar"] == bar]
@@ -234,6 +237,13 @@ expect("build: the payload never references the Setup database object",
 if "--probe" not in sys.argv:
     expect("build: the repaint request names the panel object",
            struct.pack("<I", HMI) in CODE, True)
+    # The 16 patterns x 8 bars index is 128 bytes, which neither code region has: it lives in
+    # patch RAM above the firmware bss, so the image moves the RTOS pool start (literal at
+    # 0x600104A8) by 64 KB. The payload lists the section but does not write it into the image.
+    expect("patch RAM: the RTOS pool start moved from 0x60280988 to 0x60290988",
+           r32(0x600104A8), 0x60290988)
+    expect("patch RAM: the bar index is 128 bytes at 0x60280a00, below the moved pool",
+           [(r["addr"], r["size"]) for r in pay.get("ram", [])], [(0x60280A00, 128)])
 
 # Pad press through the firmware button handler FUN_6001961E(ctx, button id 0..15)
 A, B, LAST, CLEAR = 0x17, 0x18, 0x1A, 0x1C
@@ -424,6 +434,15 @@ else:
     w32(RUN, 0)
     uc.mem_write(S["chain_row"], b"\0\0")
 
+    # Eight bars fill pads 1-8; pad 9 is the first one past the side's last bar.
+    set_counts(8, 0)
+    uc.mem_write(S["chain_row"], b"\0\0")
+    expect("LED: eight bars fill pads 1-8, the head bar 1 blinking yellow",
+           [led_call(0x6001773A, PAD(n), 1, 7, 7, held=(A,)) for n in range(1, 9)],
+           [L(PAD(1), *BLINK)] + [L(PAD(n), *GREEN) for n in range(2, 9)])
+    expect("LED: pad 9 is off past the eighth bar",
+           led_call(0x6001773A, PAD(9), 1, 7, 7, held=(A,)), L(PAD(9), *OFF))
+
     # A side never selected: one default bar is shown; B keeps its own two.
     set_counts(0, 2)
     expect("LED: A side unset -> one default bar",
@@ -554,6 +573,18 @@ expect("press: ... and the recorded bar is still there", (bar_entry(0, 1) or {})
        (0x7777, 0x8888))
 expect("press: A+B+LAST STEP + pad keeps the stock path", press(2, A, B, LAST), [("press", 1)])
 
+# The row covers eight bars: pads 1..8 select a bar, pads 9..16 keep their stock step function.
+uc.mem_write(HMI, b"\0\0")
+expect("press: A + pad 8 shows bar 8 A", edits(press(8, A)), [("text", "  A8")])
+expect("press: ... the A side is now eight bars", pget(CNT), 0x08)
+expect("press: ... and the step pads are marked for repaint", r8(HMI) & 0x04, 0x04)
+expect("press: its release is swallowed", release(8), [])
+expect("press: B + pad 5 shows bar 5 B", edits(press(5, B)), [("text", "  B5")])
+expect("press: ... five B bars beside the eight A bars", pget(CNT), 0x58)
+expect("press: its release is swallowed too", release(5), [])
+expect("press: pads 9..16 still go to the firmware", press(13, A), [("press", 12)])
+expect("press: LAST STEP still wins on pad 8", press(8, A, LAST), [("press", 7)])
+
 # A/B + CLEAR + pad n sets that one side to exactly n bars, so a side can shrink without touching
 # the other. The bars beyond the new length are hidden, not deleted: growing the length again
 # brings them back (the log still holds them).
@@ -638,6 +669,13 @@ expect("A chain: wraps back to bar 1", wrap(), (0, 0, 0))
 expect("A chain: bar 2 again", wrap(), (0, 0, 1))
 set_counts(2, 0)
 expect("A chain: shrunk to two bars, the next wrap starts over at bar 1", wrap(), (0, 0, 0))
+
+# Eight bars: the same rule, seven wraps and back to bar 1.
+set_chain(8, 0)
+expect("A chain: eight bars start on bar 1", start(vari=0), (0, 0, 0))
+for b in range(1, 8):
+    expect(f"A chain: eight bars, bar {b + 1}", wrap(), (0, 0, b))
+expect("A chain: eight bars wrap back to bar 1", wrap(), (0, 0, 0))
 set_chain(3, 0)
 
 # Two bars on side B, selected on the panel.
@@ -872,6 +910,7 @@ w32(slot_addr(0) + 12, 0x0D)
 call(S["chain_commit"], 0, 4, 1, 0)
 set_chain(3, 0)
 w32(VARI, 0)
+uc.mem_write(0x60280A00, b"\xff" * 128)   # patch RAM is not zeroed at boot: store_init must clear it
 cold_boot()
 expect("power cycle: the log is rescanned and bar 2 still has the edit",
        (start(vari=0), wrap(), struct_rows()[5]),
@@ -907,17 +946,18 @@ seed_ram()
 cold_boot()
 w32(SETUP + 8, 0)
 press(1, A)                                   # sync: the patch now owns bar 1
-for i in range(4 * EPB + 5):                  # force a compaction
+for i in range(NENT + 5):                    # force a compaction
     w32(slot_addr(0) + 4 * (4 + 2 * 0), 0x400 + i)
     call(S["chain_commit"], 0, 4, 1, 0)
-expect("log: one entry per bar survives compaction", (bar_entry(0, 0) or {}).get("rows")[0][0], 0x400 + 4 * EPB + 4)
-expect("log: the entries still fit in four blocks", len(entries()) <= 4 * EPB, True)
+expect("log: one entry per bar survives compaction", (bar_entry(0, 0) or {}).get("rows")[0][0], 0x400 + NENT + 4)
+expect("log: the entries still fit in five blocks", len(entries()) <= NENT, True)
 expect("log: bar 1 is still readable after compaction",
        (bar_entry(0, 0) or {}).get("seq") is not None, True)
 
 # --- the ring wraps and blocks are compacted: the newest entry per bar wins ---------
-# 64 keys x 3 rounds is 192 appends, more than the 128 slots, so the write pointer wraps and
+# 128 keys x 2 rounds is 256 appends, more than the 160 slots, so the write pointer wraps and
 # every block is compacted at least once. Each bar carries a distinct marker.
+# (The live set is the worst case: 16 patterns x 8 bars = 128 entries in 160 slots.)
 seed_ram()
 cold_boot()
 # Before the patch has seen a pad (cold boot), a save of a pattern it has not loaded is the
@@ -927,7 +967,7 @@ call(S["chain_commit"], 0, 4, 1, 0)
 expect("save: a pattern the patch has not loaded goes through the stock commit", log, [("commit", 4, 1)])
 
 def marker(rnd, p, b):
-    return (0x1000 + (rnd << 8) + p * 4 + b) & 0xFFFF
+    return (0x1000 + (rnd << 8) + p * 8 + b) & 0xFFFF
 
 def save_bar(rnd, p, b):
     w32(SETUP + 8, p)
@@ -938,34 +978,34 @@ def save_bar(rnd, p, b):
     log.clear()
     call(S["chain_commit"], 0, 4, p + 1, 0)
 
-for rnd in range(3):
+for rnd in range(2):
     for p in range(16):
-        for b in range(4):
+        for b in range(8):
             save_bar(rnd, p, b)
-expect("log: all 64 bars have an entry",
+expect("log: all 128 bars have an entry",
        sorted({(e["pat"], e["bar"]) for e in entries()}),
-       [(p, b) for p in range(16) for b in range(4)])
+       [(p, b) for p in range(16) for b in range(8)])
 
 cold_boot()
 bad = []
 for p in range(16):
-    for b in range(4):
+    for b in range(8):
         w32(SETUP + 8, p)
         w32(SETUP + 0x3C, p)
         press(b + 1, A)                   # loads the bar through the payload's index
-        want = (marker(2, p, b), 0x5000 + marker(2, p, b))
+        want = (marker(1, p, b), 0x5000 + marker(1, p, b))
         if slot_rows(0)[0] != want:
             bad.append(((p, b), slot_rows(0)[0], want))
 expect("log: every bar reads back its newest entry after wrap and compaction", bad, [])
-expect("log: the log still fits in its four blocks", len(entries()) <= 4 * EPB, True)
+expect("log: the log still fits in its five blocks", len(entries()) <= NENT, True)
 expect("flash: no program or erase was issued while the chip was protected", PROTECT["refused"], 0)
 expect("flash: every write session was closed again before returning", PROTECT["left_open"], 0)
 
 # --- the sequence number wraps at 2^16, and a save just after the wrap must be the newest ----
 seed_ram()
-for blk in range(4):
-    fl_erase(0x3DF000 - blk * 0x1000)
-fl_erase(0x3DB000)
+for blk in range(NBLK):
+    fl_erase(BASE + blk * 0x1000)
+fl_erase(SCR)
 def put_entry(i, seq, pat, bar, a, b):
     e = [MAGIC, seq | (pat << 16) | (bar << 20), 0, 0] + [a | (b << 16)] + [0] * 27
     e[3] = crc(e)
@@ -998,13 +1038,13 @@ expect("wrap: the restart runs with the wrap mark set, then the mark is cleared"
 # a program is dropped; inside a session it lands. Without this the test would pass a payload
 # that never opens a write session, which is exactly what happened before.
 uc.mem_write(0x7000E800, b"\0\0\0\0")
-fl_erase(0x3DA000)
+fl_erase(0x3D8000)
 PROTECT["on"] = True
-fl_prog(0x3DA000, 4, 0x7000E800, through_chip=True)
-dropped = FL[0x3DA000:0x3DA004]
+fl_prog(0x3D8000, 4, 0x7000E800, through_chip=True)
+dropped = FL[0x3D8000:0x3D8004]
 PROTECT["on"] = False
-fl_prog(0x3DA000, 4, 0x7000E800, through_chip=True)
+fl_prog(0x3D8000, 4, 0x7000E800, through_chip=True)
 expect("flash model: a protected chip drops a program, an open session accepts it",
-       (dropped, FL[0x3DA000:0x3DA004]), (b"\xff" * 4, b"\0\0\0\0"))
+       (dropped, FL[0x3D8000:0x3D8004]), (b"\xff" * 4, b"\0\0\0\0"))
 
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)

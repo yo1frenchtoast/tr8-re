@@ -42,16 +42,19 @@ has 16 step buttons. The step engine limit comes from `LAST_A`/`LAST_B` and the 
 (`FUN_600525F8`). A 32-step view would also need a page selector the panel does not have.
 
 The useful part of the feature is a longer **arrangement**, and that is implemented as the bar
-chain ([CHAIN.md](CHAIN.md)): each pattern plays up to four bars, each with its own A and B step
-set, painted with VARIATION A/B + pad 1..4 and saved with the pattern. Bars are independent
+chain ([CHAIN.md](CHAIN.md)): each pattern plays up to eight bars, each with its own A and B step
+set, painted with VARIATION A/B + pad 1..8 and saved with the pattern. Bars are independent
 content, not replays of the pattern's two passes: the selected bar is loaded into the working copy
 so TR-REC records it, and the pattern save is redirected to an append-only log in unused flash
-(`0x3DB000`-`0x3DFFFF`), which leaves the pattern's own steps intact as the default for unrecorded
+(`0x3DA000`-`0x3DFFFF`), which leaves the pattern's own steps intact as the default for unrecorded
 bars. Each side of a pattern has its own length: A plays bars 1..Na with its A steps, B plays
 1..Nb with its B steps, and A+B plays the A sequence then the B sequence. Each pattern keeps its
-own four bars and its own two lengths, so switching pattern switches the phrases. It is
-emulation-tested (198 checks, including a simulated power cycle, log compaction and the chip's
-write protection); the step engine is untouched and no pattern slot is spent on a bar. While
+own eight bars and its own two lengths, so switching pattern switches the phrases. Its 128-byte
+bar index does not fit the two code regions, so the image moves the RTOS pool start by 64 KB
+(0x60280988 -> 0x60290988) and keeps the index in patch RAM — the move the motion-poly build
+already ran on the unit. It is emulation-tested (220 checks, including a simulated power cycle, log
+compaction and the chip's write protection); the step engine is untouched and no pattern slot is
+spent on a bar. While
 VARIATION A or B is held, the pads show that side's bars: green, with the playing bar blinking
 yellow, and the remaining pads dark, so only the bars that side has are lit; releasing the button
 returns the pads to whatever the screen was showing, on any screen, and the row keeps working

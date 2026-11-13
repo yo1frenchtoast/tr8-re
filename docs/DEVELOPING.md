@@ -113,7 +113,9 @@ Rules for payload code:
 
 The developer dump cave holds 788 + 1838 bytes. The motion patch alone uses most of it; the
 `motion-poly` patch moves all zeroed data to 64 KB of patch RAM taken from the RTOS pool
-([COMBO.md](COMBO.md)) and leaves about 1.5 KB of code space. Data that must survive power off
+([COMBO.md](COMBO.md)) and leaves about 1.5 KB of code space. A single patch can make the same
+move when its state does not fit either region: `chain` keeps its 128-byte bar index above the
+firmware bss that way. Data that must survive power off
 can go in unused pattern parameters, as the poly patch does ([POLY.md](POLY.md) "Storage").
 A larger feature needs either a new free region (find dead code, replace its call sites with
 `nop.w`, keep its literal pools) or the "grow the image" method, which is designed but not yet

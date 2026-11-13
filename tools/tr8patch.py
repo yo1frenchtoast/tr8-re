@@ -79,11 +79,12 @@ PATCHES["poly"] = {
 }
 
 # Bar chain (patches/chain/chain.c, docs/CHAIN.md).
-# Four bars per pattern, each with its own A and B step set: A/B + pad 1..4 selects the bar and
-# grows that side's sequence, A+B + pad sets both lengths. Same free regions as motion and poly:
-# standalone.
+# Up to eight bars per pattern, each with its own A and B step set: A/B + pad 1..8 selects the bar
+# and grows that side's sequence, A+B + pad sets both lengths. Same free regions as motion and
+# poly: standalone. The 128-byte bar index lives in patch RAM, so the RTOS pool start moves by
+# 64 KB (the motion-poly move).
 PATCHES["chain"] = {
-    "doc": "Bar chain: A/B + pad 1..4 selects a bar and sets its side's length, A+B + pad both (docs/CHAIN.md)",
+    "doc": "Bar chain: A/B + pad 1..8 selects a bar and sets its side's length, A+B + pad both (docs/CHAIN.md)",
     "payload": "patches/chain/payload.json",
     "allowed": [(0x60011150, 0x60011464), (0x60011488, 0x60011BB6)],
     "keep": [(0x60011464, 0x60011484)],
@@ -100,6 +101,7 @@ PATCHES["chain"] = {
         (0x60017E18, thumb_bl(0x60017E18, 0x6004BB4C), "chain_led4"),  # raw pad setter (copy)
         (0x60017E3A, thumb_bl(0x60017E3A, 0x6004BB4C), "chain_led4"),  # palette pad setter (copy)
         (0x6001B7F4, thumb_bl(0x6001B7F4, 0x6000FC78), "chain_commit"), # pattern save: store the bar, not the slot
+        (0x600104A8, struct.pack("<I", 0x60280988), struct.pack("<I", 0x60290988)),  # RTOS pool +64 KB: patch RAM
     ],
 }
 
@@ -108,7 +110,8 @@ PATCHES["chain"] = {
 PATCHES["chain-probe"] = dict(PATCHES["chain"],
                               doc="Bar chain hardware probe: pads and modifiers on the display (no edits)",
                               payload="patches/chain/payload_probe.json",
-                              sites=[s for s in PATCHES["chain"]["sites"] if s[2] != "chain_view"] + [
+                              sites=[s for s in PATCHES["chain"]["sites"]
+                                     if s[2] != "chain_view" and s[0] != 0x600104A8] + [
                                   (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),
                               ])
 
@@ -167,7 +170,7 @@ def apply(app, spec):
         app[a - BASE:a - BASE + len(data)] = data
         print(f"  {r['section']:8s} 0x{a:08x} {len(data)} bytes")
     for r in pay.get("ram", []):
-        print(f"  {r['section']:8s} 0x{r['addr']:08x} {r['size']} bytes (patch RAM, zeroed at boot)")
+        print(f"  {r['section']:8s} 0x{r['addr']:08x} {r['size']} bytes (patch RAM, not in the image)")
     for addr, _, repl in spec["sites"]:
         print(f"  site     0x{addr:08x} -> {repl.hex() if isinstance(repl, bytes) else repl}")
     return app
