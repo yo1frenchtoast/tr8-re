@@ -670,7 +670,8 @@ writes a side length, a bar or the pattern:
   pass refilled the player struct from the bar cache, which is refreshed only when the bar is
   stored. The bar in the working copy now plays from the working copy (`wc_bar`, see "Storage").
   Emulation: 262 chain checks, including a one-bar sequence edited while it plays (fails on
-  the twelfth build). Hardware: not tested yet.
+  the twelfth build). Hardware: passed (2026-11-13, `motion-poly-chain`): a step entered in
+  TR-REC while a one-bar or two-bar sequence plays is heard at the bar's next pass.
 
 ## Hardware test (2026-11-13): the tenth build passed
 

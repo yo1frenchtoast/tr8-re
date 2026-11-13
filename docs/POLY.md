@@ -23,7 +23,7 @@ Flash as described in [UPDATE.md](UPDATE.md) (back up first).
 | Hold LAST STEP + several instrument buttons, press a pad | All of them get that length |
 | Hold LAST STEP, press a pad (no instrument button) | Normal: sets the pattern length |
 | Hold LAST STEP + an instrument that has a length | The step LEDs show that instrument like the pattern-length view: steps inside its length green, its play position blinking while playing, the other steps off |
-| In TR-REC, select an instrument that has a length | The LAST STEP button blinks (not tested on the unit yet, see hardware test 5) |
+| In TR-REC, select an instrument that has a length | The LAST STEP button blinks |
 | Change pattern | The lengths of that pattern apply |
 | Power off and on | The lengths are kept |
 
@@ -83,7 +83,7 @@ when an instrument button or a pad is pressed (flag bit 0x4).
 caller. With LAST STEP released it sets LED 9 (LAST STEP), lit when the pattern is shorter than 16
 steps [code]. In TR-REC (Setup[0] = 0), when the selected row (Setup[7] = row button - `0x1D`) is
 an instrument with a length, it sets `(9, a = 1, b = 0)` instead: `b = 0` is the blink flag of the
-step pads [unit, CHAIN.md], used here on a button LED [hyp]. Any other id (LED 7 while LAST STEP is
+step pads [unit, CHAIN.md], and it blinks the LAST STEP button too [unit, hardware test 5]. Any other id (LED 7 while LAST STEP is
 held) passes through. A row press sets the repaint bits `0x16`, which include `0x02` [code].
 
 ### Storage
@@ -177,7 +177,7 @@ Use a pattern you can change (for example pattern 16). Flash the build, then:
 | 7 | Flams and weak accent of that pattern | Unchanged |
 | 8 | Optional: USB backup then restore | Patterns OK. Lengths after restore: not reported yet |
 
-## Hardware test 5 (LAST STEP blinks): not done yet
+## Hardware test 5 (LAST STEP blinks): passed
 
 Set CH to 3 steps (LAST STEP + CH + pad 3), leave BD without a length. Pattern length 16.
 
@@ -220,4 +220,4 @@ Set CH to 3 steps (LAST STEP + CH + pad 3), leave BD without a length. Pattern l
   change, survive power off, LOFF is saved too, flams and weak accent unchanged.
 - LAST STEP blinks in TR-REC when the selected instrument has a length (`poly_lsled`, first
   `b.w` hook site: `tools/tr8patch.py` and the web flasher take `"b:symbol"`). Emulation tests
-  pass; hardware test 5 pending.
+  pass. Hardware test 5 (2026-11-13, `motion-poly-chain`): passed, every check as described.

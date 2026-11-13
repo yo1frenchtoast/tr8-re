@@ -266,8 +266,8 @@ typedef void (*tr8_led_set_fn)(void *obj, int led, int a, int b, int c);
 
 /* Button LED setter FUN_60017722(id, a, b) = FUN_6004BB4C(LED object, id, a, b, 0). The panel
  * repaint FUN_600169A4 lights LAST STEP (id 9) with a = 1, b = 9 when the pattern is shorter
- * than 16 steps [code]. b = 0 is the blink flag on the step pads [unit, CHAIN.md]; on a button
- * LED [hyp]. */
+ * than 16 steps [code]. b = 0 is the blink flag on the step pads [unit, CHAIN.md] and on the
+ * LAST STEP button [unit, POLY.md hardware test 5]. */
 typedef void (*tr8_led3_fn)(int id, int a, int b);
 #define TR8_FN_LED3    ((tr8_led3_fn)0x60017723)                 /* [code] FUN_60017722          */
 #define TR8_LED_LASTSTEP 9                                       /* [code]                       */

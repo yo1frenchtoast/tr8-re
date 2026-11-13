@@ -575,8 +575,8 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   held `(9, 3, 9)`, or `(9, 1, 9)` when Setup[3] = -1 (what `a = 3` looks like is not known). LEDs
   `6`/`7` are set next to it (variation A/B) [hyp], `8` and `0x42 + n` (n = 0..3, the scale) [hyp]. The
   last LED call of that repaint is a tail call (`b.w` at `0x60016B56`). `b = 0` blinks a pad
-  (play colour `(1, 0, 2)`) [unit]; that it also blinks a button LED is the guess of the poly
-  LAST STEP hook ([POLY.md](POLY.md), hardware test 5). [code]
+  (play colour `(1, 0, 2)`) [unit] and the LAST STEP button LED `(9, 1, 0)` [unit: the poly
+  LAST STEP hook, [POLY.md](POLY.md) hardware test 5]. [code]
 - **Step/pad pads and the palette.** Pads (step LEDs) are ids `0x1D`+step (`0x1D`-`0x2C`). All
   screens paint them through four small setters, and every one of them ends in
   `bl FUN_6004BB4C`, a veneer to the fast-code LED function `0x01000537` called as
