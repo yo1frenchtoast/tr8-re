@@ -154,8 +154,11 @@ waits). The sequencer's entry jumps into the `task_frame` event loop (`0x6001256
 handler `FUN_60008F6C` calls the clock tick `FUN_6000989C` at `0x600090D0`. [code]
 
 **The clock tick also runs in the panel task.** The button handler `FUN_6001961E` (panel task)
-calls `FUN_600099B6`, which calls `FUN_6000989C`, at `0x60019830` (button 0x1B, when Setup[0x15]
-is set and button 0x2E is held; section 9). Everything the tick calls, the restart
+calls `FUN_600099B6`, which calls `FUN_6000989C`, at `0x60019830` (START/STOP `0x1B` while
+playing, with button 0x2E held; section 9). `FUN_600099B6` is a restart on the fly: stop
+(`FUN_6000969A`), MIDI Stop, start (`FUN_6000964E`), MIDI Start, then one tick. `FUN_6000D590` and
+`FUN_6000D57C` around the start only post MIDI `0xFC`/`0xFA`: nothing in it stops the sequencer
+task (priority 10) from preempting the panel (15). Everything the tick calls, the restart
 `FUN_600095F0` included, can therefore run in either task. [code]
 
 Rule for patches: change parameters from the panel task, or post an event (section 8) so the
@@ -291,7 +294,7 @@ asks the range (vtable +0x1C), clamps, reads the current value (+0x08) and write
 (+0x18).
 
 Known Setup indexes: 0 = panel mode (section 9), 6 = master volume, 0x13 = tempo fine (-10..+10),
-0x14 = shuffle (0..100), 0x15 = toggled by button 0x1B [hyp: sync/start state].
+0x14 = shuffle (0..100), 0x15 = playing, toggled by START/STOP [code: the toggle sends MIDI Start `0xFA` or Stop `0xFC`].
 
 ## 7. Sequencer
 
@@ -476,7 +479,7 @@ handler is `FUN_6001961E(ctx, id)`:
 | 0x12-0x16 | Mode buttons: Setup[0] = 1..5 (0x13 gives 8 while 0x11 is held) | code |
 | 0x17, 0x18 | Write `VARI` = 0/1/2 (variation A, B, A+B) | hyp |
 | 0x19 | Cycles `SCALE` 0..3 | code |
-| 0x1B | Toggles Setup[0x15], may call the sequencer (`FUN_600099B6`) | unclear |
+| 0x1B | **START/STOP**: toggles Setup[0x15] (playing) and sends MIDI Start `0xFA` / Stop `0xFC` (`FUN_60006A94`). While playing with button 0x2E held, it restarts the pattern on the fly instead (`FUN_600099B6`, from the panel task, section 5). Which button 0x2E is: not known | code |
 | 0x1A | **LAST STEP** (modifier). A step pad with it held calls `FUN_6001B8D6(obj, pad)` (`0x60019A10`), which sets `LAST_A`/`LAST_B` (Ptn index 2 + variation) | **unit** (POLY.md test 2) |
 | 0x1C | **CLEAR** (modifier). With CLEAR held, an instrument button clears its row (`FUN_600193E0`); `FUN_600192BA` (clear a step) also needs it | **unit** |
 | 0x1D-0x2B | Row buttons: 0x1D-0x20 = AC RV EC SC; 0x21-0x2B = instruments BD SD LT MT HT **HC RS** CH OH CC RC: RS and HC are swapped compared with the pattern/player order (POLY.md test 2) | **unit** (RS/HC), code (others) |
