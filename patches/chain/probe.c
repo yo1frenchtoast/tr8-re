@@ -107,3 +107,9 @@ int chain_pad_c(int pad)
              TR8_BTN_HELD(TR8_BTN_LAST_STEP) == 1);
     return 0;                              /* handled and ignored: never edit anything */
 }
+
+/* Same site as chain.c (the redirect of the pattern save): the probe never redirects. */
+void chain_commit(int a, int area, int slot, int b)
+{
+    TR8_FN_COMMIT(a, area, slot, b);
+}

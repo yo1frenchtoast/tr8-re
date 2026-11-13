@@ -79,10 +79,10 @@ PATCHES["poly"] = {
 }
 
 # Bar chain (patches/chain/chain.c, docs/CHAIN.md).
-# More than two bars per pattern: A/B + pad paints a bar, A+B + pad sets the length.
-# Same free regions as motion and poly: cannot be combined with them yet.
+# Four bars per pattern, each with its own A and B step set: A/B + pad 1..4 selects the bar and
+# its side, A+B + pad sets the length. Same free regions as motion and poly: standalone.
 PATCHES["chain"] = {
-    "doc": "Bar chain: A/B + pad paints a bar, A+B + pad sets the length (docs/CHAIN.md)",
+    "doc": "Bar chain: A/B + pad 1..4 selects a bar and its side, A+B + pad the length (docs/CHAIN.md)",
     "payload": "patches/chain/payload.json",
     "allowed": [(0x60011150, 0x60011464), (0x60011488, 0x60011BB6)],
     "keep": [(0x60011464, 0x60011484)],
@@ -94,6 +94,7 @@ PATCHES["chain"] = {
         (0x60013842, thumb_bl(0x60013842, 0x60013B34), "chain_press"),  # button press: before the screen
         (0x600137D2, thumb_bl(0x600137D2, 0x60013B56), "chain_release"),# matching release of that pad
         (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),    # LAST STEP pad branch: keep it stock
+        (0x6001B7F4, thumb_bl(0x6001B7F4, 0x6000FC78), "chain_commit"), # pattern save: store the bar, not the slot
     ],
 }
 

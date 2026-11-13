@@ -4,7 +4,7 @@
 # Needs clang + ld.lld (LLVM). The patcher itself does not.
 set -euo pipefail
 cd "$(dirname "$0")"
-SYMS="chain_var chain_wrap chain_pad chain_pad_c chain_press chain_release chain_pos chain_wrapping chain_swallow"
+SYMS="chain_var chain_wrap chain_pad chain_pad_c chain_press chain_release chain_commit chain_pos chain_wrapping chain_swallow"
 
 # ld.lld if it is on PATH, else the copy that ships with a Rust toolchain (rust-lld -flavor gnu).
 LD=""

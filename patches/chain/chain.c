@@ -1,93 +1,316 @@
 /*
- * TR-8 v1.61 bar chain: play a pattern as a sequence of bars taken from the patterns.
+ * TR-8 v1.61 bar chain: a pattern becomes four bars, each with its own A and B step set.
  *
- * Panel: hold VARIATION A and press step pad n -> bar n plays variation A of pattern n.
- *        hold VARIATION B and press step pad n -> bar n plays variation B of pattern n.
- *        hold VARIATION A + B and press step pad n -> the chain is n bars long.
- *        hold VARIATION A + B + CLEAR and press a pad -> chain off (stock A/B behaviour).
- * The numeric display confirms each step ("  3A", " 12B", "CH 4", "CH12", "CH--").
+ * Panel (per pattern; nothing is carried to another pattern):
+ *   hold VARIATION A, press pad 1..4 -> bar n is the working copy and plays its A steps.
+ *   hold VARIATION B, press pad 1..4 -> the same bar, its B steps.
+ *   hold A + B, press pad 1..4       -> the chain is n bars long.
+ *   hold A + B + CLEAR, press a pad  -> chain off (stock single-bar A/B).
+ *   The numeric display confirms each gesture ("  1A", "  4B", "CH 4", "CH--").
  *
- * A bar is a pattern variation: 16 patterns x 2 variations = a pool of 32 bars, shared by all
- * songs. The song is the chain in the current pattern's spare Ptn2 ids (see "Storage"), and bar
- * n is pattern n (pattern 1 = pad 1). So "A + pads 1..4, then B + pads 5..8" gives an eight-bar
- * song: four A bars from patterns 1..4 and four B bars from patterns 5..8, each bar with its
- * own steps, scale and length.
+ * So pattern 1 keeps four private bars (A and B steps each), pattern 2 the same, and each
+ * pattern's chain is its own 4-bar phrase. A bar that has never been recorded is the pattern
+ * itself (its A steps for the A side, its B steps for the B side), so a pattern sounds exactly
+ * as before until a bar is edited.
  *
- * A plain A or B press still selects that variation for editing and playback, exactly as
- * before; A+B plays the chain (stock: alternates A/B, which is the chain A,B). Painting a bar
- * sets the panel to that bar's variation, so the song is heard by pressing A+B after painting.
+ * How the firmware is made to do this (docs/CHAIN.md, docs/FINDINGS.md section 7):
+ *   The working copy of a pattern is area 4 slot 0; TR-REC, the step pads and LAST STEP all
+ *   write it. To edit bar n we copy that bar's stored content into slot 0 (masks, LAST_A,
+ *   LAST_B, scale, VARI) and the panel is then editing bar n. Selecting a bar saves the one we
+ *   leave.
+ *   Playback never switches patterns: chain_var replaces "bl FUN_6000E404" inside the restart
+ *   FUN_600095F0 (start and every wrap), picks the bar and its A/B side, fills the player struct
+ *   0x6012FA64 from the bar's content and applies the masks with FUN_6000E152.
+ *   chain_wrap replaces the wrap call (0x600098CA) and marks the restart as a wrap, so a start
+ *   begins at bar 1 and a wrap advances one bar.
+ *   The gesture lives on the press dispatch (0x60013842, before the screen): the screen takes a
+ *   bare pad press, so the global button handler never sees it (see the first hardware build).
+ *   chain_release swallows the matching release; chain_pad keeps the LAST STEP path stock.
  *
- * How (docs/CHAIN.md, docs/FINDINGS.md section 7):
- *   FUN_600095F0 restarts the pattern (sequencer start and every pattern wrap). It fills the
- *   player struct 0x6012FA64 from area 4 slot 0, then FUN_6000E404 applies the variation:
- *   if VARI (+0x0c) is 2 it toggles the effective variation (+0x10), else it stores VARI, then
- *   FUN_6000E152 re-applies the step masks to the sound. The last step used for the new pass is
- *   read after that with FUN_600525F8 (LAST_A at +0x14, LAST_B at +0x18, picked by +0x10), so
- *   the variation and the masks have to be in the struct before FUN_600095F0 returns.
- *   chain_var replaces "bl FUN_6000E404" inside FUN_600095F0: with a chain and VARI = 2 it
- *   picks the bar's variation, fills the struct from the bar's pattern slot and applies it;
- *   otherwise it calls the original.
- *   chain_wrap replaces the "bl FUN_600095F0" of the wrap path (0x600098CA) and marks the
- *   restart as a wrap. Both start paths (0x600091A2, 0x600098E4) go through the same
- *   function: without the mark the chain restarts at bar 1.
- *   chain_press replaces the "bl FUN_60013B34" at 0x60013842, the first thing the button press
- *   event does after setting the held bit. That is *before* the screen is offered the press:
- *   the screen takes a bare pad press (step edit / sound), and the global button handler
- *   FUN_6001961E only sees the presses the screen declines (LAST STEP + pad, variation A/B).
- *   That is why the gesture cannot live in FUN_6001961E: on the unit it never got there.
- *   chain_release replaces the matching "bl FUN_60013B56" at 0x600137D2 so a swallowed press
- *   is not followed by a release the screen never saw a press for.
- *   chain_pad still replaces the "bl FUN_60013168" (LAST STEP check) at the head of the
- *   step-pad branch of FUN_6001961E: it keeps the stock LAST STEP path (return 1) and is a
- *   fallback if a press ever reaches that branch with A/B held.
- *
- * Editing a bar means editing its pattern: the working copy (area 4 slot 0) has to hold the
- * bar's pattern, or TR-REC would record into the wrong one. So the gesture saves the pattern it
- * leaves (area 4 and area 6, FUN_6000FC78, the firmware's own pattern save), copies the bar's
- * slots into slot 0 (FUN_6000F3C2/F3EC, the firmware's own slot copy) and points
- * Setup[2]/Setup[0xF] at it, so the panel shows the bar's pattern. area 6 is loaded too, so the
- * weak accents, the flams and the next save stay consistent; the song (which also lives in area
- * 6) is written again afterwards, so it moves with the selection. Playback never switches
- * patterns: chain_var reads the bar's slot and fills the struct, so the song is not disturbed.
- *
- * Storage: the chain is two Ptn2 parameters of the current pattern, the unnamed ids that no code
- * reads but the firmware stores with every pattern (POLY.md "Storage"):
- *   index 15 (id 0x136): bit n = bar n+1 plays variation B (0 = A)
- *   index 16 (id 0x137): 0 = no chain, 1..16 = number of bars
- * The chain is saved with the pattern like any other edit, and every gesture carries it to the
- * pattern it selects (the one the panel shows), so the last painted bar's pattern holds the
- * whole song. The poly patch uses indices 4..14 (ids 0x12B..0x135) and leaves these two alone.
- *
- * Limit: only the step content moves with a bar (masks, scale, LAST STEP, variation). The kit
- * stays with the current pattern.
+ * Storage: the pattern's own step content is the pattern record (area 4), which stays the
+ * source of the default bar. Extra bars live in a small log in the unused flash between the
+ * application image and the user area (0x3DB000..0x3DFFFF, see docs/CHAIN.md "Storage"):
+ *   entry (128 bytes): magic, seq | pattern << 16 | bar << 20, LAST_A | LAST_B << 8, checksum,
+ *   then 26 words, one per step row: A mask | B mask << 16, then the scale.
+ * The log is append-only, so an edit costs one 128-byte program (no erase, the pattern is
+ * never lost by a torn write); a full block is compacted into the scratch block. The pattern
+ * commit is redirected: instead of copying the working copy into area 4 slot n+1, the entry
+ * for (pattern, bar) is appended, which is why slot n+1 keeps the pattern's original A/B steps
+ * and can serve as the default for a bar that was never recorded.
  */
 #include "tr8_v161.h"
 
+#define NBARS  4
+#define ROWS   26
 #define CHAIN_BITS 15
 #define CHAIN_LEN  16
-#define PTN_MASKS  26
+
+/* ---------------------------------------------------------------- flash log */
+
+#define FL_TOP 0x3DF000u          /* first block; blocks go down from here */
+#define FL_SCR 0x3DB000u          /* scratch block for compaction          */
+#define NBLK   4
+#define EPB    32                 /* entries per 4 KB block                */
+#define NENT   (NBLK * EPB)
+#define ENTW   32                 /* words per entry                       */
+#define ENTB   (ENTW * 4)
+#define EMAGIC 0x31524256u
+
+typedef void (*fl_prog_fn)(uint32_t off, int len, const void *src);
+typedef void (*fl_read_fn)(uint32_t off, int len, void *dst);
+typedef void (*fl_erase_fn)(uint32_t off);
+/* Raw flash (FINDINGS section 6): offsets from 0x03000000, program <= 0x100 bytes, erase one
+ * 4 KB block. The stock code wraps these in FUN_60003E02/FUN_60003DB0; each call already
+ * saves and restores the flash mapping, so they are used directly here. */
+#define F_PROG  ((fl_prog_fn)0x60003E55)
+#define F_READ  ((fl_read_fn)0x60003EA3)
+#define F_ERASE ((fl_erase_fn)0x60003EDB)
 
 uint8_t chain_pos;        /* bar being played, 0..len-1 */
 uint8_t chain_wrapping;   /* set by chain_wrap around the FUN_600095F0 call */
 uint16_t chain_swallow;   /* pads whose press we took: their release is swallowed too */
 
+static uint8_t tab[NBARS * 16];  /* newest entry index + 1 per (pattern, bar), 0 = none */
+static uint8_t wr_i;             /* next log entry */
+static uint16_t seqn;            /* last sequence number written */
+static uint8_t inited;           /* the log has been scanned */
+static uint8_t cur_pat = 0xFF;   /* pattern whose bar is in the working copy, 0xFF = unknown */
+static uint8_t cur_bar;          /* bar in the working copy */
+
+static uint32_t ebuf[ENTW];
+
+static volatile uint32_t *area_slot(int area, int slot);
+
+static uint32_t ent_off(int i)
+{
+    return FL_TOP - (uint32_t)(i / EPB) * 0x1000u + (uint32_t)(i % EPB) * ENTB;
+}
+
+static uint32_t ecrc(const uint32_t *e)
+{
+    uint32_t h = 0x811C9DC5u;
+    int i;
+    for (i = 0; i < ENTW; i++)
+        if (i != 3)
+            h = (h ^ e[i]) * 0x01000193u;
+    return h;
+}
+
+static int eok(const uint32_t *e)
+{
+    return e[0] == EMAGIC && e[3] == ecrc(e);
+}
+
+static int e_is(const uint32_t *e, int pat, int bar)
+{
+    return eok(e) && (int)((e[1] >> 16) & 0xF) == pat && (int)((e[1] >> 20) & 3) == bar;
+}
+
+/* Scan the log once: the newest entry per bar, and where to append. The newest entry of a bar
+ * is not always the last one in address order: after the ring wraps or a block is compacted, an
+ * older duplicate can sit above a newer entry. Sequence numbers decide, compared modulo 2^16 so
+ * that the wrap from 0xFFFF to 0 keeps working (entries that coexist in the log are at most a
+ * few hundred saves apart). */
+static void store_init(void)
+{
+    int i, k, best = 0;
+    uint16_t bseq = 0;
+    uint32_t w;
+
+    for (i = 0; i < NBARS * 16; i++)
+        tab[i] = 0;
+    for (i = 0; i < NENT; i++) {
+        F_READ(ent_off(i), ENTB, ebuf);
+        if (!eok(ebuf))
+            continue;
+        k = (int)((ebuf[1] >> 16) & 0xF) * NBARS + (int)((ebuf[1] >> 20) & 3);
+        w = ebuf[1] & 0xFFFF;
+        if (!best || (int16_t)(w - bseq) > 0) { bseq = (uint16_t)w; best = i + 1; }
+        if (!tab[k]) {
+            tab[k] = (uint8_t)(i + 1);
+            continue;
+        }
+        F_READ(ent_off(tab[k] - 1), ENTB, ebuf);   /* the entry known so far */
+        if (eok(ebuf) && (int16_t)(w - (ebuf[1] & 0xFFFF)) > 0)
+            tab[k] = (uint8_t)(i + 1);
+    }
+    seqn = bseq;
+    wr_i = (uint8_t)(best % NENT);
+    inited = 1;
+}
+
+/* Move the live entries of the block with the fewest of them out of the way, erase it, put them
+ * back at its start and continue there. There are at most 64 live entries (16 patterns x 4 bars),
+ * so this block always ends up with fewer than EPB of them and keeps a free slot: compacting the
+ * block at the write pointer would not help when all of its entries are live. */
+static void store_gc(void)
+{
+    uint8_t pr[EPB];
+    int i, p, n = 0, blk, b, cnt, bestn = EPB + 1;
+
+    for (b = 0; b < NBLK; b++) {
+        cnt = 0;
+        for (p = 0; p < NBARS * 16; p++) {
+            int d = (int)tab[p] - 1;
+            if (tab[p] && d >= b * EPB && d < (b + 1) * EPB)
+                cnt++;
+        }
+        if (cnt < bestn) { bestn = cnt; blk = b; }
+    }
+    F_ERASE(FL_SCR);
+    for (i = 0; i < EPB; i++) {
+        int idx = blk * EPB + i;
+        for (p = 0; p < NBARS * 16; p++)
+            if (tab[p] == idx + 1)
+                break;
+        if (p == NBARS * 16)
+            continue;
+        F_READ(ent_off(idx), ENTB, ebuf);
+        F_PROG(FL_SCR + (uint32_t)n * ENTB, ENTB, ebuf);
+        pr[n++] = (uint8_t)p;
+    }
+    F_ERASE(FL_TOP - (uint32_t)blk * 0x1000u);
+    for (i = 0; i < n; i++) {
+        F_READ(FL_SCR + (uint32_t)i * ENTB, ENTB, ebuf);
+        F_PROG(ent_off(blk * EPB + i), ENTB, ebuf);
+        tab[pr[i]] = (uint8_t)(blk * EPB + i + 1);
+    }
+    wr_i = (uint8_t)(blk * EPB + n);
+}
+
+/* Append the working copy (area 4 slot 0) as bar `bar` of pattern `pat`. */
+static void store_save(int pat, int bar)
+{
+    volatile uint32_t *s = area_slot(TR8_AREA_PATTERN, 0);
+    int i;
+    uint32_t idx;
+
+    if (!inited)
+        store_init();
+    idx = wr_i;
+    F_READ(ent_off((int)idx), 4, ebuf);
+    if (ebuf[0] != 0xFFFFFFFFu) {          /* block still in use: reclaim one */
+        store_gc();
+        idx = wr_i;
+    }
+    ebuf[0] = EMAGIC;
+    ebuf[1] = (uint32_t)(++seqn & 0xFFFF) | ((uint32_t)pat << 16) | ((uint32_t)bar << 20);
+    ebuf[2] = (s[2] & 0xFF) | ((s[3] & 0xFF) << 8);
+    for (i = 0; i < ROWS; i++)
+        ebuf[4 + i] = (s[4 + 2 * i] & 0xFFFF) | ((s[5 + 2 * i] & 0xFFFF) << 16);
+    ebuf[30] = s[1] & 3;              /* scale: the redirect never writes the pattern slot */
+    ebuf[31] = 0;                     /* the two words after the rows are part of the checksum */
+    ebuf[3] = ecrc(ebuf);
+    F_PROG(ent_off((int)idx), ENTB, ebuf);
+    tab[pat * NBARS + bar] = (uint8_t)(idx + 1);
+    wr_i = (uint8_t)((idx + 1) % NENT);
+}
+
+/* ---------------------------------------------------------------- pattern view */
+
+/* Value words of a parameter slot: slot 0 is the working copy, slot n+1 is pattern n. */
+static volatile uint32_t *area_slot(int area, int slot)
+{
+    uint32_t ctx[3];
+    TR8_FN_PCTX(ctx, area, slot);
+    return (volatile uint32_t *)ctx[0];
+}
+
+/* Load a bar into the working copy: the log entry if there is one, else the pattern's own
+ * steps (area 4 slot pat+1), which the redirect in chain_commit keeps untouched. */
+static void slot_load(int pat, int bar, int side)
+{
+    volatile uint32_t *d = area_slot(TR8_AREA_PATTERN, 0);
+    volatile uint32_t *src;
+    uint8_t idx = tab[pat * NBARS + bar];
+    int i;
+
+    if (idx) {
+        F_READ(ent_off(idx - 1), ENTB, ebuf);
+        if (e_is(ebuf, pat, bar)) {
+            for (i = 0; i < ROWS; i++) {
+                d[4 + 2 * i] = ebuf[4 + i] & 0xFFFF;
+                d[5 + 2 * i] = ebuf[4 + i] >> 16;
+            }
+            d[1] = ebuf[30] & 3;
+            d[2] = ebuf[2] & 0xFF;
+            d[3] = (ebuf[2] >> 8) & 0xFF;
+            d[0] = (uint32_t)side;
+            return;
+        }
+    }
+    src = area_slot(TR8_AREA_PATTERN, pat + 1);
+    for (i = 0; i < 56; i++)
+        d[i] = src[i];
+    d[0] = (uint32_t)side;
+}
+
+/* Fill the player struct from the working copy (the bar being edited). */
+static void struct_slot0(void)
+{
+    volatile uint32_t *s = area_slot(TR8_AREA_PATTERN, 0);
+    volatile uint8_t *d = TR8_PTN_STRUCT;
+    int i;
+
+    for (i = 0; i < ROWS; i++) {
+        int off = i < 4 ? 0x20 + 4 * i : 0x30 + 6 * (i - 4);
+        *(volatile uint16_t *)(d + off) = (uint16_t)s[4 + 2 * i];
+        *(volatile uint16_t *)(d + off + 2) = (uint16_t)s[5 + 2 * i];
+    }
+    *(volatile uint32_t *)(d + TR8_PTN_LAST_A) = s[2];
+    *(volatile uint32_t *)(d + TR8_PTN_LAST_B) = s[3];
+    TR8_FN_SCALE((void *)d, (int)s[1]);
+}
+
+/* Fill the player struct from bar `bar` of pattern `pat`, without touching the working copy. */
+static void struct_bar(int pat, int bar)
+{
+    volatile uint32_t *def = area_slot(TR8_AREA_PATTERN, pat + 1);
+    volatile uint8_t *d = TR8_PTN_STRUCT;
+    uint8_t idx = tab[pat * NBARS + bar];
+    int i, ok = 0;
+
+    if (idx) {
+        F_READ(ent_off(idx - 1), ENTB, ebuf);
+        ok = e_is(ebuf, pat, bar);
+    }
+    for (i = 0; i < ROWS; i++) {
+        int off = i < 4 ? 0x20 + 4 * i : 0x30 + 6 * (i - 4);
+        uint32_t a, b;
+        if (ok) {
+            a = ebuf[4 + i] & 0xFFFF;
+            b = ebuf[4 + i] >> 16;
+        } else {
+            a = def[4 + 2 * i] & 0xFFFF;
+            b = def[5 + 2 * i] & 0xFFFF;
+        }
+        *(volatile uint16_t *)(d + off) = (uint16_t)a;
+        *(volatile uint16_t *)(d + off + 2) = (uint16_t)b;
+    }
+    *(volatile uint32_t *)(d + TR8_PTN_LAST_A) = ok ? (ebuf[2] & 0xFF) : def[2];
+    *(volatile uint32_t *)(d + TR8_PTN_LAST_B) = ok ? ((ebuf[2] >> 8) & 0xFF) : def[3];
+    TR8_FN_SCALE((void *)d, ok ? (int)(ebuf[30] & 3) : (int)def[1]);
+}
+
+/* ---------------------------------------------------------------- chain */
+
 static int clen(void)
 {
     uint32_t v = TR8_PTN2_CUR[CHAIN_LEN];
-    return v <= 16 ? (int)v : 0;
+    return v <= NBARS ? (int)v : 0;
 }
 
 static uint32_t cbits(void)
 {
-    return TR8_PTN2_CUR[CHAIN_BITS] & 0xFFFF;
+    return TR8_PTN2_CUR[CHAIN_BITS] & 0xF;
 }
 
 static void show_bar(int n, int is_b)
 {
     static char txt[5];
     txt[0] = ' ';
-    txt[1] = n >= 10 ? '1' : ' ';
-    txt[2] = (char)('0' + n % 10);
+    txt[1] = ' ';
+    txt[2] = (char)('0' + n);
     txt[3] = is_b ? 'B' : 'A';
     TR8_DISPLAY_TEXT(0, txt);
 }
@@ -97,80 +320,44 @@ static void show_len(int n)
     static char txt[5];
     txt[0] = 'C';
     txt[1] = 'H';
-    txt[2] = n ? (n >= 10 ? '1' : ' ') : '-';
-    txt[3] = n ? (char)('0' + n % 10) : '-';
+    txt[2] = n ? ' ' : '-';
+    txt[3] = n ? (char)('0' + n) : '-';
     TR8_DISPLAY_TEXT(0, txt);
 }
 
-/* Value words of a parameter slot: slot 0 is the working copy, slot n+1 is pattern n.
- * Setup word n = Setup[n]; pattern word 0 = VARI, 1 = scale, 2 = LAST_A, 3 = LAST_B,
- * 4..55 = the 26 step rows as (A mask, B mask). */
-static volatile uint32_t *area_slot(int area, int slot)
+/* The panel changed pattern: the working copy is now that pattern's own steps, so bar 1 (or
+ * the bar the user selects next) has to be loaded before anything edits or plays it. */
+__attribute__((section(".text.far"))) static void sync(void)
 {
-    uint32_t ctx[3];
-    TR8_FN_PCTX(ctx, area, slot);
-    return (volatile uint32_t *)ctx[0];
-}
+    int p = (int)(area_slot(TR8_AREA_SETUP, 0)[TR8_SETUP_PATTERN] & 0xF);
 
-/* Fill the player struct with the step content of area 4 slot: the 26 A/B mask pairs, the
- * last steps and the scale. Returns the slot words (word 0 is the variation). */
-static volatile uint32_t *bar_fill(int slot)
-{
-    volatile uint32_t *s = area_slot(TR8_AREA_PATTERN, slot);
-    volatile uint8_t *d = TR8_PTN_STRUCT;
-    int i;
-
-    for (i = 0; i < PTN_MASKS; i++) {
-        int off = i < 4 ? 0x20 + 4 * i : 0x30 + 6 * (i - 4);
-        *(volatile uint16_t *)(d + off) = (uint16_t)s[4 + 2 * i];
-        *(volatile uint16_t *)(d + off + 2) = (uint16_t)s[5 + 2 * i];
+    if (!inited)
+        store_init();
+    if (p != cur_pat) {
+        cur_pat = (uint8_t)p;
+        cur_bar = 0;
+        slot_load(p, 0, (int)(area_slot(TR8_AREA_PATTERN, 0)[0] & 1));
     }
-    *(volatile uint32_t *)(d + TR8_PTN_LAST_A) = s[2];
-    *(volatile uint32_t *)(d + TR8_PTN_LAST_B) = s[3];
-    TR8_FN_SCALE((void *)d, (int)s[1]);
-    return s;
 }
 
-/* Make bar n (pad n, pattern n-1) the working copy so TR-REC records into it. The pattern we
- * leave is saved first (the two commits are what the firmware's own pattern save does:
- * FUN_6001B7D8 -> FUN_6000FC78 for area 4 and area 6), then the bar's pattern is loaded the
- * way FUN_6001B842 does it (area 4 and, when enabled, area 6). area 6 carries the weak accents,
- * the flams and the chain, so it has to be loaded too or the next save would write the previous
- * pattern's area 6 into this one. */
-static void bar_switch(int n)
-{
-    uint32_t ctx[3];
-    int p = n - 1;                                      /* pattern index, 0..15 */
-    int cur = (int)(area_slot(TR8_AREA_SETUP, 0)[TR8_SETUP_PATTERN] & 0xF);
-    volatile uint32_t *setup;
-
-    if (p == cur)
-        return;
-    TR8_FN_COMMIT(0, TR8_AREA_PATTERN, cur + 1, 0);     /* save the pattern we leave */
-    TR8_FN_COMMIT(0, TR8_AREA_PTN2, cur + 1, 0);
-    TR8_FN_COPY_CTX(ctx, TR8_AREA_PATTERN, 0);          /* destination: working copy */
-    TR8_FN_COPY(ctx, TR8_AREA_PATTERN, n, 0);           /* source: pattern p = slot n */
-    TR8_FN_COPY_CTX(ctx, TR8_AREA_PTN2, 0);
-    TR8_FN_COPY(ctx, TR8_AREA_PTN2, n, 0);
-    setup = area_slot(TR8_AREA_SETUP, 0);
-    setup[TR8_SETUP_PATTERN] = (uint32_t)p;
-    setup[TR8_SETUP_DISPLAY] = (uint32_t)p;
-}
-
-/* Replaces "bl FUN_6000E404" at 0x60009614: choose the variation of this pass and its content. */
+/* Replaces "bl FUN_6000E404" at 0x60009614: choose the bar and the side of this pass. */
 void chain_var(void *obj)
 {
-    int len = clen();
+    int len;
+
+    sync();
+    len = clen();
     if (!len || TR8_SEQ_VARI != 2) {           /* no chain, or the panel selected A or B */
         TR8_FN_VARIATION(obj);
         return;
     }
-    int pos = chain_wrapping ? (chain_pos + 1) % len : 0;
-    int cur = (int)(area_slot(TR8_AREA_SETUP, 0)[TR8_SETUP_PATTERN] & 0xF);
-    chain_pos = (uint8_t)pos;
-    bar_fill(pos == cur ? 0 : pos + 1);        /* the bar's own step content */
-    TR8_SEQ_VARIATION = (cbits() >> pos) & 1;
-    TR8_FN_APPLY(obj);
+    {
+        int pos = chain_wrapping ? (chain_pos + 1) % len : 0;
+        chain_pos = (uint8_t)pos;
+        struct_bar(cur_pat, pos);
+        TR8_SEQ_VARIATION = (cbits() >> pos) & 1;
+        TR8_FN_APPLY(obj);
+    }
 }
 
 /* Replaces "bl FUN_600095F0" at 0x600098CA (pattern wrap). */
@@ -189,49 +376,53 @@ __attribute__((naked)) void chain_pad(void)
     __asm__("mov r0, r6\n\tb chain_pad_c\n");
 }
 
-/* A or B + pad: paint bar n and make its pattern the one TR-REC edits. A+B + pad: chain length.
- * A+B+CLEAR + pad: chain off. a = VARIATION A held, b = VARIATION B held. */
+/* A or B + pad 1..4: make bar n the working copy and paint it with that side. A+B + pad:
+ * chain length. A+B+CLEAR + pad: chain off. a = VARIATION A held, b = VARIATION B held. */
 /* In the second free region (link.ld): the first one is full. */
 __attribute__((section(".text.far"))) static void chain_edit(int pad, int a, int b)
 {
-    int n = pad + 1;                           /* pad 1..16 */
+    int bar = pad;
+
     if (a && b) {
         if (TR8_BTN_HELD(TR8_BTN_CLEAR) == 1) {
             TR8_PTN2_SET(0, CHAIN_LEN, 0);
             show_len(0);
         } else {
-            TR8_PTN2_SET(0, CHAIN_LEN, n);
-            show_len(n);
+            TR8_PTN2_SET(0, CHAIN_LEN, bar + 1);
+            show_len(bar + 1);
         }
         return;
     }
 
-    uint32_t bits = cbits();                   /* A or B + pad: paint one bar */
-    int len = clen();
-    if (b)
-        bits |= 1u << pad;
-    else
-        bits &= ~(1u << pad);
-    if (n > len)
-        len = n;
-
-    /* bar_switch saves the pattern we leave (with the song as it stands) and loads the bar's
-     * pattern, whose own chain replaces ours, so the song is written again afterwards. */
-    bar_switch(n);
-    TR8_PTN2_SET(0, CHAIN_BITS, (int)bits);
-    TR8_PTN2_SET(0, CHAIN_LEN, len);
-    volatile uint32_t *s = bar_fill(0);
-    s[0] = TR8_SEQ_VARI = (uint32_t)(b ? 1 : 0);   /* edit this variation now */
-    TR8_SEQ_VARIATION = s[0];
+    store_save(cur_pat, cur_bar);              /* keep the bar being left */
+    cur_bar = (uint8_t)bar;
+    slot_load(cur_pat, bar, b);
+    struct_slot0();
+    TR8_SEQ_VARI = (uint32_t)(b ? 1 : 0);
+    TR8_SEQ_VARIATION = (uint32_t)(b ? 1 : 0);
     TR8_FN_APPLY((void *)TR8_PTN_STRUCT);
-    show_bar(n, b);
+    {
+        uint32_t bits = cbits();
+        int len = clen();
+        if (b)
+            bits |= 1u << bar;
+        else
+            bits &= ~(1u << bar);
+        if (bar + 1 > len)
+            len = bar + 1;
+        TR8_PTN2_SET(0, CHAIN_BITS, (int)bits);
+        TR8_PTN2_SET(0, CHAIN_LEN, len);
+    }
+    show_bar(bar + 1, b);
 }
 
 /* Replaces "bl FUN_60013B34" at 0x60013842: button press, id in r0, held bit already set.
  * Runs before the screen, so this is the first code that can take the pad. */
 int chain_press(int id)
 {
-    if ((unsigned)id < 16) {
+    if ((unsigned)id < 16)
+        sync();
+    if ((unsigned)id < NBARS) {
         int a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1;
         int b = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1;
         if ((a || b) && TR8_BTN_HELD(TR8_BTN_LAST_STEP) != 1) {
@@ -253,6 +444,22 @@ int chain_release(int id)
     return TR8_FN_BTN_RELEASE(id);
 }
 
+/* Replaces "bl FUN_6000FC78" at 0x6001B7F4 (the firmware's pattern save, FUN_6001B7D8).
+ * The working copy is one bar, not the pattern, so it is appended to the log instead of being
+ * copied over area 4 slot n+1; that slot keeps the pattern's own A/B steps, which is what an
+ * unrecorded bar plays. area 6 (weak accents, flams, this pattern's chain) is saved as before.
+ * The guard matters: the firmware also saves a pattern the panel only just selected, before the
+ * patch has seen a pad and loaded that pattern's bar 1. The working copy is then the pattern
+ * itself, not a bar, so the stock commit is the right thing (and is a no-op copy in practice). */
+__attribute__((section(".text.far"))) void chain_commit(int a, int area, int slot, int b)
+{
+    if (area == TR8_AREA_PATTERN && slot >= 1 && slot - 1 == (int)cur_pat) {
+        store_save(slot - 1, cur_bar);
+        return;
+    }
+    TR8_FN_COMMIT(a, area, slot, b);
+}
+
 /* In the second free region (link.ld): the first one is full. */
 __attribute__((section(".text.far"))) int chain_pad_c(int pad)
 {
@@ -263,7 +470,10 @@ __attribute__((section(".text.far"))) int chain_pad_c(int pad)
         return TR8_BTN_HELD(TR8_BTN_LAST_STEP) == 1;
     if (TR8_BTN_HELD(TR8_BTN_LAST_STEP) == 1)  /* LAST STEP wins (also the poly gesture) */
         return 1;
+    if ((unsigned)pad >= NBARS)
+        return 1;
 
+    sync();
     chain_edit(pad, a, b);
     return 0;
 }

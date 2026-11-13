@@ -3,31 +3,30 @@
 
   python3 tests/emu_chain.py work/patched_chain/appA.bin
 
-A bar is a pattern variation, so three things are tested:
+A pattern is four bars; each bar has its own A and B step set. The payload keeps a bar's steps in
+a small flash log and makes the bar the working copy (area 4 slot 0) so the stock TR-REC, step
+pads and LAST STEP edit it. Tested here:
 
-  - the gesture: A/B + pad paints a bar of the song, A+B + pad sets its length, through the
-    press dispatch (the site that runs on the unit, before the screen) and, as a fallback,
-    through the LAST STEP branch of the firmware's own button handler FUN_6001961E. The
-    firmware's own Ptn2 setter FUN_6001D432 does the write (parameter context, range check,
-    change notification); only the message post and the observer call are stubs.
-  - the content: chain_var must fill the player struct 0x6012FA64 from the bar's pattern slot
-    (area 4 slot pos+1, or slot 0 when the bar is the current pattern): the 26 A/B mask pairs,
-    LAST_A/LAST_B and the scale. FUN_6000E152 (masks -> sound) is stubbed and records the
-    variation it was called with.
-  - editing: painting a bar saves the pattern being left (FUN_6000FC78 for area 4 and area 6,
-    stubbed and logged), copies the bar's pattern (both areas) into the working copy, writes the
-    song into the new current pattern and points Setup[2]/Setup[0xF] at it, so TR-REC records
-    into that pattern.
+  - the gesture: A/B + pad 1..4 selects and paints a bar, A+B + pad sets the length, A+B+CLEAR +
+    pad turns the chain off, through the press dispatch (the site that runs on the unit, before
+    the screen) and, as a fallback, through the LAST STEP branch of FUN_6001961E.
+  - the store: one 128-byte log entry per saved bar (magic, sequence, pattern, bar, LAST_A/B,
+    scale and the 26 A/B mask rows), appended through the firmware's raw flash primitives
+    (simulated here); the pattern save is redirected, so area 4 slot n+1 keeps the pattern's own
+    steps; compaction, the ring and the 16-bit sequence wrap keep the newest entry per bar.
+  - playback: chain_var fills the player struct 0x6012FA64 from the bar's log entry (or from the
+    pattern slot when the bar was never recorded) and applies the bar's A/B side.
+  - power cycle: the payload state is cleared, the log is rescanned, and the recorded bars play.
 """
 import struct, sys, json, os
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_HOOK_CODE
 from unicorn.arm_const import *
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# --payload PATH: the probe build (patches/chain/payload_probe.json), see --probe below
 PAYLOAD = sys.argv[sys.argv.index("--payload") + 1] if "--payload" in sys.argv else "patches/chain/payload.json"
 pay = json.load(open(os.path.join(ROOT, PAYLOAD)))
 S = pay["symbols"]
+REGIONS = {r["section"]: (r["addr"], bytes.fromhex(r["data"])) for r in pay["regions"]}
 app = open(sys.argv[1], "rb").read()
 
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
@@ -50,10 +49,47 @@ SETUP = 0x60143DBC                    # area 1 slot 0: Setup[n] at SETUP + 4*n
 A4, C4 = 0x60144EA0, 56               # area 4 (Ptn), 17 slots; slot 0 = working copy
 PTN = 0x6012FA64                      # player struct
 VARI, EFF = 0x6012FA70, 0x6012FA74    # panel VARI, effective variation (= TR8_SEQ_VARIATION)
-BITS, LEN = 15, 16                    # Ptn2 indices: ids 0x136, 0x137
+BITS, LEN = 15, 16                    # Ptn2 indices for the chain (ids 0x136, 0x137)
 
-def r8(a):
-    return uc.mem_read(a, 1)[0]
+# The flash log (chain.c): 4 blocks of 32 entries, 128 bytes each, top block first.
+ENT, EPB, TOP, MAGIC = 128, 32, 0x3DF000, 0x31524256
+def ent_off(i):
+    return TOP - (i // EPB) * 0x1000 + (i % EPB) * ENT
+
+def crc(e):
+    h = 0x811C9DC5
+    for i, w in enumerate(e):
+        if i != 3:
+            h = ((h ^ (w & 0xFFFFFFFF)) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+FL = bytearray(b"\xff" * 0x400000)     # simulated raw flash, offsets from 0x03000000
+
+def fl_erase(off):
+    FL[off:off + 0x1000] = b"\xff" * 0x1000
+
+def fl_prog(off, n, src):
+    for i, b in enumerate(uc.mem_read(src, n)):
+        FL[off + i] &= b               # programming can only clear bits
+
+def fl_read(off, n, dst):
+    uc.mem_write(dst, bytes(FL[off:off + n]))
+
+def entry(i):
+    o = ent_off(i)
+    e = list(struct.unpack_from("<32I", FL, o))
+    if e[0] != MAGIC or e[3] != crc(e):
+        return None
+    return {"pat": (e[1] >> 16) & 0xF, "bar": (e[1] >> 20) & 3, "seq": e[1] & 0xFFFF,
+            "last": e[2], "scale": e[30] & 3,
+            "rows": [(w & 0xFFFF, w >> 16) for w in e[4:30]]}
+
+def entries():
+    return [e for e in (entry(i) for i in range(4 * EPB)) if e]
+
+def bar_entry(pat, bar):
+    found = [e for e in entries() if e["pat"] == pat and e["bar"] == bar]
+    return max(found, key=lambda e: e["seq"]) if found else None
 
 log = []
 held = set()
@@ -62,7 +98,8 @@ STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E
          0x6001B736: "ptn_get", 0x6001B280: "f", 0x6001B12E: "setup_get",
          0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6004FB34: "f", 0x6000066E: "f",
          0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f",
-         0x600522E4: "range", 0x600521E8: "f", 0x6000FC78: "commit"}
+         0x600522E4: "range", 0x600521E8: "f", 0x6000FC78: "commit",
+         0x60003E54: "fl_prog", 0x60003EDA: "fl_erase", 0x60003EA2: "fl_read"}
 def hook(uc, addr, size, _):
     if addr in STUBS:
         name = STUBS[addr]
@@ -90,6 +127,12 @@ def hook(uc, addr, size, _):
             log.append(("restart", r8(S["chain_wrapping"])))
         elif name == "commit":
             log.append(("commit", r1, r2))          # FUN_6000FC78(_, area, slot, _)
+        elif name == "fl_prog":
+            fl_prog(r0, r1, r2)
+        elif name == "fl_erase":
+            fl_erase(r0)
+        elif name == "fl_read":
+            fl_read(r0, r1, r2)
         uc.reg_write(UC_ARM_REG_R0, ret)
         uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR) | 1)
 uc.hook_add(UC_HOOK_CODE, hook)
@@ -99,7 +142,7 @@ def call(fn, *args):
         uc.reg_write(reg, v & 0xFFFFFFFF)
     uc.reg_write(UC_ARM_REG_SP, 0x7000E000)
     uc.reg_write(UC_ARM_REG_LR, RET | 1)
-    uc.emu_start(fn | 1, RET, count=200000)
+    uc.emu_start(fn | 1, RET, count=400000)
     return uc.reg_read(UC_ARM_REG_R0)
 
 def bl_target(a):
@@ -115,6 +158,9 @@ def bl_target(a):
 
 def texts(entries):
     return [e[1] for e in entries if e[0] == "text"]
+
+def r8(a):
+    return uc.mem_read(a, 1)[0]
 
 fails = 0
 def expect(name, got, want):
@@ -132,9 +178,6 @@ def pad(n, *buttons):
     held.clear()
     return list(log)
 
-# Pad press through the press dispatch, the site that runs before the screen: the payload
-# replaces "bl FUN_60013B34" with chain_press(id) (id in r0, held bit already set by the
-# type 5 handler). A press the payload does not take must reach the firmware helper.
 def press(n, *buttons):
     held.clear(); held.update(buttons); log.clear()
     call(S["chain_press"], n - 1)
@@ -147,32 +190,44 @@ def release(n, *buttons):
     held.clear()
     return list(log)
 
-# Area 4 slots 1..5 are patterns 0..4 (slot n is pattern n-1); slot 0 is the working copy and
-# starts as a copy of pattern 0 with a marker in LAST_A so the tests can tell them apart.
 SCALE = [8, 4, 6, 3]                  # pattern scale word -> player struct +0x1C
-def seed():
+def slot_addr(s):
+    return A4 + 4 * C4 * s
+
+def seed_ram():
+    """Area 4: slot n+1 is pattern n, slot 0 is the working copy of pattern 0."""
     for s in range(0, 6):
-        b = A4 + 4 * C4 * s
-        w32(b + 0, s & 1)                       # VARI
-        w32(b + 4, s % 4)                       # scale
-        w32(b + 8, (0xAA if s == 0 else 0x10 + s))   # LAST_A (slot 0 marker)
-        w32(b + 12, 0x20 + s)                   # LAST_B
+        b = slot_addr(s)
+        w32(b + 0, s & 1)                        # VARI
+        w32(b + 4, s % 4)                        # scale
+        w32(b + 8, 0x10 + s)                     # LAST_A
+        w32(b + 12, 0x20 + s)                    # LAST_B
         for i in range(26):
             w32(b + 4 * (4 + 2 * i), 0x4000 + (s << 8) + i)   # A mask
             w32(b + 4 * (5 + 2 * i), 0x5000 + (s << 8) + i)   # B mask
+    w32(slot_addr(0) + 4 * 56, 0)                # keep word 56 clear (not part of a slot)
     w32(SETUP + 8, 0)          # Setup[2] = pattern 0
     w32(SETUP + 0x3C, 0)       # Setup[0xF] = 0
-    for s in range(0, 6):                      # area 6 slots: weak accent marker
-        w32(p2base(s), 0x60 + s)
     w32(PTN2 + 4 * BITS, 0)    # no chain
     w32(PTN2 + 4 * LEN, 0)
     w32(VARI, 2)               # panel VARIATION A+B
     w32(EFF, 0)
 
+def cold_boot():
+    """Power cycle: .data is reloaded, .bss cleared, the flash log stays."""
+    a, data = REGIONS[".data"]
+    uc.mem_write(a, data)
+    a, data = REGIONS[".bss"]
+    uc.mem_write(a, b"\0" * len(data))
+
 def slot_rows(slot):
-    b = A4 + 4 * C4 * slot
+    b = slot_addr(slot)
     return [(r32(b + 4 * (4 + 2 * i)) & 0xFFFF, r32(b + 4 * (5 + 2 * i)) & 0xFFFF)
             for i in range(26)]
+
+def slot_scalars(slot):
+    b = slot_addr(slot)
+    return (r32(b + 8), r32(b + 12))
 
 def struct_rows():
     return [(r16(PTN + (0x20 + 4 * i if i < 4 else 0x30 + 6 * (i - 4))),
@@ -181,18 +236,16 @@ def struct_rows():
 def struct_scalars():
     return (r32(PTN + 0x14), r32(PTN + 0x18), r32(PTN + 0x1C))
 
-seed()
+seed_ram()
 
 # The hook sites point at the payload
 for site, sym in ((0x60009614, "chain_var"), (0x600098CA, "chain_wrap"),
                   (0x60013842, "chain_press"), (0x600137D2, "chain_release"),
-                  (0x600199F6, "chain_pad")):
+                  (0x600199F6, "chain_pad"), (0x6001B7F4, "chain_commit")):
     t = bl_target(site)
     expect(f"site 0x{site:08x} branches to {sym}", (t & ~1) == (S[sym] & ~1), True)
 
 if "--probe" in sys.argv:
-    # patches/chain/probe.c: display only, no pattern writes, LAST STEP does not set a length.
-    # Press dispatch (the site that runs on the unit).
     expect("probe: plain pad is shown after the firmware handled it", press(3),
            [("press", 2), ("text", " 3--")])
     expect("probe: A + pad 1", press(1, A), [("text", " 1A-")])
@@ -204,11 +257,13 @@ if "--probe" in sys.argv:
            press(8, LAST), [("press", 7), ("text", " 8-L")])
     expect("probe: the taken press swallows its release", (press(5, A), release(5)),
            ([("text", " 5A-")], []))
-    # The LAST STEP branch inside the firmware button handler still shows what it sees.
     expect("probe: global pad branch, plain pad", texts(pad(3)), [" 3--"])
     expect("probe: global pad branch, A + pad 1", texts(pad(1, A)), [" 1A-"])
     expect("probe: nothing written to the pattern", pget(BITS) + pget(LEN), 0)
     expect("probe: LAST STEP + pad does not set the length", pad(8, LAST), [("text", " 8-L")])
+    log.clear()
+    expect("probe: the redirect site is a pass-through", call(S["chain_commit"], 0, 4, 1, 0), 0)
+    expect("probe: ... which is the firmware commit", log, [("commit", 4, 1)])
 
     def probe_start(vari, eff):
         log.clear(); w32(VARI, vari); w32(EFF, eff)
@@ -221,73 +276,83 @@ if "--probe" in sys.argv:
     expect("probe: start shows VARI 2 (A+B), stock toggle", probe_start(2, 1), ["St20"])
     print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)
 
-# The gesture on the press dispatch (the path the unit takes; the screen never sees it).
-# The firmware Ptn2 setter notifies the observers ("notify"); the variation is applied to the
-# sound ("apply"); neither is interesting for the chain bookkeeping here.
-def edits(entries):
-    return [e for e in entries if e[0] not in ("notify", "apply", "commit")]
+def edits(e):
+    return [x for x in e if x[0] not in ("notify", "apply", "commit")]
 
-def applied(entries):
-    return [e for e in entries if e[0] == "apply"]
+def applied(e):
+    return [x for x in e if x[0] == "apply"]
 
-expect("press: plain pad goes to the firmware, no edit", press(3), [("press", 2)])
+seed_ram()
+cold_boot()
+
+# --- the gesture ------------------------------------------------------------------
+expect("press: plain pad goes to the firmware", press(3), [("press", 2)])
 expect("press: plain pad sets nothing", (pget(LEN), pget(BITS)), (0, 0))
-r = press(1, A)
-expect("press: A + pad 1 paints bar 1 A", edits(r), [("text", "  1A")])
-expect("press: ... and plays A", applied(r), [("apply", 0)])
-expect("press: bar 1 is A, chain 1", (pget(LEN), pget(BITS)), (1, 0))
-r = press(4, B)
-expect("press: B + pad 4 paints bar 4 B", edits(r), [("text", "  4B")])
-expect("press: ... and plays B", applied(r), [("apply", 1)])
-expect("press: chain 4 with bar 4 B", (pget(LEN), pget(BITS)), (4, 1 << 3))
-expect("press: B + pad 3 paints bar 3 B", edits(press(3, B)), [("text", "  3B")])
-expect("press: treating a B bar as A", edits(press(3, A)), [("text", "  3A")])
-expect("press: bar 3 back to A", (pget(LEN), pget(BITS)), (4, 1 << 3))
-expect("press: A+B + pad 2 sets the length", edits(press(2, A, B)), [("text", "CH 2")])
-expect("press: length 2", pget(LEN), 2)
-expect("press: A+B+CLEAR + pad 2 turns it off", edits(press(2, A, B, CLEAR)), [("text", "CH--")])
-expect("press: chain off, painted bars kept", (pget(LEN), pget(BITS)), (0, 1 << 3))
+expect("press: pads beyond the four bars go to the firmware", press(9, A), [("press", 8)])
 expect("press: LAST STEP + pad keeps the stock path", press(8, LAST), [("press", 7)])
 expect("press: LAST STEP + A + pad keeps the stock path", press(2, LAST, A), [("press", 1)])
+
+r = press(1, A)
+expect("press: A + pad 1 shows bar 1 A", edits(r), [("text", "  1A")])
+expect("press: ... and plays A", applied(r), [("apply", 0)])
+expect("press: bar 1 is the pattern itself", slot_rows(0), slot_rows(1))
+expect("press: chain is now bar 1", (pget(LEN), pget(BITS)), (1, 0))
+expect("press: bar 1 was stored", (bar_entry(0, 0) or {}).get("rows"), slot_rows(1))
+
+r = press(2, B)
+expect("press: B + pad 2 shows bar 2 B", edits(r), [("text", "  2B")])
+expect("press: ... and plays B", applied(r), [("apply", 1)])
+expect("press: the working copy is bar 2 of the pattern", slot_rows(0), slot_rows(1))
+expect("press: chain is now two bars, bar 2 on B", (pget(LEN), pget(BITS)), (2, 0b10))
+expect("press: the panel variation follows the bar", (r32(VARI), r32(EFF), r32(slot_addr(0))), (1, 1, 1))
+
+# TR-REC records into the working copy; the firmware's pattern save is redirected to the log.
+w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x7777)
+w32(slot_addr(0) + 4 * (5 + 2 * 5), 0x8888)
+w32(slot_addr(0) + 4, 2)                        # SCALE
+w32(slot_addr(0) + 8, 0x0C)                     # LAST_A
+w32(slot_addr(0) + 12, 0x0D)                    # LAST_B
+before = slot_rows(1)
+log.clear()
+call(S["chain_commit"], 0, 4, 1, 0)
+expect("save: the pattern save wrote no pattern slot", log, [])
+expect("save: ... it appended the bar to the log", (bar_entry(0, 1) or {}).get("rows"),
+       [(0x7777 if i == 5 else 0x4000 + (1 << 8) + i,
+         0x8888 if i == 5 else 0x5000 + (1 << 8) + i) for i in range(26)])
+expect("save: ... with its last steps", (bar_entry(0, 1) or {}).get("last"), 0x0C | (0x0D << 8))
+expect("save: ... and its scale", (bar_entry(0, 1) or {}).get("scale"), 2)
+expect("save: area 4 slot 1 still holds the pattern's own steps", slot_rows(1), before)
+
+# Selecting another bar and coming back restores the recorded content. Leaving bar 2 saves it
+# again (the working copy is what it is), so the entry must stay the one just edited.
+expect("press: bar 4", edits(press(4, A)), [("text", "  4A")])
+expect("press: bar 4 is the untouched pattern", slot_rows(0), slot_rows(1))
+expect("press: chain is four bars, 4 on A", (pget(LEN), pget(BITS)), (4, 0b010))
+r = press(2, B)
+expect("press: back to bar 2 B", edits(r), [("text", "  2B")])
+expect("press: ... with the recorded masks", slot_rows(0)[5], (0x7777, 0x8888))
+expect("press: ... and its last steps", slot_scalars(0), (0x0C, 0x0D))
+expect("press: ... and its scale", r32(slot_addr(0) + 4), 2)
+expect("press: ... and the B side selected", (r32(VARI), r32(EFF)), (1, 1))
+
+expect("press: A+B + pad 3 sets the length", edits(press(3, A, B)), [("text", "CH 3")])
+expect("press: length 3", pget(LEN), 3)
+expect("press: A+B+CLEAR + pad 2 turns it off", edits(press(2, A, B, CLEAR)), [("text", "CH--")])
+expect("press: chain off, painted bars kept", (pget(LEN), pget(BITS)), (0, 0b010))
 expect("press: A+B+LAST STEP + pad keeps the stock path", press(2, A, B, LAST), [("press", 1)])
-expect("press: those presses changed no bar", (pget(LEN), pget(BITS)), (0, 1 << 3))
+
 # A swallowed press must swallow its release, or the screen sees a release without a press.
-expect("press: A + pad 5 is taken", edits(press(5, A)), [("text", "  5A")])
-expect("press: its release is swallowed", release(5), [])
+expect("press: A + pad 3 is taken", edits(press(3, A)), [("text", "  3A")])
+expect("press: its release is swallowed", release(3), [])
 expect("press: other pads still release normally", release(6), [("release", 5)])
-expect("press: the same pad releases normally afterwards", release(5), [("release", 4)])
+expect("press: the same pad releases normally afterwards", release(3), [("release", 2)])
 
-# Editing a bar means editing its pattern: the pattern being left is saved (area 4 and area 6),
-# the bar's pattern is copied into the working copy (area 4 and area 6), the song is written into
-# the new current pattern, and Setup points at it.
-seed()
-expect("edit: bar 3 of pattern 0", (texts(press(3, A)), pget(LEN), pget(BITS)), (["  3A"], 3, 0))
-expect("edit: the pattern being left is saved (area 4 and area 6)",
-       [e for e in log if e[0] == "commit"], [("commit", 4, 1), ("commit", 6, 1)])
-expect("edit: the working copy is the bar's pattern", struct_rows(), slot_rows(3))
-expect("edit: ... and so is its area 6 (weak accent, flams, own chain)",
-       pget(0), 0x63)
-expect("edit: ... with its own last steps and scale",
-       struct_scalars(), (0x13, 0x23, SCALE[3]))
-expect("edit: Setup says the working copy is that pattern",
-       (r32(SETUP + 8), r32(SETUP + 0x3C)), (2, 2))
-expect("edit: the working variation is written into the pattern and the player",
-       (r32(A4), r32(VARI), r32(EFF)), (0, 0, 0))
-r = press(2, B)                                  # now on pattern 2 (pad 3): move to pad 2
-expect("edit: bar 2 B", edits(r), [("text", "  2B")])
-expect("edit: the pattern being left is saved to its own slot",
-       [e for e in log if e[0] == "commit"], [("commit", 4, 3), ("commit", 6, 3)])
-expect("edit: the working copy is now pattern 1", struct_rows(), slot_rows(2))
-expect("edit: Setup follows", (r32(SETUP + 8), r32(SETUP + 0x3C)), (1, 1))
-expect("edit: the chain now has bar 2 B and 3 bars", (pget(LEN), pget(BITS)), (3, 0b010))
-
-# Playback: chain_var replaces the variation call inside the pattern restart FUN_600095F0 and
-# fills the player struct from the bar's pattern slot (not by switching patterns).
+# --- playback ---------------------------------------------------------------------
 def start(**kw):
     w32(VARI, kw.get("vari", 2))
     w32(EFF, kw.get("eff", 0))
     log.clear()
-    uc.mem_write(S["chain_wrapping"], b"\0")            # patched global, see chain.c
+    uc.mem_write(S["chain_wrapping"], b"\0")
     call(S["chain_var"], PTN)
     return r32(EFF)
 
@@ -301,37 +366,24 @@ def set_chain(bits, n):
     w32(PTN2 + 4 * BITS, bits)
     w32(PTN2 + 4 * LEN, n)
 
-seed()
-# A A B A: bars 1,2,4 = A, bar 3 = B. The working copy is pattern 0, so bar 1 uses slot 0.
-set_chain(0b0100, 4)
+seed_ram()
+w32(SETUP + 8, 0)
+set_chain(0b0100, 4)          # bars 1,2,4 = A, bar 3 = B
 expect("chain A A B A: start on bar 1 (A)", start(), 0)
-expect("bar 1 content is the working copy (marker)",
-       struct_scalars(), (0xAA, 0x20, SCALE[0]))
-expect("bar 1 masks", struct_rows(), slot_rows(0))
-expect("... applied with the chosen variation", log[-1], ("apply", 0))
+expect("bar 1 is the pattern slot", (struct_rows(), struct_scalars()),
+       (slot_rows(1), (0x11, 0x21, SCALE[1])))
+expect("bar 1 masks applied with A", log[-1], ("apply", 0))
 expect("bar 2: A", wrap(), 0)
-expect("bar 2 is pattern 1 (slot 2): last steps and scale",
-       struct_scalars(), (0x12, 0x22, SCALE[2]))
-expect("bar 2 masks come from that pattern slot", struct_rows(), slot_rows(2))
+expect("bar 2 is the recorded bar 2", (struct_rows(), struct_scalars()),
+       ([(0x7777 if i == 5 else 0x4000 + (1 << 8) + i,
+          0x8888 if i == 5 else 0x5000 + (1 << 8) + i) for i in range(26)], (0x0C, 0x0D, SCALE[2])))
 expect("bar 3: B", wrap(), 1)
-expect("bar 3 is pattern 2 (slot 3) and plays B", (struct_rows(), struct_scalars()),
-       (slot_rows(3), (0x13, 0x23, SCALE[3])))
-expect("... applied with B", log[-1], ("apply", 1))
+expect("bar 3 is the untouched pattern, B side", (struct_rows(), struct_scalars()),
+       (slot_rows(1), (0x11, 0x21, SCALE[1])))
 expect("bar 4: A", wrap(), 0)
-expect("bar 4 is pattern 3 (slot 4)",
-       (struct_rows(), struct_scalars()), (slot_rows(4), (0x14, 0x24, SCALE[0])))
 expect("wrap: back to bar 1", wrap(), 0)
-expect("bar 1 again uses the working copy", struct_rows(), slot_rows(0))
-expect("bar 2 again", (wrap(), struct_scalars()), (0, (0x12, 0x22, SCALE[2])))
 
-# The current pattern is not pattern 0 any more: bar 1 must use its own slot (no marker).
-w32(SETUP + 8, 2)                      # Setup[2] = pattern 2 (pad 3)
-expect("bar 1 of a different current pattern uses that pattern's slot",
-       (start(), struct_rows(), struct_scalars()),
-       (0, slot_rows(1), (0x11, 0x21, SCALE[1])))
-expect("... not the working copy", r32(PTN + 0x14) != 0xAA, True)
-
-# Panel selects A or B: the chain is bypassed, that variation loops.
+# Panel selects A or B: the chain is bypassed, that side of the working copy loops.
 w32(VARI, 1)
 expect("VARIATION B pressed: loops B (FUN_6000E404 as before)", (start(vari=1), r32(EFF)), (1, 1))
 w32(VARI, 0)
@@ -348,12 +400,120 @@ expect("no chain: the player content was left alone",
        (r32(PTN + 0x14), r16(PTN + 0x20)), (0x7777, 0x1234))
 expect("no chain, A+B: toggle back to A", (wrap(), r32(EFF)), (0, 0))
 
-# A chain shorter than the stored bits plays only its bars
-set_chain(0b1010, 2)      # bars 1..2 = A B, bars 3..4 ignored
+# --- another pattern: its own bars, its own chain ---------------------------------
+# Pattern 2 (area 4 slot 3) gets a recorded bar 1 and a chain of two bars.
+seed_ram()
+w32(SETUP + 8, 2)
+w32(SETUP + 0x3C, 2)
+expect("pattern 2: A + pad 1 selects its bar 1", edits(press(1, A)), [("text", "  1A")])
+expect("pattern 2: the working copy is pattern 2", slot_rows(0), slot_rows(3))
+w32(slot_addr(0) + 4 * (4 + 2 * 2), 0x6A6A)
+call(S["chain_commit"], 0, 4, 3, 0)
+expect("pattern 2: its bar was stored on its own", (bar_entry(2, 0) or {}).get("rows")[2][0], 0x6A6A)
+expect("pattern 2: pattern 0's bars are untouched", (bar_entry(0, 0) or {}).get("rows")[2][0],
+       0x4000 + (1 << 8) + 2)
+set_chain(0b10, 2)          # bar 1 = A, bar 2 = B
+w32(SETUP + 8, 2)
+expect("pattern 2 chain: bar 1 A", (start(), struct_rows()[2]),
+       (0, (0x6A6A, 0x5000 + (3 << 8) + 2)))
+expect("pattern 2 chain: bar 2 B", wrap(), 1)
+expect("pattern 2 chain: bar 2 is untouched", struct_rows(), slot_rows(3))
+
+# --- power cycle ------------------------------------------------------------------
+seed_ram()
+cold_boot()
 w32(SETUP + 8, 0)
-expect("2-bar chain A B: bar 1", (start(), r32(EFF)), (0, 0))
-expect("2-bar chain A B: bar 2", (wrap(), r32(EFF)), (1, 1))
-expect("2-bar chain A B: wraps to bar 1", (wrap(), r32(EFF)), (0, 0))
+w32(SETUP + 0x3C, 0)
+set_chain(0b0100, 4)
+expect("power cycle: the log is rescanned and bar 2 still has the edit",
+       (start(), wrap(), struct_rows()[5]),
+       (0, 0, (0x7777, 0x8888)))
+expect("power cycle: the recorded bar keeps its last steps", struct_scalars()[0:2], (0x0C, 0x0D))
+expect("power cycle: bar 1 still the pattern", (wrap(), struct_rows()), (1, slot_rows(1)))
+
+# --- the log does not lose a bar when a block is full -----------------------------
+seed_ram()
+cold_boot()
+w32(SETUP + 8, 0)
+press(1, A)                                   # sync: the patch now owns bar 1
+for i in range(4 * EPB + 5):                  # force a compaction
+    w32(slot_addr(0) + 4 * (4 + 2 * 0), 0x400 + i)
+    call(S["chain_commit"], 0, 4, 1, 0)
+expect("log: one entry per bar survives compaction", (bar_entry(0, 0) or {}).get("rows")[0][0], 0x400 + 4 * EPB + 4)
+expect("log: the entries still fit in four blocks", len(entries()) <= 4 * EPB, True)
+expect("log: bar 1 is still readable after compaction",
+       (bar_entry(0, 0) or {}).get("seq") is not None, True)
+
+# --- the ring wraps and blocks are compacted: the newest entry per bar wins ---------
+# 64 keys x 3 rounds is 192 appends, more than the 128 slots, so the write pointer wraps and
+# every block is compacted at least once. Each bar carries a distinct marker.
+seed_ram()
+cold_boot()
+# Before the patch has seen a pad (cold boot), a save of a pattern it has not loaded is the
+# stock commit: the working copy is the pattern itself, not a bar.
+log.clear()
+call(S["chain_commit"], 0, 4, 1, 0)
+expect("save: a pattern the patch has not loaded goes through the stock commit", log, [("commit", 4, 1)])
+
+def marker(rnd, p, b):
+    return (0x1000 + (rnd << 8) + p * 4 + b) & 0xFFFF
+
+def save_bar(rnd, p, b):
+    w32(SETUP + 8, p)
+    w32(SETUP + 0x3C, p)
+    press(b + 1, A)                       # select and load the bar
+    w32(slot_addr(0) + 4 * 4, marker(rnd, p, b))
+    w32(slot_addr(0) + 4 * 5, 0x5000 + marker(rnd, p, b))
+    log.clear()
+    call(S["chain_commit"], 0, 4, p + 1, 0)
+
+for rnd in range(3):
+    for p in range(16):
+        for b in range(4):
+            save_bar(rnd, p, b)
+expect("log: all 64 bars have an entry",
+       sorted({(e["pat"], e["bar"]) for e in entries()}),
+       [(p, b) for p in range(16) for b in range(4)])
+
+cold_boot()
+bad = []
+for p in range(16):
+    for b in range(4):
+        w32(SETUP + 8, p)
+        w32(SETUP + 0x3C, p)
+        press(b + 1, A)                   # loads the bar through the payload's index
+        want = (marker(2, p, b), 0x5000 + marker(2, p, b))
+        if slot_rows(0)[0] != want:
+            bad.append(((p, b), slot_rows(0)[0], want))
+expect("log: every bar reads back its newest entry after wrap and compaction", bad, [])
+expect("log: the log still fits in its four blocks", len(entries()) <= 4 * EPB, True)
+
+# --- the sequence number wraps at 2^16, and a save just after the wrap must be the newest ----
+seed_ram()
+for blk in range(4):
+    fl_erase(0x3DF000 - blk * 0x1000)
+fl_erase(0x3DB000)
+def put_entry(i, seq, pat, bar, a, b):
+    e = [MAGIC, seq | (pat << 16) | (bar << 20), 0, 0] + [a | (b << 16)] + [0] * 27
+    e[3] = crc(e)
+    FL[ent_off(i):ent_off(i) + ENT] = struct.pack("<32I", *e)
+put_entry(0, 0xFFFE, 1, 2, 0x1111, 0x2222)
+put_entry(1, 0xFFFF, 1, 2, 0x3333, 0x4444)
+cold_boot()
+w32(SETUP + 8, 1)
+w32(SETUP + 0x3C, 1)
+expect("sequence wrap: the newest of two entries is loaded", edits(press(3, A)), [("text", "  3A")])
+expect("sequence wrap: ... which is the second one", slot_rows(0)[0], (0x3333, 0x4444))
+w32(slot_addr(0) + 4 * 4, 0x7777)
+call(S["chain_commit"], 0, 4, 2, 0)
+expect("sequence wrap: the next save starts at 0",
+       [e["seq"] for e in entries() if e["rows"][0][0] == 0x7777], [1])
+cold_boot()
+w32(SETUP + 8, 1)
+w32(SETUP + 0x3C, 1)
+press(3, A)
+expect("sequence wrap: after a power cycle the bar written after the wrap still wins",
+       slot_rows(0)[0], (0x7777, 0x4444))
 
 # chain_wrap marks the restart as a wrap for the duration of the firmware restart call.
 w32(S["chain_wrapping"], 0)
