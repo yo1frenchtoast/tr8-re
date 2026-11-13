@@ -32,7 +32,7 @@ What the updater checks ([FINDINGS.md](FINDINGS.md) section 3): the 16-byte trai
 
 ## Recovery
 
-The update rewrites only flash `0x30000`-`0x3DFFFF` (application and second-processor modules). The boot loader (`0x0`) and the updater (`0x8000`) are never written ([FINDINGS.md](FINDINGS.md) sections 2 and 3).
+Roland's update rewrites only flash `0x30000`-`0x3DFFFF` (application and second-processor modules); a file built by the patcher rewrites `0x30000`-`0x3D9FFF` and leaves the bar chain's log above it alone ([CHAIN.md](CHAIN.md) "Storage"). The boot loader (`0x0`) and the updater (`0x8000`) are never written ([FINDINGS.md](FINDINGS.md) sections 2 and 3).
 
 If the patched firmware does not start, or behaves badly:
 

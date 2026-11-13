@@ -107,10 +107,14 @@ function trailer(img) {
   return { first: u32(img, t), last: u32(img, t + 4), bsz: u32(img, t + 8), total: u32(img, t + 12) };
 }
 
-export function checkContainer(img) {
+// A patched file ends the updater's block range at 0x3D9 so that a reflash keeps the bar chain's
+// flash log (0x3DA000..0x3DFFFF, 0xFF padding in Roland's file); see tools/tr8patch.py keep_log.
+const KEEP_FROM = 0x3da;
+
+export function checkContainer(img, lastBlock = 0x3df) {
   if (img.length < 0x300000) throw new PatchError("file too small: not a TR-8 TR8_UPD.BIN");
   const t = trailer(img);
-  if (t.total !== img.length - 16 || t.first !== 0x30 || t.last !== 0x3df || t.bsz !== 0x1000)
+  if (t.total !== img.length - 16 || t.first !== 0x30 || t.last !== lastBlock || t.bsz !== 0x1000)
     throw new PatchError("unexpected trailer: not a TR-8 v1.61 TR8_UPD.BIN");
   for (const b of MODULE_BASES)
     if (!parseModule(img, b).sumOk) throw new PatchError(`module at 0x${b.toString(16)}: byte-sum is wrong (corrupted file)`);
@@ -177,6 +181,9 @@ export function pack(img, newApp, onProgress) {
   const start = APPA + m.hsz, end = start + Math.max(comp.length, m.csz);
   out.fill(0xff, start, end);
   out.set(comp, start);
+  if (out.subarray(KEEP_FROM * t.bsz, (t.last + 1) * t.bsz).some((v) => v !== 0xff))
+    throw new PatchError("internal error: the blocks kept for the bar chain are not padding");
+  put32(out, out.length - 12, KEEP_FROM - 1);
   return out;
 }
 
@@ -196,7 +203,7 @@ export async function build(img, manifest, names, { log, progress } = {}) {
   }
   log?.("compressing the application...");
   const out = pack(img, app, progress);
-  checkContainer(out);
+  checkContainer(out, KEEP_FROM - 1);
   log?.("output checked: trailer and module sums OK");
   return out;
 }

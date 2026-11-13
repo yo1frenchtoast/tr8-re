@@ -135,8 +135,10 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
 - **A pattern change selects bar 1** of the new pattern and, on the next pad press or restart,
   loads its content.
 - **Power off and on keeps the bars and the lengths**; the log is flash and is rescanned on the
-  first use, and the lengths are ordinary pattern parameters. A firmware update erases the log
-  (but not the lengths): the bars then fall back to the pattern's own steps.
+  first use, and the lengths are ordinary pattern parameters. **Flashing a patched build keeps
+  the bars** (the patcher ends the update's block range below the log, see "Storage"); Roland's
+  own update file erases the log (but not the lengths), and the bars then fall back to the
+  pattern's own steps.
 - **A bar select is a jump.** `A/B + pad n` moves that side's playhead to bar *n*: while the
   machine plays, the next bar boundary plays bar *n* and the sequence continues from it; while it
   is stopped, the next start begins at bar *n*. Selecting the bar that is already playing repeats
@@ -415,9 +417,13 @@ nibble is Na, the high nibble Nb, each 0..8 (0 = that side was never selected). 
 the firmware's Ptn2 setter and saved with the pattern by the stock area-6 commit, so each pattern
 keeps its own two sequences. The poly patch uses indices 4..14 (`0x12B`..`0x135`), so it does not
 collide; a future combined build can use both. The earlier build's indices 15/16 (`0x136`,
-`0x137`) are no longer read or written. A firmware update erases the log blocks (the updater
-rewrites flash `0x30000`-`0x3DFFFF`, [UPDATE.md](UPDATE.md)), so the bars fall back to the pattern
-after an update; the side lengths survive, because they are ordinary pattern parameters in the
+`0x137`) are no longer read or written. The updater erases and writes only the blocks named in
+the file's trailer, one 4 KB sector each (FINDINGS section 3). Roland's file names
+`0x30000`-`0x3DFFFF`, which erases the log, so the bars fall back to the pattern after a stock
+update. Every file the patcher (or the web flasher) writes ends that range at block `0x3D9`
+(`0x3D9FFF`): the log and its scratch block, `0x3DA000`-`0x3DFFFF`, which Roland's file only fills
+with `0xFF` padding, are not touched, so flashing another build keeps the bars. The side lengths
+survive either way, because they are ordinary pattern parameters in the
 user area (stock firmware ignores them). Another patch must not claim `0x3DA000`-`0x3DFFFF` while
 this one is installed (see "What is lost, and when").
 
@@ -433,14 +439,17 @@ the pattern's own steps.
 |---|---|---|---|
 | Power cut while saving a bar | The newest save only, and only if its program was torn. Every older bar survives; a cut during compaction is finished from the scratch block on the next boot. | Unchanged | Unchanged |
 | A program the chip drops | The bar being saved is retried by the next save. If it fails during a compaction, the compaction stops before anything is lost, the scratch block keeps the rest, saves are refused until the next boot, and that boot recovers them from it. | Unchanged | Unchanged |
-| Flash stock firmware | **Lost**: the updater rewrites flash `0x30000`-`0x3DFFFF`. | Pattern edits made while that pattern had a chain lived only in the log, so they revert to the last stock save; patterns with no chain were saved normally. Kits are untouched. | Kept in flash but ignored by stock firmware; they become usable again if this build is flashed back with the same data intact |
-| Flash another patch | Same as stock firmware if the patch goes through the updater; a patch that installs without rewriting `0x30000`-`0x3DFFFF` keeps the log, but any patch that claims `0x3DA000`-`0x3DFFFF` collides with it. | As above | As above |
+| Flash another build made by this patcher or the web flasher | **Kept**: its update ends at block `0x3D9` and never touches `0x3DA000`-`0x3DFFFF` [code; first unit check: hardware test below]. A build that has no chain ignores the log and keeps it for the next chain build. | Unchanged | Unchanged |
+| Flash stock firmware | **Lost**: Roland's file rewrites flash `0x30000`-`0x3DFFFF`. | Pattern edits made while that pattern had a chain lived only in the log, so they revert to the last stock save; patterns with no chain were saved normally. Kits are untouched. | Kept in flash but ignored by stock firmware; they become usable again if this build is flashed back with the same data intact |
+| Flash a file from another tool | Same as stock firmware if its trailer still ends at block `0x3DF`; any patch that claims `0x3DA000`-`0x3DFFFF` collides with the log. | As above | As above |
 | Firmware update (Roland) | **Lost**, same rewrite. | Patterns and kits survive (they are above the rewritten blocks); bar edits revert as above | Kept in the user area, ignored by stock firmware |
 
 While a side sequence is set the chain never writes area 4 slot *n+1*: its bar edits go only to
 the log. The two side lengths are ordinary pattern parameters, saved by the stock area-6 commit.
-That is why a reflash can lose bars — and with them the edits made while a chain was set — but
-never the patterns' stock step content.
+That is why a stock reflash loses bars — and with them the edits made while a chain was set — but
+never the patterns' stock step content. Builds made before this change (trailer up to `0x3DF`)
+erase the log once more when they are flashed; from the first build with the short range on, the
+bars are kept.
 
 ### Code space
 
@@ -528,6 +537,15 @@ writes a side length, a bar or the pattern:
 | ` 3CL` (A+B + LAST STEP + pad 3) | the same with both variation buttons held: LAST STEP wins, no bar selection |
 | pads 5-16 dark while A is held | the bar row: the probe has no side lengths and still lights its four-bar row (all four yellow); the real build shows pads 1..8 of that side only, the bars green with the head blinking yellow, the rest off |
 | nothing at all | the payload is not running: the build is not the patched one |
+
+## Hardware test: bars kept across a reflash (not done yet)
+
+1. Flash a build made after this change. Set a 3-bar A sequence on pattern 16, record a different
+   step in bars 2 and 3, play it and check the three bars.
+2. Flash the same file again (or any other build from this patcher), switch on.
+3. Pattern 16, play: the three bars must still be there, with their steps.
+4. Optional: flash the `poly` build (no chain), then a chain build again: the bars must still be
+   there.
 
 ## Open points (to do)
 

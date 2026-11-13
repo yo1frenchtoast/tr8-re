@@ -80,7 +80,11 @@ Runs from flash at `0x01000000`. Main flow at `0x01000B7A`:
 2. Names (`FUN_60005078`): the first 16 bytes at file offsets 0x8000, 0x30000 and 0x280000 must be
    `"TR-8:Updater    "`, `"TR-8:Appli      "`, `"TR-8:Appli      "`.
 3. Write (`FUN_60005152`): blocks first..last (flash `0x30000`-`0x3DFFFF`), each block read back
-   and compared.
+   and compared. Each block is erased on its own with the SPI sector erase `0x20` (4 KB,
+   `FUN_60003B5E`) and then programmed (`FUN_60004E56`); nothing outside first..last is touched,
+   and the trailer check compares nothing with a fixed block number. [code] The patcher therefore
+   writes `last = 0x3D9` in every file it builds: the blocks above are `0xFF` padding in Roland's
+   file and hold the bar chain's flash log (`0x3DA000`-`0x3DFFFF`), which a reflash then keeps.
 4. Verify (`FUN_60004F3E`): re-reads the three modules from flash and compares each byte-sum with
    header +0x34. A mismatch is error 6. The display shows the sums.
 
@@ -254,9 +258,9 @@ keeps the pattern's own steps and the edited bar is appended to a 128-byte-entry
 unused flash at `0x3DB000`-`0x3DFFFF` (five blocks of 32 entries, entry *i* at
 `0x3DB000 + i * 128`, scratch block at `0x3DA000`, newest entry per pattern/bar wins;
 [CHAIN.md](CHAIN.md) "Storage"). A pattern with no side sequence keeps the stock commit.
-That range is erased by any firmware update: the updater rewrites blocks over flash
-`0x30000`-`0x3DFFFF` (section 3), so the bars are lost on an update, while the two side lengths
-survive in the user area. The raw primitives used are `FUN_60003E54(off, len, src)` (program, chunks <=
+Roland's update file erases that range (its trailer names blocks `0x30`-`0x3DF`, section 3), so
+the bars are lost on a stock update, while the two side lengths survive in the user area. Files
+written by `tr8patch.py` and the web flasher end the range at block `0x3D9`, so they keep it. The raw primitives used are `FUN_60003E54(off, len, src)` (program, chunks <=
 0x100, 4-byte words), `FUN_60003EA2(off, len, dst)` (read through the mapping at `off + 0x03000000`)
 and `FUN_60003EDA(off)` (erase 4 KB); each saves and restores the flash mapping itself.
 

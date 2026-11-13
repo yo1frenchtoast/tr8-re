@@ -184,9 +184,22 @@ def load_app(img):
         sys.exit("application does not match the known v1.61 image (already patched, or another version)")
     return bytearray(app)
 
-def check_container(img):
+# The updater erases and writes only the blocks first..last of the trailer, one 4 KB sector each
+# (FINDINGS section 3). The bar chain keeps its flash log and scratch block in 0x3DA000..0x3DFFFF,
+# which the v1.61 file fills with 0xFF padding. A patched file ends its range at block 0x3D9, so
+# flashing another build keeps the bars; Roland's own file still rewrites them.
+KEEP_FROM = 0x3DA
+
+def keep_log(out):
+    """End the trailer's block range below the chain log; only padding is left out."""
+    first, last, bsz, total = tr8fw.trailer(out)
+    if any(b != 0xFF for b in out[KEEP_FROM * bsz:(last + 1) * bsz]):
+        sys.exit("blocks above 0x3D9 are not padding: refusing to shorten the update range")
+    struct.pack_into("<I", out, len(out) - 12, KEEP_FROM - 1)
+
+def check_container(img, last_block=0x3DF):
     first, last, bsz, total = tr8fw.trailer(img)
-    if total != len(img) - 16 or (first, last, bsz) != (0x30, 0x3DF, 0x1000):
+    if total != len(img) - 16 or (first, last, bsz) != (0x30, last_block, 0x1000):
         sys.exit("unexpected trailer: not a TR-8 v1.61 TR8_UPD.BIN")
     for key, base in tr8fw.MODULES:
         if not tr8fw.parse(img, base)["sum_ok"]:
@@ -245,8 +258,10 @@ def main():
         print(f"patch {name}: {PATCHES[name]['doc']}")
         app = apply(app, PATCHES[name])
     tr8fw.pack(img, "appA", bytes(app), a.output)
-    out = open(a.output, "rb").read()
-    check_container(out)
+    out = bytearray(open(a.output, "rb").read())
+    keep_log(out)
+    open(a.output, "wb").write(out)
+    check_container(out, KEEP_FROM - 1)
     print(f"written {a.output}: rename it to TR8_UPD.BIN and flash it as described in docs/UPDATE.md")
 
 if __name__ == "__main__":
