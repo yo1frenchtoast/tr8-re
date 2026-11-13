@@ -128,6 +128,36 @@ Tasks that matter for patches:
 | `task_panel` | Panel FIFO, HMI dispatcher, screens, parameter changes, display | on events |
 | sequencer | Clock tick handler `FUN_6000989C`, per-step functions | per clock tick |
 
+**Task table and priorities** [code]. The RTOS is uITRON-like: `task_frame\task_mgr.cpp`
+(`FUN_600126B2`) creates the tasks from a table of 9 `T_CTSK`-shaped entries of 0x24 bytes at
+`0x600600A4` (`{attribute 2 = start at once, exinf, entry, priority, stack size, stack, index, ...}`)
+through the kernel call `0x0100123C`, after `FUN_6001266A` has created the initial task from
+`0x600601E8`. As in uITRON, **a lower number is a higher priority**. Each task is named by the
+source file whose code surrounds its entry (the entries are only reached through the table):
+
+| Priority | Entry | Task (source file around the entry) | Stack |
+|---|---|---|---|
+| 6 | `0x60008318` | MIDI receive (`midi\task_midi_rx.cpp`) | 1 KB |
+| 8 | `0x60008440` | MIDI parse (`midi\task_parse.cpp`) | 1 KB |
+| 9 | `0x60000578` | initial task (`cmni\task_cmni_evt.cpp` area) | 1 KB |
+| 10 | `0x60008F5C` | **sequencer** (`seq\task_seq.cpp`) | 1 KB |
+| 11 | `0x6001F14C` | DSP (`dsp_firm\task_dsp.cpp`) | 2 KB |
+| 12 | `0x600082A4` | MIDI assign (`midi\task_asgn.cpp`) | 1 KB |
+| 13 | `0x6000ED8C` | parameters (`prm\task_prm.cpp`) | 1 KB |
+| 14 | `0x6000151C` | controls (`control\task_ctrl.cpp`) | 1 KB |
+| 15 | `0x60012928` | **panel** (`hmi\task_panel.cpp`) | 2 KB |
+| 20 | `0x60011F68` | system (`sys\task_sys.cpp`) | 6 KB |
+
+So **the sequencer task can preempt the panel task** at any point of a payload function that
+runs in the panel task, and not the other way round (the panel runs only while the sequencer
+waits). The sequencer's entry jumps into the `task_frame` event loop (`0x6001256E`); its event
+handler `FUN_60008F6C` calls the clock tick `FUN_6000989C` at `0x600090D0`. [code]
+
+**The clock tick also runs in the panel task.** The button handler `FUN_6001961E` (panel task)
+calls `FUN_600099B6`, which calls `FUN_6000989C`, at `0x60019830` (button 0x1B, when Setup[0x15]
+is set and button 0x2E is held; section 9). Everything the tick calls, the restart
+`FUN_600095F0` included, can therefore run in either task. [code]
+
 Rule for patches: change parameters from the panel task, or post an event (section 8) so the
 panel task does it. The motion patch posts from the sequencer task. [unit]
 
@@ -589,7 +619,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   The boot loader decompresses any size into SDRAM: `FUN_01000B3C` reads the decompressed size
   from the header and `FUN_01000C76` is bounded only by `destination + size`, with no fixed cap.
   The updater only checks sizes and sums. Emulation passes (249 chain checks and the three
-  combinations); a unit run is pending, and the first boot is the thing to watch.
+  combinations), and the `motion-poly-chain` build boots and works on a real TR-8. [unit]
 - **Patch RAM by moving the pool start (used by `motion-poly`).** The pool setup `FUN_60010430`
   (called once at boot from `0x60010482`, before the RTOS starts) reads its start from the
   literal at `0x600104A8` and its end (`0x62000000`) from `0x600104A4`. Changing the start to
@@ -613,7 +643,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 4. What runs on the second processor (`appB`) and over which link?
 5. LED function arguments; display text lifetime and how to keep a message visible.
 6. Button ids above 0x2B (START/STOP, PATTERN, ...). LAST STEP is 0x1A (section 9).
-7. The "grow the image" method (section 12) on a real unit: the bar chain uses it, the boot path
-   is emulation-tested only.
+7. ~~The "grow the image" method (section 12) on a real unit.~~ Answered: the bar chain's
+   `motion-poly-chain` build uses it and works on a real TR-8 ([CHAIN.md](CHAIN.md)). [unit]
 8. MIDI: the receive path (`midi\task_midi_rx.cpp`) and whether external CCs take the same path
    as `FUN_60015906`.

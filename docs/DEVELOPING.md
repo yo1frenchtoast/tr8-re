@@ -181,21 +181,29 @@ task runs its site, and write it down in the patch document (a table: hook, site
 | Site | Task | Tag |
 |---|---|---|
 | Per-step code, `bl FUN_6000978E` at `0x60009862` / `0x60009808` | sequencer | [unit] |
-| Clock tick `FUN_6000989C` and everything it calls (`FUN_600095F0` on a wrap) | sequencer | [code] |
+| Clock tick `FUN_6000989C` and everything it calls (`FUN_600095F0` on a wrap) | sequencer, and panel through `FUN_600099B6` (button 0x1B, FINDINGS section 5) | [code] |
 | Control event, `bl FUN_60013242` at `0x600138C8` | panel | [unit] |
 | HMI dispatcher, screens, button press/release | panel | [code] |
 
 A function with more than one caller can run in more than one task: `FUN_600095F0` runs on a
 wrap (sequencer) and on a start; check every caller before you assume one task.
+`python3 -I tools/callgraph.py up 0x600095F0` prints the caller tree from your local disassembly,
+and `refs` finds a function that is only reached through a pointer (a task table, a vtable).
 
-Not known yet (each needs a `[code]` or `[unit]` answer before a patch depends on it):
+**Priorities** (FINDINGS.md section 5, [code]): the sequencer task has priority 10 and the panel
+task 15, and a lower number wins. The sequencer can therefore interrupt a panel-task payload
+function at any instruction, and a sequencer-task function always runs to its end before the
+panel task continues. Design shared state for that direction: the panel must leave every value
+the sequencer reads consistent at every instruction (write the data first, then publish it with
+one byte or word), while the sequencer may write several values in a row.
 
-- The task priorities, and whether the sequencer task can preempt the panel task in the middle
-  of a payload function.
+Not known yet (needs a `[code]` or `[unit]` answer before a patch depends on it):
+
 - Whether a flash read through the mapping is safe while another task has a write session open
-  (`FUN_600108AA` switches the chip to indirect mode, see FINDINGS.md).
+  (`FUN_600108AA` switches the chip to indirect mode, see FINDINGS.md). Because the sequencer can
+  preempt the panel in the middle of a session, assume it is not.
 
-Until these are known, use these rules:
+Use these rules:
 
 1. **Flash program and erase only in the panel task.** The raw primitives have no lock.
 2. **No flash access from the sequencer task**, reads included. Read what the sequencer needs in

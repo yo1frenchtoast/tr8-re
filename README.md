@@ -94,6 +94,7 @@ tests/run_all.sh "$F"                                # build every patch, run al
 | `tools/elf2payload.py` | Linked payload ELF -> `payload.json` for the patcher |
 | `tools/build_site.py` | Patch table -> `site/patches.json` for the web flasher |
 | `tools/merge_payloads.py` | Union of separately linked payloads (chain + motion/poly) |
+| `tools/callgraph.py` | Callers, callee lists and pointer references in your local disassembly (which task can run a site) |
 | `tools/analyze.sh`, `tools/*.java` | Ghidra headless: decompile every function and list strings |
 | `patches/include/tr8_v161.h` | Known firmware addresses and functions, with confidence tags |
 | `patches/motion/` | Motion recording: `motion.c`, hardware probe `probe.c`, `link.ld`, `build.sh`, generated `payload*.json` |
