@@ -200,6 +200,11 @@ typedef int (*tr8_get_fn)(void *db, int idx, int def);
    pads and text" helper FUN_60051E20 ORs 0x44 into this object. */
 #define TR8_HMI_PANEL ((volatile uint16_t *)0x60149B8C)          /* [code] DAT_60051E2C          */
 #define TR8_HMI_REPAINT_PADS 0x04                                /* [code] step pads, view 0     */
+/* FUN_60016386(obj): paints the view-0 step pads from area 4 slot 0. The dispatcher calls it at
+ * 0x60016C44 when bit 0x04 is set; a patch that hooks that call runs in the panel task, right
+ * before the paint. */
+typedef void (*tr8_paint_fn)(void *obj);
+#define TR8_FN_STEPVIEW ((tr8_paint_fn)0x60016387)              /* [code] FUN_60016386          */
 #define TR8_HMI_REPAINT 0x40                                    /* [code] default numeric text  */
 typedef void (*tr8_repaint_fn)(void);
 #define TR8_FN_REPAINT ((tr8_repaint_fn)0x60051E21)              /* [code] FUN_60051E20 (0x44)   */

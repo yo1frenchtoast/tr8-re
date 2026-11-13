@@ -62,8 +62,11 @@
 
 /* ---------------------------------------------------------------- flash log */
 
-#define FL_TOP 0x3DF000u          /* first block; blocks go down from here */
-#define FL_SCR 0x3DB000u          /* scratch block for compaction          */
+/* The log is the 16 KB at 0x3DC000..0x3E0000, entry i at FL_BASE + i * 128: the same bytes the
+ * first builds used, where entry i sat at 0x3DF000 - (i / 32) * 0x1000 + (i % 32) * 128, so an
+ * upgrade keeps the bars already stored. The scratch block for compaction sits just below. */
+#define FL_BASE 0x3DC000u
+#define FL_SCR  0x3DB000u
 #define NBLK   4
 #define EPB    32                 /* entries per 4 KB block                */
 #define NENT   (NBLK * EPB)
@@ -92,7 +95,7 @@ uint8_t chain_pos;        /* position in this pass, 0..na+nb-1 (A+B) or 0..n-1 (
 uint8_t chain_side;       /* side being played: 0 = A, 1 = B */
 uint8_t chain_row[2];     /* bar last selected or played on each side, for the bar row */
 uint8_t chain_wrapping;   /* set by chain_wrap around the FUN_600095F0 call */
-uint16_t chain_swallow;   /* pads whose press we took: their release is swallowed too */
+uint8_t chain_swallow;    /* bit n: pad n's press was taken, its release is swallowed too */
 
 static uint8_t tab[NBARS * 16];  /* newest entry index + 1 per (pattern, bar), 0 = none */
 static uint8_t wr_i;             /* next log entry */
@@ -100,14 +103,17 @@ static uint16_t seqn;            /* last sequence number written */
 static uint8_t inited;           /* the log has been scanned */
 static uint8_t cur_pat = 0xFF;   /* pattern whose bar is in the working copy, 0xFF = unknown */
 static uint8_t cur_bar;          /* bar in the working copy */
+static uint8_t cur_side;         /* side the working copy was loaded for */
+static uint32_t clean;           /* wchash() of the working copy when it was loaded */
 
 static uint32_t ebuf[ENTW];
 
 static volatile uint32_t *area_slot(int area, int slot);
 
-static uint32_t ent_off(int i)
+/* .text.far: the second region is full and the first one has room for these twelve bytes. */
+__attribute__((section(".text.far"))) static uint32_t ent_off(int i)
 {
-    return FL_TOP - (uint32_t)(i / EPB) * 0x1000u + (uint32_t)(i % EPB) * ENTB;
+    return FL_BASE + (uint32_t)i * ENTB;
 }
 
 /* Every program and erase goes through one of these, so the chip is never left protected while
@@ -119,19 +125,19 @@ static void fl_erase(uint32_t off)
     F_END();
 }
 
-static void fl_write(uint32_t off, const uint32_t *src)
+static void fl_write(uint32_t off)
 {
     F_BEGIN();
-    F_PROG(off, ENTB, src);
+    F_PROG(off, ENTB, ebuf);
     F_END();
 }
 
 /* Program one log entry and read its magic back: 1 = the chip took it. */
 static int fl_put(int i)
 {
-    fl_write(ent_off(i), ebuf);
-    F_READ(ent_off(i), 4, &ebuf[31]);
-    return ebuf[31] == EMAGIC;
+    fl_write(ent_off(i));
+    F_READ(ent_off(i), 4, ebuf);           /* word 0 again: is the magic really there? */
+    return ebuf[0] == EMAGIC;
 }
 
 /* .text.far: the second region is full (see the bar row section). */
@@ -145,98 +151,117 @@ __attribute__((section(".text.far"))) static uint32_t ecrc(const uint32_t *e)
     return h;
 }
 
-static int eok(const uint32_t *e)
+/* (pattern, bar) of an entry, as an index into tab[]. */
+static int ekey(const uint32_t *e)
 {
-    return e[0] == EMAGIC && e[3] == ecrc(e);
+    return (int)((e[1] >> 16) & 0xF) * NBARS + (int)((e[1] >> 20) & 3);
 }
 
-static int e_is(const uint32_t *e, int pat, int bar)
+/* A valid entry: magic, checksum, and the (pattern, bar) it claims to be, unless k is negative
+ * (the log scan takes any bar). One function instead of two saves a call and a literal pool. */
+static int eok(const uint32_t *e, int k)
 {
-    return eok(e) && (int)((e[1] >> 16) & 0xF) == pat && (int)((e[1] >> 20) & 3) == bar;
+    return e[0] == EMAGIC && e[3] == ecrc(e) && (k < 0 || ekey(e) == k);
+}
+
+/* FNV-1a over the value words a stored bar has (1..55: scale, LAST_A, LAST_B, the 26 A/B mask
+ * pairs). The working copy is untouched while the hash still matches the one taken when the bar
+ * was loaded, so a bar boundary that nobody edited costs no flash write. Word 0 is the variation,
+ * which is not part of a bar. */
+static uint32_t wchash(const volatile uint32_t *s)
+{
+    uint32_t h = 0x811C9DC5u;
+    int i;
+
+    for (i = 1; i < 56; i++)
+        h = (h ^ s[i]) * 0x01000193u;
+    return h;
 }
 
 /* Scan the log once: the newest entry per bar, and where to append. The newest entry of a bar
  * is not always the last one in address order: after the ring wraps or a block is compacted, an
  * older duplicate can sit above a newer entry. Sequence numbers decide, compared modulo 2^16 so
  * that the wrap from 0xFFFF to 0 keeps working (entries that coexist in the log are at most a
- * few hundred saves apart). */
+ * few hundred saves apart). The write pointer is the lowest erased slot (the scan runs downwards,
+ * so the last erased slot it sees is the lowest one), so the appends fill the log from the bottom;
+ * the sequence number is the highest one stored. */
 static void store_init(void)
 {
-    int i, k, best = 0;
-    uint16_t bseq = 0;
+    int i, k;
     uint32_t w;
 
     for (i = 0; i < NBARS * 16; i++)
         tab[i] = 0;
-    for (i = 0; i < NENT; i++) {
+    wr_i = 0;
+    for (i = NENT - 1; i >= 0; i--) {
         F_READ(ent_off(i), ENTB, ebuf);
-        if (!eok(ebuf))
+        if (!eok(ebuf, -1)) {
+            wr_i = (uint8_t)i;      /* any erased slot will do; the appends go here */
             continue;
-        k = (int)((ebuf[1] >> 16) & 0xF) * NBARS + (int)((ebuf[1] >> 20) & 3);
+        }
+        k = ekey(ebuf);
         w = ebuf[1] & 0xFFFF;
-        if (!best || (int16_t)(w - bseq) > 0) { bseq = (uint16_t)w; best = i + 1; }
+        if ((int16_t)(w - seqn) > 0)
+            seqn = (uint16_t)w;
         if (!tab[k]) {
             tab[k] = (uint8_t)(i + 1);
             continue;
         }
         F_READ(ent_off(tab[k] - 1), ENTB, ebuf);   /* the entry known so far */
-        if (eok(ebuf) && (int16_t)(w - (ebuf[1] & 0xFFFF)) > 0)
+        if (eok(ebuf, -1) && (int16_t)(w - (ebuf[1] & 0xFFFF)) > 0)
             tab[k] = (uint8_t)(i + 1);
     }
-    seqn = bseq;
-    wr_i = (uint8_t)(best % NENT);
     inited = 1;
 }
 
 /* Move the live entries of the block with the fewest of them out of the way, erase it, put them
  * back at its start and continue there. There are at most 64 live entries (16 patterns x 4 bars),
  * so this block always ends up with fewer than EPB of them and keeps a free slot: compacting the
- * block at the write pointer would not help when all of its entries are live. */
+ * block at the write pointer would not help when all of its entries are live. A slot is live when
+ * tab[] names it; any other valid entry in the block is an older duplicate and is dropped. */
 static void store_gc(void)
 {
-    uint8_t pr[EPB];
-    int i, p, n = 0, blk, b, cnt, bestn = EPB + 1;
+    int i, k, n = 0, blk = 0, b, cnt, bestn = EPB + 1;
 
     for (b = 0; b < NBLK; b++) {
         cnt = 0;
-        for (p = 0; p < NBARS * 16; p++) {
-            int d = (int)tab[p] - 1;
-            if (tab[p] && d >= b * EPB && d < (b + 1) * EPB)
-                cnt++;
-        }
+        for (i = 0; i < NBARS * 16; i++)
+            cnt += tab[i] > b * EPB && tab[i] <= (b + 1) * EPB;
         if (cnt < bestn) { bestn = cnt; blk = b; }
     }
     fl_erase(FL_SCR);
     for (i = 0; i < EPB; i++) {
         int idx = blk * EPB + i;
-        for (p = 0; p < NBARS * 16; p++)
-            if (tab[p] == idx + 1)
-                break;
-        if (p == NBARS * 16)
-            continue;
         F_READ(ent_off(idx), ENTB, ebuf);
-        fl_write(FL_SCR + (uint32_t)n * ENTB, ebuf);
-        pr[n++] = (uint8_t)p;
+        if (tab[k = ekey(ebuf)] == idx + 1) {
+            fl_write(FL_SCR + (uint32_t)n * ENTB);
+            n++;
+        }
     }
-    fl_erase(FL_TOP - (uint32_t)blk * 0x1000u);
+    fl_erase(FL_BASE + (uint32_t)blk * 0x1000u);
     for (i = 0; i < n; i++) {
         F_READ(FL_SCR + (uint32_t)i * ENTB, ENTB, ebuf);
         fl_put(blk * EPB + i);
-        tab[pr[i]] = (uint8_t)(blk * EPB + i + 1);
+        tab[ekey(ebuf)] = (uint8_t)(blk * EPB + i + 1);
     }
     wr_i = (uint8_t)(blk * EPB + n);
 }
 
 /* Append the working copy (area 4 slot 0) as bar `bar` of pattern `pat`. 1 = the entry is in
- * the flash (it was read back), 0 = the chip did not take it. */
+ * the flash (it was read back) or the bar was not edited since it was loaded, 0 = the chip did
+ * not take it. */
 static int store_save(int pat, int bar)
 {
     volatile uint32_t *s = area_slot(TR8_AREA_PATTERN, 0);
+    uint32_t h;
     int i, ok;
     uint32_t idx;
 
     if (!inited)
         store_init();
+    h = wchash(s);
+    if (h == clean)
+        return 1;                          /* nobody touched the bar: it is already stored */
     idx = wr_i;
     F_READ(ent_off((int)idx), 4, ebuf);
     if (ebuf[0] != 0xFFFFFFFFu) {          /* block still in use: reclaim one */
@@ -249,12 +274,20 @@ static int store_save(int pat, int bar)
     for (i = 0; i < ROWS; i++)
         ebuf[4 + i] = (s[4 + 2 * i] & 0xFFFF) | ((s[5 + 2 * i] & 0xFFFF) << 16);
     ebuf[30] = s[1] & 3;              /* scale: the redirect never writes the pattern slot */
-    ebuf[31] = 0;                     /* the two words after the rows are part of the checksum */
     ebuf[3] = ecrc(ebuf);
     ok = fl_put((int)idx);
     tab[pat * NBARS + bar] = (uint8_t)(idx + 1);
     wr_i = (uint8_t)((idx + 1) % NENT);
+    clean = h;
     return ok;
+}
+
+/* Store the working copy, if the panel changed it since it was loaded. Kept out of line so
+ * chain_edit does not have to pass the bar; both callers and the store live in the first region,
+ * which has room for it. */
+__attribute__((section(".text.far"))) static int save_dirty(void)
+{
+    return store_save(cur_pat, cur_bar);
 }
 
 /* ---------------------------------------------------------------- pattern view */
@@ -279,7 +312,7 @@ __attribute__((section(".text.far"))) static void slot_load(int pat, int bar, in
 
     if (idx) {
         F_READ(ent_off(idx - 1), ENTB, ebuf);
-        if (e_is(ebuf, pat, bar)) {
+        if (eok(ebuf, pat * NBARS + bar)) {
             for (i = 0; i < ROWS; i++) {
                 d[4 + 2 * i] = ebuf[4 + i] & 0xFFFF;
                 d[5 + 2 * i] = ebuf[4 + i] >> 16;
@@ -288,6 +321,7 @@ __attribute__((section(".text.far"))) static void slot_load(int pat, int bar, in
             d[2] = ebuf[2] & 0xFF;
             d[3] = (ebuf[2] >> 8) & 0xFF;
             d[0] = (uint32_t)side;
+            clean = wchash(d);
             return;
         }
     }
@@ -295,23 +329,7 @@ __attribute__((section(".text.far"))) static void slot_load(int pat, int bar, in
     for (i = 0; i < 56; i++)
         d[i] = src[i];
     d[0] = (uint32_t)side;
-}
-
-/* Fill the player struct from the working copy (the bar being edited). */
-static void struct_slot0(void)
-{
-    volatile uint32_t *s = area_slot(TR8_AREA_PATTERN, 0);
-    volatile uint8_t *d = TR8_PTN_STRUCT;
-    int i;
-
-    for (i = 0; i < ROWS; i++) {
-        int off = i < 4 ? 0x20 + 4 * i : 0x30 + 6 * (i - 4);
-        *(volatile uint16_t *)(d + off) = (uint16_t)s[4 + 2 * i];
-        *(volatile uint16_t *)(d + off + 2) = (uint16_t)s[5 + 2 * i];
-    }
-    *(volatile uint32_t *)(d + TR8_PTN_LAST_A) = s[2];
-    *(volatile uint32_t *)(d + TR8_PTN_LAST_B) = s[3];
-    TR8_FN_SCALE((void *)d, (int)s[1]);
+    clean = wchash(d);
 }
 
 /* Fill the player struct from bar `bar` of pattern `pat`, without touching the working copy. */
@@ -319,16 +337,18 @@ static void struct_slot0(void)
 __attribute__((section(".text.far"))) static void struct_bar(int pat, int bar)
 {
     volatile uint32_t *def = area_slot(TR8_AREA_PATTERN, pat + 1);
-    volatile uint8_t *d = TR8_PTN_STRUCT;
+    volatile uint8_t *d = TR8_PTN_STRUCT, *p = d;
     uint8_t idx = tab[pat * NBARS + bar];
     int i, ok = 0;
 
     if (idx) {
         F_READ(ent_off(idx - 1), ENTB, ebuf);
-        ok = e_is(ebuf, pat, bar);
+        ok = eok(ebuf, pat * NBARS + bar);
     }
+    /* The player struct has 4-byte A/B pairs for the first four rows (0x20..0x2F), then 6-byte
+     * ones (0x30..): walking a pointer is shorter than computing the offset of every row. */
+    p = d + 0x20;
     for (i = 0; i < ROWS; i++) {
-        int off = i < 4 ? 0x20 + 4 * i : 0x30 + 6 * (i - 4);
         uint32_t a, b;
         if (ok) {
             a = ebuf[4 + i] & 0xFFFF;
@@ -337,8 +357,9 @@ __attribute__((section(".text.far"))) static void struct_bar(int pat, int bar)
             a = def[4 + 2 * i] & 0xFFFF;
             b = def[5 + 2 * i] & 0xFFFF;
         }
-        *(volatile uint16_t *)(d + off) = (uint16_t)a;
-        *(volatile uint16_t *)(d + off + 2) = (uint16_t)b;
+        *(volatile uint16_t *)p = (uint16_t)a;
+        *(volatile uint16_t *)(p + 2) = (uint16_t)b;
+        p += i < 4 ? 4 : 6;
     }
     *(volatile uint32_t *)(d + TR8_PTN_LAST_A) = ok ? (ebuf[2] & 0xFF) : def[2];
     *(volatile uint32_t *)(d + TR8_PTN_LAST_B) = ok ? ((ebuf[2] >> 8) & 0xFF) : def[3];
@@ -356,43 +377,34 @@ __attribute__((section(".text.far"))) static int clen(int side)
     return v <= NBARS ? (int)v : NBARS;
 }
 
-/* The four-character numeric display. .data: the second region is full, the first has room. */
+/* The four-character numeric display. .data: the second region is full, the first has room. The
+ * bytes are stored as one word (the display reads the string, so txt[4] stays 0), which is why a
+ * message is a word: "  A1" is 0x31_2041_2020. */
 __attribute__((section(".data.far"))) static char txt[5];
+
+static void show4(uint32_t w)
+{
+    *(uint32_t *)txt = w;
+    TR8_DISPLAY_TEXT(0, txt);
+}
 
 /* "  A1": the side, then the bar. It is only a confirmation of the pad press; releasing the
  * variation button hands the display back to the screen (see chain_release). */
 static void show_bar(int n, int is_b)
 {
-    txt[0] = ' ';
-    txt[1] = ' ';
-    txt[2] = (char)('A' + is_b);          /* 'A' or 'B' */
-    txt[3] = (char)('0' + n);
-    TR8_DISPLAY_TEXT(0, txt);
+    show4(0x2020u | ((uint32_t)('A' + is_b) << 16) | ((uint32_t)('0' + n) << 24));
 }
 
-/* .text (the second region) now that the row code got smaller. */
+/* "AB 3", or "AB--" for stock. */
 static void show_ab(int n)
 {
-    txt[0] = 'A';
-    txt[1] = 'B';
-    txt[2] = '-';
-    txt[3] = '-';
-    if (n) {
-        txt[2] = ' ';
-        txt[3] = (char)('0' + n);
-    }
-    TR8_DISPLAY_TEXT(0, txt);
+    show4(n ? (0x204241u | ((uint32_t)('0' + n) << 24)) : 0x2D2D4241u);
 }
 
 /* The chip did not take the bar we just left (see F_BEGIN in the storage section). */
-/* .text.far (the second region is full). */
-__attribute__((section(".text.far"))) static void show_fail(void)
+static void show_fail(void)
 {
-    txt[0] = 'F';
-    txt[1] = 'A';
-    txt[2] = 'I';
-    txt[3] = 'L';
-    TR8_DISPLAY_TEXT(0, txt);
+    show4(0x4C494146u);                   /* "FAIL" */
 }
 
 /* The panel changed pattern: the working copy is now that pattern's own steps, so bar 1 (or
@@ -404,11 +416,14 @@ __attribute__((section(".text.far"))) static void sync(void)
     if (!inited)
         store_init();
     if (p != cur_pat) {
+        int side = (int)(area_slot(TR8_AREA_PATTERN, 0)[0] & 1);   /* the pattern's own VARI */
+
         cur_pat = (uint8_t)p;
         cur_bar = 0;
+        cur_side = (uint8_t)side;
         chain_row[0] = 0;
         chain_row[1] = 0;
-        slot_load(p, 0, (int)(area_slot(TR8_AREA_PATTERN, 0)[0] & 1));
+        slot_load(p, 0, side);
     }
 }
 
@@ -455,6 +470,9 @@ void chain_var(void *obj)
     struct_bar(cur_pat, bar);
     TR8_SEQ_VARIATION = chain_side;
     TR8_FN_APPLY(obj);
+    /* The step view follows the bar that is playing (chain_view): ask the panel to paint its
+     * step pads on its next pass. Only this bit, so the numeric text is left alone. */
+    *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
 }
 
 /* Replaces "bl FUN_600095F0" at 0x600098CA (pattern wrap). */
@@ -463,6 +481,34 @@ void chain_wrap(void *obj)
     chain_wrapping = 1;
     TR8_FN_RESTART(obj);
     chain_wrapping = 0;
+}
+
+/* ---------------------------------------------------------------- playhead follow */
+
+/* Replaces "bl FUN_60016386" at 0x60016C44 (bit 0x04 of the panel object): the panel is about to
+ * paint the step pads, so put the bar that is playing into the working copy first and then paint
+ * it, exactly as the stock view does. The working copy, and with it the step view, TR-REC and
+ * LAST STEP, then belongs to the bar being played; the bar we leave is stored first if the panel
+ * edited it (store_save writes nothing otherwise), so steady playback leaves the flash alone.
+ *
+ * This must run here, in the panel task: the sequencer task must never touch the flash (the log's
+ * erase/program primitives have no lock and the panel task writes the same chip for pattern
+ * saves). Stopped, the working copy belongs to the bar the panel selected and this does nothing. */
+void chain_view(void *obj)
+{
+    int side, bar;
+
+    sync();                        /* the panel may have switched pattern: not our bar's copy */
+    side = (int)chain_side;
+    bar = (int)chain_row[side];
+    if (TR8_SEQ_RUNNING && (bar != (int)cur_bar || side != (int)cur_side)) {
+        if (!store_save(cur_pat, cur_bar))     /* keep the bar being left, if it was edited */
+            show_fail();
+        cur_bar = (uint8_t)bar;
+        cur_side = (uint8_t)side;
+        slot_load(cur_pat, bar, side);
+    }
+    TR8_FN_STEPVIEW(obj);
 }
 
 /* ---------------------------------------------------------------- bar row LEDs */
@@ -495,12 +541,8 @@ void chain_led4(void *obj, int led, int a, int b, int c)
         if ((unsigned)cur >= (unsigned)n)
             cur = n - 1;                   /* the side shrank: blink its last bar */
         a = p < n;                         /* pads past the last bar: off */
-        b = p == cur ? 0 : 9;              /* 0 = blink (the play flag), 9 = steady */
-        c = p == cur ? 6 : 2;              /* head: yellow, other bars: green */
-        if (!a) {
-            b = 0;
-            c = 2;                         /* palette 0x2D = (0, 0, 2), off */
-        }
+        b = p == cur ? 0 : a ? 9 : 0;      /* 0 = blink (the play flag), 9 = steady */
+        c = p == cur ? 6 : 2;              /* head: yellow, other bars: green, off: 2 */
     }
     TR8_FN_LED_SET(obj, led, a, b, c);
 }
@@ -523,13 +565,13 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
         return;
     }
 
-    saved = store_save(cur_pat, cur_bar);      /* keep the bar being left */
+    saved = save_dirty();                      /* keep the bar being left, if it was edited */
     cur_bar = (uint8_t)bar;
     chain_row[b] = (uint8_t)bar;               /* the row follows the bar being edited */
     chain_pos = (uint8_t)(bar - 1);            /* selecting a bar is also a jump: the next bar
                                                 * boundary (and the next start) plays this one */
     slot_load(cur_pat, bar, b);
-    struct_slot0();
+    struct_bar(cur_pat, bar);                 /* the same bar, into the player struct */
     TR8_SEQ_VARI = (uint32_t)(b ? 1 : 0);
     TR8_SEQ_VARIATION = (uint32_t)(b ? 1 : 0);
     TR8_FN_APPLY((void *)TR8_PTN_STRUCT);
@@ -561,17 +603,21 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
  * Runs before the screen, so this is the first code that can take the pad. */
 int chain_press(int id)
 {
-    if ((unsigned)id < 16)
+    if ((unsigned)id < 16) {
+        int a, b;
+
         sync();
-    if ((unsigned)id < NBARS) {
-        int a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1;
-        int b = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1;
+        if ((unsigned)id >= NBARS)
+            goto stock;
+        a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1;
+        b = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1;
         if ((a || b) && TR8_BTN_HELD(TR8_BTN_LAST_STEP) != 1) {
             chain_edit(id, a, b);
-            chain_swallow |= (uint16_t)(1u << id);
+            chain_swallow |= (uint8_t)(1u << id);
             return 1;                          /* taken: the screen never sees this pad */
         }
     }
+stock:
     return TR8_FN_BTN_PRESS(id);
 }
 
@@ -581,7 +627,7 @@ int chain_release(int id)
     int r;
 
     if ((unsigned)id < 16 && (chain_swallow & (1u << id))) {
-        chain_swallow &= (uint16_t)~(1u << id);
+        chain_swallow &= (uint8_t)~(1u << id);
         return 0;                              /* the press was taken: swallow the release too */
     }
     r = TR8_FN_BTN_RELEASE(id);

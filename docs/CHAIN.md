@@ -13,9 +13,9 @@ side that was never selected stays stock.
 Every pattern has its own four bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 163 checks). The previous build (sequential
-per-side playback, green row, stopped editing) is confirmed on hardware; the bar jump of this one
-is emulation-tested and pending on the unit.
+Status: **works in emulation** (`tests/emu_chain.py`, 188 checks). The eighth build (per-side
+sequences, green/blink row, stopped editing, bar jump) is confirmed on hardware; the step view
+following the bar that is playing is emulation-tested and pending on the unit.
 Like the other patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
@@ -55,6 +55,12 @@ the panel dispatcher serves on its next pass; see the note on the hardware freez
 the panel's screen object, not the Setup database `0x60149F38` — see
 [FINDINGS.md](FINDINGS.md) section 11.
 
+While the machine **plays**, the step view follows the bar that is playing: the step pads and
+TR-REC show that bar, so a step recorded during playback lands in the bar you hear, and the view
+moves on by itself at every bar boundary. Stopped, the view stays on the bar you selected. The
+follow itself writes no flash: a bar nobody edited is never rewritten, so leaving it at a bar
+boundary costs nothing (see Storage).
+
 The pads only ever choose a bar 1..4; pads 5..16 stay ordinary step pads and LAST STEP + pad
 still sets the pattern length (the poly gesture), because LAST STEP wins over A/B in the patch.
 
@@ -86,14 +92,17 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
   own.
 - **Every sequence starts at bar 1** on a sequencer start and advances one bar per pattern wrap;
   the A+B sequence wraps from the last B bar back to the first A bar.
-- **The selected bar is what TR-REC edits, playing or stopped.** Selecting a bar loads its steps
-  into the working copy (area 4 slot 0) and applies them to the sound; the stock step pads,
-  TR-REC, LAST STEP and CLEAR then work on that bar. The load marks the panel's step view for a
+- **TR-REC edits the bar the step view shows: the selected one, or while playing the one you
+  hear.** Selecting a bar loads its steps into the working copy (area 4 slot 0) and applies them
+  to the sound; the stock step pads, TR-REC, LAST STEP and CLEAR then work on that bar. During
+  playback the step view follows the playing bar instead (`chain_view`, below), so the bar on the
+  pads is always the bar being heard. The load marks the panel's step view for a
   repaint (`0x04` in the screen object's bit word), so the screen redraws the newly selected bar
   on its next pass instead of waiting for some other change; selecting another bar stores the one
-  you leave. The repaint is deliberately deferred: an earlier build called the firmware's
-  synchronous "slot 0 changed" notification (`FUN_60010148(dispatcher, {0, 4})`) from inside the
-  button dispatch, which froze the unit (see the hardware note below).
+  you leave, and leaving a bar nobody edited writes nothing. The repaint is deliberately deferred:
+  an earlier build called the firmware's synchronous "slot 0 changed" notification
+  (`FUN_60010148(dispatcher, {0, 4})`) from inside the button dispatch, which froze the unit (see
+  the hardware note below).
 - **A bar carries its steps, its LAST_A/LAST_B and its scale.** The scale is in the log entry, so
   a scale change is kept with the bar (the redirected save never writes the pattern slot).
   Weak accents and flams are area-6 parameters and stay with the pattern, shared by its bars.
@@ -127,6 +136,7 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
 |---|---|---|
 | `0x60009614` in `FUN_600095F0` | `bl FUN_6000E404` (apply `VARI`) | `bl chain_var` |
 | `0x600098CA` in `FUN_6000989C` | `bl FUN_600095F0` (pattern wrap) | `bl chain_wrap` |
+| `0x60016C44` in `FUN_60016C08` | `bl FUN_60016386` (paint the step pads) | `bl chain_view` |
 | `0x60013842` in `FUN_600137DE` | `bl FUN_60013B34` (press dispatch) | `bl chain_press` |
 | `0x600137D2` in `FUN_6001377C` | `bl FUN_60013B56` (release dispatch) | `bl chain_release` |
 | `0x60017748` in `FUN_6001773A` | `bl FUN_6004BB4C` (raw LED setter) | `bl chain_led4` |
@@ -149,8 +159,20 @@ struct and calls `FUN_6000E152` to put its A or B masks into the sound. With no 
 with the panel on a side that has no bars, it calls the original `FUN_6000E404`.
 
 `chain_wrap` replaces the wrap call and sets a flag around `FUN_600095F0`, so `chain_var` knows
-whether this restart is a wrap (advance) or a start (bar 1). Playback never changes the pattern,
-the panel selection or the working copy.
+whether this restart is a wrap (advance) or a start (bar 1). The tick never changes the pattern,
+the panel selection or the working copy: it only fills the player struct.
+
+**The step view follows the playing bar.** The panel paints the step pads from `FUN_60016C08`, the
+dispatcher that serves the screen object's repaint bits. Bit `0x04` is the step view: the
+dispatcher calls `FUN_60016386` (`bl` at `0x60016C44`) with the panel object in `r0`. `chain_view`
+replaces that call. When the sequencer runs and the bar and side it last played differ from the
+working copy's (`cur_bar`, `cur_side`), it stores the bar being left and loads the playing one into
+area 4 slot 0 with the same `slot_load` the gesture uses, then tail-calls the original paint
+(`0x60016387`) with the object unchanged. So the step pads, TR-REC and the sound agree on the bar,
+and the load happens in the panel's own pass rather than in the tick or the button dispatch. It
+calls `sync()` first, like the gesture does, so a pattern switched while the view was stale is
+noticed before anything is stored. Stopped, it does nothing: the working copy stays on the bar the
+user selected.
 
 **The gesture lives on the press, not in the button handler.** Every button event is offered to
 the active screen first: the type 5 (press) handler `FUN_600137DE` sets the held bit and then
@@ -228,8 +250,12 @@ user area, `0x3DB000`-`0x3DFFFF`:
 
 | Range | Use |
 |---|---|
-| `0x3DF000`, `0x3DE000`, `0x3DD000`, `0x3DC000` | four log blocks, 32 entries each |
+| `0x3DC000`..`0x3DFFFF` | four log blocks of 32 entries; entry *i* is at `0x3DC000 + i * 128` |
 | `0x3DB000` | scratch block for compaction |
+
+The first builds placed entry *i* at `0x3DF000 - (i / 32) * 0x1000 + (i % 32) * 128`, which covers
+the same 16 KB in the opposite block order: the addressing was made a plain multiply, so an
+upgrade keeps the bars already stored.
 
 An entry is 128 bytes (32 words):
 
@@ -254,6 +280,14 @@ shows **`FAIL`** on the numeric display instead of the bar number. (The first ha
 called the primitives without the session, so every program was dropped: edits vanished and a
 revisited bar played the pattern's own steps. Emulation could not see that, because the simulated
 flash accepted every write; `tests/emu_chain.py` now models the protect latch.)
+
+**A bar is only written when it changed.** `store_save` hashes the working copy before appending:
+FNV-1a over words 1..55 of area 4 slot 0 (word 0 is the VARI and is left out, so a side does not
+count as an edit), compared with the hash taken when the bar was loaded. If the two match it
+returns without touching the flash. This is what makes the follow free: during steady playback the
+panel pass loads each new bar and the bar being left is hashed, found unchanged and skipped, so
+playback issues no program or erase at all — no wear and no power-cut window. An edit made while
+playing changes the hash and is appended once, when the sequence moves on.
 
 The log is append-only: one save is one 128-byte program, no erase, so a torn write can only lose
 the newest entry and never a pattern. When the write pointer reaches a block that is still in use,
@@ -292,16 +326,20 @@ the pattern's own steps.
 ### Code space
 
 The payload uses the two developer-dump regions
-(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 772 bytes of `.text.far` plus 1 byte of
-`.data` in the first (788 available, 15 free), 1624 bytes of `.text` plus 212 bytes of `.bss` in
+(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 776 bytes of `.text.far` plus 6 bytes of
+`.data` in the first (788 available, 6 free), 1624 bytes of `.text` plus 212 bytes of `.bss` in
 the second (1838 available, 2 free). The literal pool between them (`0x60011464`-`0x60011484`) is
 live firmware data and is never written. The probe build (`payload_probe.json`) needs 568 + 14
 bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
 combined build needs the "grow the image" method or another dead-code region
-([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths needed
-`-fno-inline`; `struct_bar`, `clen` and `show_fail` live in the first region and `show_ab` is back
-in the second. Dropping the synchronous notification gave the first region back 12 bytes. The
-release-time display hand-back is what took the second region to 2 free bytes.
+([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths and the follow needed
+`-fno-inline`; the first region carries `sync`, `clen`, `struct_bar`, `slot_load`, `chain_edit`,
+`chain_commit`, `ecrc`, `ent_off` and `save_dirty` plus the display buffer and the pattern byte,
+the second everything else. Dropping the synchronous notification gave the first region back 12
+bytes, and the follow fits in the second because `store_gc`, `store_init` and the display helpers
+were rewritten to do less arithmetic (walking the player struct and the row loop, one `eok` that
+also checks the key, one shared `show4`). The follow itself, the hash check and the `sync` guard at
+the top of `chain_view` then take the second region back to 2 free bytes.
 
 ## Why not a real 32- or 64-step pattern
 
@@ -352,7 +390,7 @@ writes a side length, a bar or the pattern:
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 163 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 188 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..4` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar selection
@@ -377,13 +415,20 @@ writes a side length, a bar or the pattern:
   stock commit for a pattern the patch has not loaded; `chain_wrap` marks the restart. The
   simulated flash models the chip's block protection: program/erase outside a write session are
   dropped, as on the unit, and the run checks that every operation happened inside a session and
-  every session was closed. The bar row: all four pad setters (both raw, both palette) resolve
-  that side's bars to green, the head bar to the blinking yellow triple and every other pad to
-  off while exactly one of A/B is held, and forward the original triple when neither or both are
-  held and for every other LED; after a bar press the A row stays one bar and the B row shows the
-  new bar. The probe build (`--probe`, `payload_probe.json`, 46 checks): display strings on the
-  press path and on the global LAST STEP branch, a pass-through save redirect, no Ptn2 writes,
-  `St` line on start.
+  every session was closed. The step view follows the playing bar: the first paint of the bar
+  already in the working copy does not reload it, a bar change does and writes nothing when the
+  bar was not edited, an edit made while playing is stored exactly once at the next boundary, the
+  same bar on the other side is reloaded, a pattern change is noticed before the follow (so the
+  new pattern's steps are never stored as a bar of the old one), and a stopped machine never
+  follows. An *upgrade* also
+  keeps the previous build's bars: entries written at its addresses (old entry 0 is new entry 96,
+  old 32 is new 64) are read back and played. The bar row: all four pad setters (both raw, both
+  palette) resolve that side's bars to green, the head bar to the blinking yellow triple and every
+  other pad to off while exactly one of A/B is held, and forward the original triple when neither
+  or both are held and for every other LED; after a bar press the A row stays one bar and the B row
+  shows the new bar. The probe build (`--probe`, `payload_probe.json`, 47 checks): display strings
+  on the press path and on the global LAST STEP branch, a pass-through save redirect, no Ptn2
+  writes, `St` line on start.
 - Hardware, first build (pad branch of `FUN_6001961E`): LAST STEP + pad set the pattern length,
   stock A/B alternation worked, A + pad showed nothing. Diagnosis: the screen takes a bare pad
   press, so the global button handler never runs for it; the press dispatch is the first code
@@ -424,9 +469,18 @@ writes a side length, a bar or the pattern:
   (`chain_pos` = *n* - 1 in `chain_edit`, so the next boundary lands on *n*) and a fresh start
   begins at the bar last selected (`cur_bar`, which `sync` resets on a pattern change, so a new
   pattern still starts at bar 1). Cost 4 bytes in the second region, which was full: the display
-  buffer `txt` moved to the first region (`.data.far`), next to the other small state. Emulation
-  passes (163 checks, including the jump stopped/playing, the playing bar repeating, the B side
-  and the clamp). Hardware check pending.
+  buffer `txt` moved to the first region (`.data.far`), next to the other small state. Confirmed on
+  the hardware: the jump works stopped and playing, and the four bars still record. Emulation
+  passes (163 checks at that point).
+- Ninth build (this one): the step view **follows the bar that is playing**. `chain_view` replaces
+  the step-view paint call in the panel dispatcher (`0x60016C44`), so during playback the working
+  copy and the step pads move to each bar as it starts and TR-REC edits the bar you hear; stopped,
+  nothing follows. Leaving a bar is free when nobody edited it: `store_save` hashes the working
+  copy and skips the flash write when the hash matches the one taken at load, so steady playback
+  writes nothing. The log addressing became a plain `FL_BASE + i * 128` (same bytes, so the bars of
+  the eighth build stay readable), and `store_init`, `store_gc` and the display helpers were
+  rewritten to keep the payload inside the two regions: 782/788 bytes in the first region (6 free)
+  and 1836/1838 in the second (2 free). Emulation passes (188 checks). Hardware check pending.
 - Hardware checklist for this build:
   0. **Freeze check (do this first):** hold VARIATION A alone for a few seconds and release it
      (the smallest failing case of the previous build); then `A + pad 5` while stopped; then,
@@ -451,6 +505,14 @@ writes a side length, a bar or the pattern:
      the next bar boundary must play bar 3 (not bar 2) and carry on to bar 4, then bar 1. Stop,
      then `A + pad 2` and press A: playback must start at bar 2. `B + pad 2` then B: B starts at
      its bar 2. Switch to another pattern and press A: it starts at its bar 1.
+  4c. **The step view follows the playing bar.** With four A bars holding different steps, press A
+     and watch the 16 pad LEDs in the sequencer screen: they must change at every bar boundary to
+     the bar being heard (compare with the blinking bar in the A row) and must not lag a bar.
+     While it plays, press REC and toggle a step: it must land in the bar that is playing, and
+     after the sequence wraps the step must come back with that bar. Stop: the pads stay on the
+     bar they show, and `A + pad n` still selects for editing as before. Play for a while with no
+     edits: the display must not show `FAIL` and the unit must not slow down (a bar boundary
+     writes nothing when the bar was not edited).
   5. Record different steps into A bar 1, A bar 2 and B bar 1; play A, B and A+B: each bar's own
      steps come back. Select a bar again: the display follows the pad and the steps are restored.
   6. **Stopped bar editing:** with the sequencer stopped, `A + pad 2`, record a step, `A + pad 1`,

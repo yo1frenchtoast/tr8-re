@@ -58,10 +58,13 @@ HMI = 0x60149B8C                      # panel screen object: low halfword is the
 SETUP_DB = 0x60149F38                 # Setup database handle: writing it corrupts the database
 CNT = 17                              # Ptn2 index for the two side lengths (id 0x138)
 
-# The flash log (chain.c): 4 blocks of 32 entries, 128 bytes each, top block first.
-ENT, EPB, TOP, MAGIC = 128, 32, 0x3DF000, 0x31524256
+# The flash log (chain.c): 4 blocks of 32 entries, 128 bytes each, entry i at FL_BASE + i * 128.
+# The earlier builds put entry i at 0x3DF000 - (i // 32) * 0x1000 + (i % 32) * 128, which covers
+# the same 16 KB, so the same flash content stays readable.
+ENT, EPB, BASE, MAGIC = 128, 32, 0x3DC000, 0x31524256
+TOP = 0x3DF000                      # first block of the old numbering, still used to erase blocks
 def ent_off(i):
-    return TOP - (i // EPB) * 0x1000 + (i % EPB) * ENT
+    return BASE + i * ENT
 
 def crc(e):
     h = 0x811C9DC5
@@ -114,13 +117,14 @@ def bar_entry(pat, bar):
     return max(found, key=lambda e: e["seq"]) if found else None
 
 log = []
+WRITES = {"prog": 0, "erase": 0}        # flash traffic, to check that playback stays quiet
 held = set()
 STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E152: "apply",
          0x60013B34: "press", 0x60013B56: "release", 0x600095F0: "restart",
          0x6001B736: "ptn_get", 0x6001B280: "f", 0x6001B12E: "setup_get",
          0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6004FB34: "f", 0x6000066E: "f",
          0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f",
-         0x60051E20: "repaint_panel",
+         0x60051E20: "repaint_panel", 0x60016386: "stepview",
          0x600522E4: "range", 0x600521E8: "f", 0x6000FC78: "commit",
          0x600108AA: "fl_begin", 0x600108BA: "fl_end",
          0x6004BB4C: "led_set",
@@ -142,6 +146,8 @@ def hook(uc, addr, size, _):
             log.append(("apply", r32(EFF)))
         elif name == "notify":
             log.append(("notify", tuple(uc.mem_read(r1, 2))))
+        elif name == "stepview":
+            log.append(("stepview", r0))
         elif name == "repaint_panel":
             # FUN_60051E20: the firmware's own "repaint step pads and numeric text" (0x44 on the
             # panel object). The payload must go through this, not write the object by hand.
@@ -158,8 +164,10 @@ def hook(uc, addr, size, _):
         elif name == "commit":
             log.append(("commit", r1, r2))          # FUN_6000FC78(_, area, slot, _)
         elif name == "fl_prog":
+            WRITES["prog"] += 1
             fl_prog(r0, r1, r2, through_chip=True)
         elif name == "fl_erase":
+            WRITES["erase"] += 1
             fl_erase(r0, through_chip=True)
         elif name == "fl_begin":
             PROTECT["on"] = False
@@ -316,7 +324,9 @@ SITES = [(0x60009614, "chain_var"), (0x600098CA, "chain_wrap"),
          (0x60017E18, "chain_led4"), (0x60017E3A, "chain_led4"),
          (0x6001B7F4, "chain_commit")]
 if "--probe" in sys.argv:
-    SITES.append((0x600199F6, "chain_pad"))
+    SITES.append((0x600199F6, "chain_pad"))     # only the probe has the payload for it
+else:
+    SITES.append((0x60016C44, "chain_view"))    # only the real build follows the playing bar
 for site, sym in SITES:
     t = bl_target(site)
     expect(f"site 0x{site:08x} branches to {sym}", (t & ~1) == (S[sym] & ~1), True)
@@ -477,7 +487,8 @@ expect("press: ... and plays A", applied(r), [("apply", 0)])
 expect("press: ... and marks the step pads for the panel to repaint", r8(HMI) & 0x04, 0x04)
 expect("press: bar 1 is the pattern itself", slot_rows(0), slot_rows(1))
 expect("press: the A side is now one bar", pget(CNT), 0x01)
-expect("press: bar 1 was stored", (bar_entry(0, 0) or {}).get("rows"), slot_rows(1))
+# Bar 1 is the pattern's own steps and nobody edited them: leaving it costs no flash write.
+expect("press: bar 1 needs no entry, it is the pattern itself", bar_entry(0, 0), None)
 
 r = press(2, B)
 expect("press: B + pad 2 shows bar 2 B", edits(r), [("text", "  B2")])
@@ -743,6 +754,84 @@ expect("pattern 2 chain: bar 2 is untouched", (wrap(), struct_rows()), ((0, 0, 1
 set_pattern(0)
 expect("pattern 0 keeps its own (unset) lengths", pget(CNT), 0)
 
+# --- the step view follows the bar that is playing ---------------------------------
+# The step pads are painted from area 4 slot 0, so the patch puts the bar that is playing there
+# in the panel task: chain_view replaces the "bl FUN_60016386" at 0x60016C44 (bit 0x04 of the
+# panel object) and runs just before that paint. The bar it leaves is stored only when the panel
+# edited it, so steady playback writes no flash. Stopped, the working copy stays on the bar the
+# user selected.
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+
+def panel(obj=0x60149B8C):
+    """What the panel dispatcher does with bit 0x04: call the payload, then paint the pads."""
+    log.clear()
+    WRITES["prog"] = WRITES["erase"] = 0
+    call(S["chain_view"], obj)
+    return (list(log), WRITES["prog"], WRITES["erase"])
+
+SETVIEW = [("stepview", 0x60149B8C)]
+
+# Bar 2 of pattern 0 gets a recorded step, bar 1 stays the pattern's own steps.
+press(2, A)
+w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x7777)
+w32(slot_addr(0) + 4 * (5 + 2 * 5), 0x8888)
+call(S["chain_commit"], 0, 4, 1, 0)
+press(1, A)                                   # back on bar 1
+set_chain(3, 0)
+w32(VARI, 0)
+w32(RUN, 1)
+expect("follow: playing A bar 1", start(vari=0), (0, 0, 0))
+
+expect("follow: bar 1 is already the working copy, no reload", panel(), (SETVIEW, 0, 0))
+expect("follow: ... the pads show bar 1", slot_rows(0), slot_rows(1))
+expect("follow: bar 2 plays", wrap(), (0, 0, 1))
+expect("follow: the panel loads the bar that is playing, and writes nothing",
+       panel(), (SETVIEW, 0, 0))
+expect("follow: ... the pads now show the recorded bar 2", slot_rows(0)[5], (0x7777, 0x8888))
+expect("follow: a second paint of the same bar does not reload", panel(), (SETVIEW, 0, 0))
+
+# Editing the step view while the sequence plays edits the playing bar; leaving it stores it.
+w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x1234)
+w32(slot_addr(0) + 4 * (5 + 2 * 5), 0x5678)
+expect("follow: bar 3 plays", wrap(), (0, 0, 2))
+expect("follow: ... the edited bar 2 is stored, once", panel(), (SETVIEW, 1, 0))
+expect("follow: ... with the edit made during playback",
+       (bar_entry(0, 1) or {}).get("rows")[5], (0x1234, 0x5678))
+expect("follow: ... and bar 3 is the pattern", slot_rows(0), slot_rows(1))
+
+# A bar nobody edited is not rewritten when the sequence leaves it.
+expect("follow: wraps to bar 1", wrap(), (0, 0, 0))
+expect("follow: the untouched bar 3 costs no write", panel(), (SETVIEW, 0, 0))
+expect("follow: ... and bar 1 is back in the working copy", slot_rows(0), slot_rows(1))
+
+# The side is part of the working copy: the same bar on the other side has to be reloaded.
+uc.mem_write(S["chain_side"], b"\1")
+uc.mem_write(S["chain_row"] + 1, b"\1")
+expect("follow: the same bar on the B side is reloaded", panel()[1:], (0, 0))
+expect("follow: ... and the working copy carries the B variation", r32(slot_addr(0)), 1)
+
+# Stopped, the panel owns the working copy: nothing follows the row head.
+w32(RUN, 0)
+uc.mem_write(S["chain_side"], b"\0")
+uc.mem_write(S["chain_row"], bytes([2]))
+expect("follow: stopped, the panel keeps the bar the user selected", panel(),
+       (SETVIEW, 0, 0))
+expect("follow: ... nothing was loaded", r32(slot_addr(0)), 1)
+
+# A pattern change while playing: the panel has already put the new pattern into area 4 slot 0, so
+# a follow running with the old pattern number would store that new content as a bar of the old
+# pattern. chain_view calls sync() first, so the change is noticed and nothing is written.
+before = len(entries())
+w32(RUN, 1)
+w32(SETUP + 8, 1)                             # the panel switched to pattern 2
+uc.mem_write(S["chain_side"], b"\0")
+uc.mem_write(S["chain_row"], bytes([2]))      # the old pattern was playing bar 3
+expect("follow: a pattern change is noticed before any follow", panel(), (SETVIEW, 0, 0))
+expect("follow: ... the new pattern's own steps are loaded", slot_rows(0), slot_rows(2))
+expect("follow: ... and no bar was written for the old pattern", len(entries()), before)
+
 # --- power cycle ------------------------------------------------------------------
 # Record bar 2, then reset the payload state the way a power cycle does: .data reloaded, .bss
 # cleared, the flash log untouched. The Ptn2 lengths are part of the pattern's parameter area in
@@ -765,6 +854,28 @@ expect("power cycle: the log is rescanned and bar 2 still has the edit",
 expect("power cycle: the recorded bar keeps its last steps", struct_scalars()[0:2], (0x0C, 0x0D))
 expect("power cycle: bar 3 is still the pattern", (wrap(), struct_rows()), ((0, 0, 2), slot_rows(1)))
 expect("power cycle: back to bar 1", wrap(), (0, 0, 0))
+
+# --- an upgrade keeps the bars the earlier builds stored ---------------------------
+# The builds before this one numbered entry i as 0x3DF000 - (i // 32) * 0x1000 + (i % 32) * 128,
+# i.e. the same 16 KB in the opposite block order: old entry 0 is where entry 96 is addressed
+# now, old entry 32 where entry 64 is. The scan must find both and the bars must play.
+seed_ram()
+FL[:] = b"\xff" * len(FL)
+def old_entry(i, bar, row):
+    e = [0] * 32
+    e[0] = MAGIC
+    e[1] = 1 | (bar << 20)                     # seq 1, pattern 0, bar `bar`
+    e[2] = 0
+    e[4 + 5] = row | ((row + 1) << 16)
+    e[3] = crc(e)
+    struct.pack_into("<32I", FL, 0x3DF000 - (i // EPB) * 0x1000 + (i % EPB) * ENT, *e)
+old_entry(0, 1, 0x1111)                       # pad 2, i.e. bar index 1
+old_entry(32, 2, 0x3333)                      # pad 3
+set_chain(3, 0)
+cold_boot()
+expect("upgrade: the old log is read back at its addresses", start(vari=0), (0, 0, 0))
+expect("upgrade: old entry 0 is bar 2", (wrap(), struct_rows()[5]), ((0, 0, 1), (0x1111, 0x1112)))
+expect("upgrade: old entry 32 is bar 3", (wrap(), struct_rows()[5]), ((0, 0, 2), (0x3333, 0x3334)))
 
 # --- the log does not lose a bar when a block is full -----------------------------
 seed_ram()

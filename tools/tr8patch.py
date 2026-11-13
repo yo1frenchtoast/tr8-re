@@ -92,6 +92,7 @@ PATCHES["chain"] = {
         (0x60011E04, thumb_bl(0x60011E04, 0x600113B2), "nop"),          # dev dump 2 (frees the cave)
         (0x60009614, thumb_bl(0x60009614, 0x6000E404), "chain_var"),    # restart: variation of the pass
         (0x600098CA, thumb_bl(0x600098CA, 0x600095F0), "chain_wrap"),   # pattern wrap: mark it as a wrap
+        (0x60016C44, thumb_bl(0x60016C44, 0x60016386), "chain_view"),  # panel paints the step pads
         (0x60013842, thumb_bl(0x60013842, 0x60013B34), "chain_press"),  # button press: before the screen
         (0x600137D2, thumb_bl(0x600137D2, 0x60013B56), "chain_release"),# matching release of that pad
         (0x60017748, thumb_bl(0x60017748, 0x6004BB4C), "chain_led4"),  # raw pad setter
@@ -107,7 +108,7 @@ PATCHES["chain"] = {
 PATCHES["chain-probe"] = dict(PATCHES["chain"],
                               doc="Bar chain hardware probe: pads and modifiers on the display (no edits)",
                               payload="patches/chain/payload_probe.json",
-                              sites=PATCHES["chain"]["sites"] + [
+                              sites=[s for s in PATCHES["chain"]["sites"] if s[2] != "chain_view"] + [
                                   (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),
                               ])
 

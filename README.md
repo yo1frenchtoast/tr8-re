@@ -26,7 +26,7 @@ accepts.
 | **Motion recording** | **Works on a real TR-8**: hold TR-REC to record, hold CLEAR to erase. RAM only, one global buffer |
 | **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. Saved with each pattern ([docs/POLY.md](docs/POLY.md)) |
 | **Motion + per-instrument length together** | **Works on a real TR-8** ([docs/COMBO.md](docs/COMBO.md)) |
-| **Bar chain (more than two bars)** | **Emulation-tested**: hold A or B + a pad 1..4 to paint a bar and set that side's length; each side plays its own bars in order and A+B plays A then B. A + pad also loads that bar for editing while the machine is stopped (TR-REC edits it, another pad switches bar). While A or B is held the pads show that side's bars (green, playing bar blinking yellow), the rest dark, on every screen. Saved with each pattern ([docs/CHAIN.md](docs/CHAIN.md)) |
+| **Bar chain (more than two bars)** | **Emulation-tested**: hold A or B + a pad 1..4 to paint a bar and set that side's length; each side plays its own bars in order and A+B plays A then B. A + pad also loads that bar for editing while the machine is stopped (TR-REC edits it, another pad switches bar). While playing, the step view follows the bar you hear. While A or B is held the pads show that side's bars (green, playing bar blinking yellow), the rest dark, on every screen. Saved with each pattern ([docs/CHAIN.md](docs/CHAIN.md)) |
 | Web flasher | Same output as `tr8patch.py`, byte for byte (`tests/site_check.mjs`) |
 | Per-pattern saved motion, more than two bars | Assessed; the bar chain is implemented ([docs/FEASIBILITY.md](docs/FEASIBILITY.md), [docs/CHAIN.md](docs/CHAIN.md)) |
 
