@@ -86,7 +86,8 @@ function pickPatch() {
 
 function renderMods() {
   if (!manifest) return;
-  const box = $("mods"), sel = box.children.length ? checked() : features().map(([, p]) => p.provides[0]);
+  const box = $("mods"), sel = box.children.length ? checked()
+    : features().filter(([, p]) => p.status === "tested").map(([, p]) => p.provides[0]);
   box.replaceChildren();
   for (const [, p] of features()) {
     const card = $("mod-card").content.firstElementChild.cloneNode(true);
