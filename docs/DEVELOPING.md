@@ -278,8 +278,10 @@ Two kinds of tests are needed:
 7. Flash, test, record the result.
 8. To offer it on the web flasher, add it to `SHOWN` in `tools/build_site.py`, run
    `python3 -I tools/build_site.py` and commit `site/patches.json`. `tests/run_all.sh` checks that
-   the site builds the same file as `tr8patch.py` (needs Node). Pushing `site/` to `main`
-   publishes it (`.github/workflows/pages.yml`).
+   the site builds the same file as `tr8patch.py` (needs Node). Add a tutorial for a new feature
+   to `site/tutorials.js` (English and French, taken from the "Use" section of its document), and
+   update it when the gestures change. Pushing `site/` to `main` publishes it
+   (`.github/workflows/pages.yml`).
 
 ## 7. Patches that store data: the contract
 

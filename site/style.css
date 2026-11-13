@@ -152,3 +152,28 @@ details p { color: var(--muted); margin: 8px 0 0; }
 .mod-title { display: flex; align-items: center; gap: 10px; }
 .mod-title::before { content: ""; flex: none; width: 16px; height: 16px; border: 1px solid #4a5156; border-radius: 2px; background: #0b0d0e; }
 .mod:has(input:checked) .mod-title::before { background: var(--green) center/12px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5l2.5 2.5L10 3.5' fill='none' stroke='%230b0d07' stroke-width='2'/%3E%3C/svg%3E"); border-color: var(--green); }
+
+/* step 5: tutorials */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); margin: 0 0 18px; }
+.tab { font: 600 16px "Barlow Condensed", sans-serif; letter-spacing: .08em; text-transform: uppercase; padding: 8px 14px; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--muted); cursor: pointer; }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--green); border-bottom-color: var(--green); }
+.tab:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.guide h3 { margin: 20px 0 8px; font: 600 15px "Barlow Condensed", sans-serif; letter-spacing: .14em; text-transform: uppercase; color: var(--green); }
+.guide .intro { margin: 0; }
+.guide .warn { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid var(--orange); background: rgba(240, 138, 36, .08); color: var(--text); font-size: 15px; }
+.guide .notes { margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--muted); }
+.guide .notes li::marker { color: var(--green-dim); }
+.guide .more { margin: 18px 0 0; }
+kbd { display: inline-block; font: 600 .82em/1.3 "Barlow Condensed", sans-serif; letter-spacing: .06em; padding: 1px 6px; border: 1px solid #4a5156; border-bottom-width: 2px; border-radius: 3px; background: #0b0d0e; color: var(--white); white-space: nowrap; }
+samp { font: 500 .9em "JetBrains Mono", monospace; white-space: pre; padding: 0 4px; border-radius: 2px; background: #1a0a09; color: var(--red); text-shadow: 0 0 8px rgba(229, 50, 45, .45); }
+.gestures { display: grid; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.g-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 12px; padding: 9px 12px; border-top: 1px solid var(--line); }
+.g-row:first-child { border-top: 0; }
+.g-head { background: #0e1011; color: var(--muted); font: 600 13px "Barlow Condensed", sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+.g-do { line-height: 1.9; }
+.g-res { color: var(--muted); }
+@media (max-width: 560px) {
+  .g-row { grid-template-columns: 1fr; gap: 2px; }
+  .g-head { display: none; }
+}

@@ -72,6 +72,13 @@
       </ol>
       <p class="note" data-i18n="install.back">To go back, do the same with the official TR8_UPD.BIN from the zip.</p>
     </li>
+
+    <li class="panel" id="step-use">
+      <h2><span class="num">5</span><span data-i18n="guide.title">Use your mods</span></h2>
+      <p class="hint" data-i18n="guide.hint">A first session for each mod. If you built several mods together, each one works exactly as described here.</p>
+      <div class="tabs" role="tablist" id="guide-tabs" aria-labelledby="step-use"></div>
+      <div class="guide" id="guide" role="tabpanel"></div>
+    </li>
   </ol>
 
   <section class="faq">
@@ -79,7 +86,7 @@
     <details><summary data-i18n="faq.q1">The page refuses my file</summary><p data-i18n="faq.a1">Only the official system v1.61 is supported, unmodified. Download the zip again from Roland. A file already patched by this page is refused on purpose: always start from the official file.</p></details>
     <details><summary data-i18n="faq.q2">The TR-8 does not start, or behaves badly</summary><p data-i18n="faq.a2">Hold step pad [1] while you switch on: the updater starts before the firmware, even a modified one. Install the official TR8_UPD.BIN, then restore your backup if needed.</p></details>
     <details><summary data-i18n="faq.q3">The update stops with error 6</summary><p data-i18n="faq.a3">The file on the drive is not the one built here (checksum). Build it again, copy it again, and check that nothing else is on the drive.</p></details>
-    <details><summary data-i18n="faq.q4">Where are my motion moves or lengths after a restart?</summary><p data-i18n="faq.a4">The lengths are saved with each pattern. Motion moves stay in RAM for now: they are lost at power off.</p></details>
+    <details><summary data-i18n="faq.q4">Where are my motion moves, lengths or bars after a restart?</summary><p data-i18n="faq.a4">The lengths are saved with each pattern, and the bars of the bar chain in the flash of the TR-8: both survive power off. Motion moves stay in RAM for now: they are lost at power off.</p></details>
   </section>
 </main>
 

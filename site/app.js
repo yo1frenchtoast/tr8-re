@@ -1,4 +1,5 @@
 import { build, extractUpdate } from "./tr8patch.js";
+import { TUTORIALS } from "./tutorials.js";
 
 const FR = {
   "nav.github": "Source",
@@ -33,17 +34,23 @@ const FR = {
   "faq.a2": "Maintenez le pad [1] à l'allumage : le programme de mise à jour démarre avant le firmware, même modifié. Installez le TR8_UPD.BIN officiel, puis restaurez votre sauvegarde si besoin.",
   "faq.q3": "La mise à jour s'arrête sur l'erreur 6",
   "faq.a3": "Le fichier sur le lecteur n'est pas celui construit ici (somme de contrôle). Reconstruisez-le, recopiez-le, et vérifiez qu'il n'y a rien d'autre sur le lecteur.",
-  "faq.q4": "Où sont mes mouvements ou mes longueurs après un redémarrage ?",
-  "faq.a4": "Les longueurs sont sauvegardées avec chaque pattern. Les mouvements de motion restent en RAM pour l'instant : ils sont perdus à l'extinction.",
+  "faq.q4": "Où sont mes mouvements, longueurs ou mesures après un redémarrage ?",
+  "faq.a4": "Les longueurs sont sauvegardées avec chaque pattern, et les mesures de la chaîne de mesures dans la mémoire flash de la TR-8 : les deux survivent à l'extinction. Les mouvements de motion restent en RAM pour l'instant : ils sont perdus à l'extinction.",
+  "guide.title": "Utiliser les mods",
+  "guide.hint": "Une première prise en main pour chaque mod. Si vous avez construit plusieurs mods ensemble, chacun fonctionne exactement comme décrit ici.",
   "foot.affil": "Projet non officiel, sans lien avec Roland Corporation ni approuvé par elle. TR-8 est une marque de Roland Corporation.",
   "foot.license": "Licence MIT. Aucun code Roland n'est inclus : la page modifie le fichier que vous fournissez.",
   "foot.docs": "Documentation et source",
 };
 const MSG = {
   en: { tested: "Tested on a TR-8", experimental: "Experimental", doc: "How it works", loaded: "loaded", building: "Building…",
-        built: "Done. Download the file, then install it (step 4).", progress: "compressing" },
+        built: "Done. Download the file, then install it (step 4).", progress: "compressing",
+        first: "First session", gestures: "Gestures", notes: "Good to know", fulldoc: "Full documentation",
+        gesture: "Gesture", result: "Result" },
   fr: { tested: "Testé sur TR-8", experimental: "Expérimental", doc: "Fonctionnement", loaded: "chargé", building: "Construction…",
-        built: "Terminé. Téléchargez le fichier, puis installez-le (étape 4).", progress: "compression" },
+        built: "Terminé. Téléchargez le fichier, puis installez-le (étape 4).", progress: "compression",
+        first: "Premier essai", gestures: "Gestes", notes: "Bon à savoir", fulldoc: "Documentation complète",
+        gesture: "Geste", result: "Résultat" },
 };
 const REPO = "https://github.com/yo1frenchtoast/tr8-re/blob/main/";
 
@@ -51,7 +58,7 @@ const $ = (id) => document.getElementById(id);
 const EN = {};
 document.querySelectorAll("[data-i18n]").forEach((el) => (EN[el.dataset.i18n] = el.textContent));
 
-let lang = "en", manifest = null, input = null, fileName = "", output = null;
+let lang = "en", manifest = null, input = null, fileName = "", output = null, guideTab = null;
 try { lang = localStorage.getItem("lang") || (navigator.language.startsWith("fr") ? "fr" : "en"); } catch { /* storage blocked */ }
 
 function setLang(l) {
@@ -64,6 +71,7 @@ function setLang(l) {
   });
   document.querySelectorAll("[data-lang]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === l)));
   renderMods();
+  renderGuide();
   if (input) $("drop-text").textContent = `${fileName} · ${MSG[lang].loaded}`;
 }
 
@@ -105,6 +113,82 @@ function renderMods() {
     doc.textContent = `${MSG[lang].doc} →`;
     box.append(card);
   }
+}
+
+// Tutorial text: [[X]] is a TR-8 button or control, {{X}} is display text. Built with DOM nodes
+// (no innerHTML), so the strings stay plain text.
+function rich(text) {
+  const frag = document.createDocumentFragment();
+  for (const part of text.split(/(\[\[.+?\]\]|\{\{.+?\}\})/)) {
+    if (!part) continue;
+    const m = part.match(/^\[\[(.+)\]\]$/) || part.match(/^\{\{(.+)\}\}$/);
+    if (!m) { frag.append(part); continue; }
+    const el = document.createElement(part[0] === "[" ? "kbd" : "samp");
+    el.textContent = m[1];
+    frag.append(el);
+  }
+  return frag;
+}
+
+function el(tag, cls, ...kids) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  e.append(...kids);
+  return e;
+}
+
+// One tab per feature the site offers, in the order of the mod cards. The first ticked mod is
+// open by default; a tab the user picked stays open.
+function renderGuide() {
+  if (!manifest) return;
+  const ids = features().map(([, p]) => p.provides[0]).filter((f) => TUTORIALS[f]);
+  if (!ids.includes(guideTab)) guideTab = checked().find((f) => ids.includes(f)) || ids[0];
+  const tabs = $("guide-tabs");
+  tabs.replaceChildren();
+  for (const id of ids) {
+    const b = el("button", "tab", TUTORIALS[id][lang].tab);
+    b.type = "button";
+    b.id = `tab-${id}`;
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", String(id === guideTab));
+    b.setAttribute("aria-controls", "guide");
+    b.tabIndex = id === guideTab ? 0 : -1;
+    b.addEventListener("click", () => { guideTab = id; renderGuide(); });
+    b.addEventListener("keydown", (e) => {
+      const d = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+      if (!d) return;
+      guideTab = ids[(ids.indexOf(id) + d + ids.length) % ids.length];
+      renderGuide();
+      $(`tab-${guideTab}`).focus();
+    });
+    tabs.append(b);
+  }
+  const t = TUTORIALS[guideTab], c = t[lang], m = MSG[lang];
+  const body = $("guide");
+  body.setAttribute("aria-labelledby", `tab-${guideTab}`);
+  body.replaceChildren();
+  if (c.warn) body.append(el("p", "warn", rich(c.warn)));
+  body.append(el("p", "intro", rich(c.intro)));
+  body.append(el("h3", null, m.first), el("ol", "howto", ...c.steps.map((s) => el("li", null, rich(s)))));
+  const table = el("div", "gestures");
+  table.setAttribute("role", "table");
+  const head = el("div", "g-row g-head", el("span", null, m.gesture), el("span", null, m.result));
+  head.setAttribute("role", "row");
+  [...head.children].forEach((x) => x.setAttribute("role", "columnheader"));
+  table.append(head);
+  for (const [g, r] of c.gestures) {
+    const row = el("div", "g-row", el("span", "g-do", rich(g)), el("span", "g-res", rich(r)));
+    row.setAttribute("role", "row");
+    [...row.children].forEach((x) => x.setAttribute("role", "cell"));
+    table.append(row);
+  }
+  body.append(el("h3", null, m.gestures), table);
+  body.append(el("h3", null, m.notes), el("ul", "notes", ...c.notes.map((s) => el("li", null, rich(s)))));
+  const doc = el("a", "mod-doc", `${m.fulldoc} →`);
+  doc.href = REPO + t.doc;
+  doc.target = "_blank";
+  doc.rel = "noopener";
+  body.append(el("p", "more", doc));
 }
 
 function log(text, cls) {
