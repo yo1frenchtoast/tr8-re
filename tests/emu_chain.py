@@ -16,7 +16,9 @@ from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_HOOK_CODE
 from unicorn.arm_const import *
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-pay = json.load(open(os.path.join(ROOT, "patches/chain/payload.json")))
+# --payload PATH: the probe build (patches/chain/payload_probe.json), see --probe below
+PAYLOAD = sys.argv[sys.argv.index("--payload") + 1] if "--payload" in sys.argv else "patches/chain/payload.json"
+pay = json.load(open(os.path.join(ROOT, PAYLOAD)))
 S = pay["symbols"]
 app = open(sys.argv[1], "rb").read()
 
@@ -109,6 +111,27 @@ def pad(n, *buttons):
 for site, sym in ((0x60009614, "chain_var"), (0x600098CA, "chain_wrap"), (0x600199F6, "chain_pad")):
     t = bl_target(site)
     expect(f"site 0x{site:08x} branches to {sym}", (t & ~1) == (S[sym] & ~1), True)
+
+if "--probe" in sys.argv:
+    # patches/chain/probe.c: display only, no pattern writes, LAST STEP does not set a length.
+    expect("probe: plain pad reports no modifier", texts(pad(3)), [" 3--"])
+    expect("probe: A + pad 1", texts(pad(1, A)), [" 1A-"])
+    expect("probe: B + pad 12", texts(pad(12, B)), ["12B-"])
+    expect("probe: A+B + pad 3", texts(pad(3, A, B)), [" 3C-"])
+    expect("probe: A+B+LAST STEP + pad 3", texts(pad(3, A, B, LAST)), [" 3CL"])
+    expect("probe: nothing written to the pattern", pget(BITS) + pget(LEN), 0)
+    expect("probe: LAST STEP + pad does not set the length", pad(8, LAST), [("text", " 8-L")])
+
+    def probe_start(vari, eff):
+        log.clear(); w32(VARI, vari); w32(EFF, eff)
+        uc.mem_write(S["chain_wrapping"], b"\0")
+        call(S["chain_var"], OBJ)
+        return texts(log)
+
+    expect("probe: start shows VARI 0", probe_start(0, 0), ["St00"])
+    expect("probe: start shows VARI 1", probe_start(1, 0), ["St11"])
+    expect("probe: start shows VARI 2 (A+B), stock toggle", probe_start(2, 1), ["St20"])
+    print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)
 
 expect("no chain at boot", (pget(LEN), pget(BITS)), (0, 0))
 expect("pad alone: nothing set", texts(pad(4)), [])

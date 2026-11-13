@@ -94,13 +94,43 @@ More *material* than two bars needs either C/D variation storage or a chain of w
 the pattern field could be added to the same gesture later (8 bars x (4-bit pattern + 1-bit
 variation) still fits in the spare ids).
 
+## If the gesture does nothing
+
+Three things to check first:
+
+1. **Pattern-select screen.** While that screen is open the button handler returns before the
+   step-pad branch (`0x60019622` -> `0x600196C2`), so no gesture reaches the patch. Use the
+   normal pattern mode, where the pads are steps.
+2. **The chain only plays with A+B selected.** A alone or B alone loops that variation; that is
+   the editing mode. A+B is stock (press and hold one variation button, then press the other).
+3. **The display is the feedback.** The pads keep showing steps; they never show the chain.
+
+The **probe build** shows what the firmware actually sees:
+
+```sh
+python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_probe.BIN --patch chain-probe
+```
+
+It uses the same hooks and only displays, so it never writes the chain or the pattern:
+
+| Display | Meaning |
+|---|---|
+| `St00` / `St11` / `St20` on start | payload runs; `St20` = panel VARI 2 (A+B), effective variation of the pass 0 |
+| ` 1A-` (A + pad 1) | hook runs and the firmware reports VARIATION A held |
+| `12B-` (B + pad 12) | same for B, two-digit pad |
+| ` 3C-` (A+B + pad 3) | both variation buttons held |
+| ` 3CL` (A+B + LAST STEP + pad 3) | LAST STEP also held |
+| ` 3--` (plain pad 3) | hook runs, no modifier seen: the pad path works, the A/B check does not |
+| nothing at all | the payload is not running, or the pattern-select screen is open (a plain pad must show ` 3--`) |
+
 ## Test history
 
 - Emulation (`tests/emu_chain.py`): the gesture through the firmware's button handler and Ptn2
   setter (paint, extend, length, chain off, two digits, LAST STEP still wins, no other Ptn2 id
   touched); the playback decision through the patched hook (`A A B A` and `A B` chains, start at
   bar 1, wrap order, A/B bypass, stock toggle with no chain); the three sites branch into the
-  payload.
+  payload. The probe build (`--probe`, `payload_probe.json`): display strings for pad and
+  modifiers, no pattern writes, LAST STEP does not set a length, `St` line on start.
 - Not yet on a unit. Hardware checklist:
   1. Press A+B: stock A/B alternation still works (no chain).
   2. Hold A, press pads 1, 2, 3; hold B, press pad 4. Press A+B, start: the four bars play

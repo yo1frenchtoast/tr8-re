@@ -95,6 +95,11 @@ PATCHES["chain"] = {
     ],
 }
 
+# Hardware probe: same sites, display only (patches/chain/probe.c, docs/CHAIN.md).
+PATCHES["chain-probe"] = dict(PATCHES["chain"],
+                              doc="Bar chain hardware probe: pads and modifiers on the display (no edits)",
+                              payload="patches/chain/payload_probe.json")
+
 # Motion + poly together (patches/combo). Code in both developer-dump regions; tables in patch
 # RAM: the RTOS pool start moves from 0x60280988 to 0x60290988 (64 KB), zeroed by ram_init at boot.
 _motion_sites = [s for s in PATCHES["motion"]["sites"] if s[2] != "nop"]

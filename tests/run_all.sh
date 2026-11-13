@@ -24,6 +24,7 @@ run motion-diag  patched_diag  emu_motion.py --diag
 run motion-probe patched_probe emu_probe.py
 run poly       patched_poly  emu_poly.py
 run chain      patched_chain emu_chain.py
+run chain-probe patched_chain_probe emu_chain.py --payload patches/chain/payload_probe.json --probe
 run motion-poly patched_combo emu_combo.py
 printf '%-14s ' "  + motion";  $PY tests/emu_motion.py work/patched_combo/appA.bin --payload patches/combo/payload.json | tail -1
 printf '%-14s ' "  + poly";    $PY tests/emu_poly.py   work/patched_combo/appA.bin --payload patches/combo/payload.json | tail -1
