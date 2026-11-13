@@ -337,6 +337,9 @@ def seed_ram():
         for i in range(26):
             w32(b + 4 * (4 + 2 * i), 0x4000 + (s << 8) + i)   # A mask
             w32(b + 4 * (5 + 2 * i), 0x5000 + (s << 8) + i)   # B mask
+    # The panel copies the pattern into the working copy when it selects it (set_pattern); the
+    # VARI word stays the panel's (A here), the tests choose the side.
+    uc.mem_write(slot_addr(0) + 4, bytes(uc.mem_read(slot_addr(1) + 4, 4 * C4 - 4)))
     w32(slot_addr(0) + 4 * 56, 0)                # keep word 56 clear (not part of a slot)
     w32(SETUP + 8, 0)          # Setup[2] = pattern 0
     w32(SETUP + 0x3C, 0)       # Setup[0xF] = 0
@@ -958,6 +961,35 @@ uc.mem_write(S["chain_row"], bytes([2]))      # the old pattern was playing bar 
 expect("follow: a pattern change is noticed before any follow", panel(), (SETVIEW, 0, 0))
 expect("follow: ... the new pattern's own steps are loaded", slot_rows(0), slot_rows(2))
 expect("follow: ... and no bar was written for the old pattern", len(entries()), before)
+
+# --- a step entered while the bar plays is heard at the next pass --------------------
+# TR-REC writes the working copy. The bar that is in the working copy is played from there, not
+# from the cache, which is only refreshed when the bar is stored: with a one-bar sequence the
+# playhead never leaves the bar, so the cached copy played the old steps until a stop (reported
+# on the unit: steps entered in TR-REC were silent until stop/start).
+seed_ram()
+cold_boot()
+FL[:] = b"\xff" * len(FL)
+sync_panel()
+set_chain(1, 0)
+press(1, A)                                   # bar 1 of side A in the working copy
+w32(VARI, 0)
+w32(RUN, 1)
+expect("live: one A bar plays", start(vari=0), (0, 0, 0))
+w32(slot_addr(0) + 4 * (4 + 2 * 5), 0x0F0F)  # TR-REC: a step on row 5, A side
+expect("live: the next pass is the same bar", wrap(), (0, 0, 0))
+expect("live: ... and it plays the step just entered", struct_rows()[5][0], 0x0F0F)
+expect("live: ... with nothing written to the flash", entries(), [])
+
+# Two bars: bar 2 is not in the working copy, so it plays its stored content; back on bar 1
+# the edit made there is heard even though the panel has not followed yet.
+set_chain(2, 0)
+w32(slot_addr(0) + 4 * (4 + 2 * 6), 0x3C3C)
+expect("live: two bars, bar 2", wrap(), (0, 0, 1))
+expect("live: ... bar 2 is the pattern, not the working copy", struct_rows()[6], slot_rows(1)[6])
+expect("live: back on bar 1", wrap(), (0, 0, 0))
+expect("live: ... with both edits", (struct_rows()[5][0], struct_rows()[6][0]), (0x0F0F, 0x3C3C))
+w32(RUN, 0)
 
 # --- power cycle ------------------------------------------------------------------
 # Record bar 2, then reset the payload state the way a power cycle does: .data reloaded, .bss

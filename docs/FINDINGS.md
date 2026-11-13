@@ -601,15 +601,15 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   the image (`0x601309E0`) would be erased, because the bss zero-fill covers
   `0x601264EC`-`0x60280987`. Instead:
   1. extend the decompressed size so that the image reaches the new code. The bytes between
-     `0x601309E0` and the code are zeros and compress well: reaching `0x60282794` costs about
-     164 KB of compressed application (0xA5CF7 -> 0xCEDDD), and the module still ends at file
-     offset 0xFEE1D, far below `appB` at 0x280000. `tr8patch.py` and the web flasher extend the
+     `0x601309E0` and the code are zeros and compress well: reaching `0x602827FC` costs about
+     164 KB of compressed application (0xA5CF7 -> 0xCEE40), and the module still ends at file
+     offset 0xFEE80, far below `appB` at 0x280000. `tr8patch.py` and the web flasher extend the
      application array themselves when a payload lies beyond the current end.
   2. put the new code and data at `0x60281200` (above the bss, so it is not zeroed). Not
      `0x60280988`: `motion-poly`'s patch RAM occupies `0x60280A00`-`0x60281183`, and the 64 KB
      below the moved pool is that reservation. The chain's `.text` is
-     `0x60281200`-`0x60281E66` (3174 bytes) and its `.bss` (including the 2 KB playback cache)
-     runs to `0x60282794`; the patcher reserves 8 KB, `0x60281200`-`0x60283200`.
+     `0x60281200`-`0x60281ECB` (3276 bytes) and its `.bss` (including the 2 KB playback cache)
+     runs to `0x602827FC`; the patcher reserves 8 KB, `0x60281200`-`0x60283200`.
   3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8`
      (`FUN_60010430`) becomes `0x60290988`, the same move `motion-poly` makes. The other copy at
      `0x6012A2FC` is the startup stack top, not the pool (see the next item). The bss zero-fill

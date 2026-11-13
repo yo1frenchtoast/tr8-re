@@ -61,7 +61,7 @@
  * chain_view, chain_press, chain_edit, chain_led4, chain_commit and the log/store code run in
  * the panel task. The sequencer never touches the flash: it reads a RAM copy of the bars that
  * the panel task fills (bar_ram). State has one writer: the sequencer writes chain_pos,
- * chain_side, chain_row and chain_wrapping; the panel writes cur_pat, cur_bar, cur_side,
+ * chain_side, chain_row and chain_wrapping; the panel writes cur_pat, cur_bar, cur_side, wc_bar,
  * chain_sel, chain_jump, chain_swallow and the log index.
  */
 #include "tr8_v161.h"
@@ -128,6 +128,11 @@ static volatile uint8_t cur_pat = 0xFF; /* pattern whose bars are loaded, 0xFF =
 static volatile uint8_t cur_bar; /* bar in the working copy */
 static volatile uint8_t cur_side;/* side the working copy was loaded for */
 static uint32_t clean;           /* wchash() of the working copy when it was loaded */
+/* Bar of cur_pat that is in the working copy, 0xFF while a load is in progress or when the
+ * working copy is not a bar. The panel writes it after the load; struct_bar plays that bar from
+ * the working copy, so a step entered in TR-REC is heard at the next pass, not only after the
+ * bar has been stored (a one-bar sequence never leaves its bar while it plays). */
+static volatile uint8_t wc_bar = 0xFF;
 
 /* Playback copy of each bar's log entry, filled by the panel task. Two buffers per bar: the
  * panel writes the one the sequencer is not using and then flips cache_idx[bar] (one byte,
@@ -429,6 +434,7 @@ static void slot_load(int pat, int bar, int side)
     uint8_t idx = tab[pat * NBARS + bar];
     int i;
 
+    wc_bar = 0xFF;                     /* the sequencer uses the cache until the copy is done */
     if (idx) {
         F_READ(ent_off(idx - 1), ENTB, ebuf);
         if (eok(ebuf, pat * NBARS + bar)) {
@@ -442,6 +448,7 @@ static void slot_load(int pat, int bar, int side)
             d[0] = (uint32_t)side;
             cache_put(bar, ebuf);
             clean = wchash(d);
+            wc_bar = (uint8_t)bar;
             return;
         }
     }
@@ -451,6 +458,7 @@ static void slot_load(int pat, int bar, int side)
     d[0] = (uint32_t)side;
     cache_put(bar, 0);
     clean = wchash(d);
+    wc_bar = (uint8_t)bar;
 }
 
 /* Load the pattern's own steps (area 4 slot pat+1) into the working copy, ignoring the log.
@@ -462,20 +470,26 @@ static void pattern_load(int pat, int side)
     volatile uint32_t *src = area_slot(TR8_AREA_PATTERN, pat + 1);
     int i;
 
+    wc_bar = 0xFF;
     for (i = 0; i < 56; i++)
         d[i] = src[i];
     d[0] = (uint32_t)side;
     clean = wchash(d);
+    wc_bar = 0;                        /* the caller sets cur_bar 0: it is edited as bar 1 */
 }
 
 /* Fill the player struct from bar `bar` of pattern `pat`, without touching the working copy.
- * This runs in the sequencer task, so it reads the panel's RAM copy and never the flash. */
+ * This runs in the sequencer task, so it reads RAM only and never the flash: the bar that is in
+ * the working copy (wc_bar) comes from the working copy, with the edits the panel made since it
+ * was loaded; any other bar comes from the panel's cache, else from the pattern slot. The
+ * working copy has the layout of a pattern slot, so both use the `def` path. */
 static void struct_bar(int pat, int bar)
 {
-    volatile uint32_t *def = area_slot(TR8_AREA_PATTERN, pat + 1);
+    int live = bar == (int)wc_bar;
+    volatile uint32_t *def = area_slot(TR8_AREA_PATTERN, live ? 0 : pat + 1);
     volatile uint8_t *d = TR8_PTN_STRUCT, *p = d;
     const uint32_t *e = (const uint32_t *)bar_ram[cache_idx[bar]][bar];
-    int i, ok = eok(e, pat * NBARS + bar);
+    int i, ok = !live && eok(e, pat * NBARS + bar);
 
     /* The player struct has 4-byte A/B pairs for the first four rows (0x20..0x2F), then 6-byte
      * ones (0x30..): walking a pointer is shorter than computing the offset of every row. */
@@ -570,6 +584,7 @@ static void sync(void)
         uint32_t vari = wc[0];             /* the pattern's own VARI: 0 = A, 1 = B, 2 = A+B */
         int side = vari == 1;              /* A+B starts on the A side */
 
+        wc_bar = 0xFF;                     /* the working copy is the new pattern now */
         cache_load(p);
         cur_bar = 0;
         cur_side = (uint8_t)side;
@@ -583,6 +598,7 @@ static void sync(void)
         else
             clean = wchash(wc);
         wc[0] = vari;                      /* slot_load wrote the side: keep A+B */
+        wc_bar = 0;                        /* cur_bar 0: the panel edits and saves it as bar 1 */
         cur_pat = (uint8_t)p;
         view_hold = 1;                     /* this pass must not follow the old row */
     }

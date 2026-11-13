@@ -192,10 +192,11 @@ their state apart:
 | `chain_pad` (probe only) | `0x600199F6`, inside `FUN_6001961E` (global button handler) | panel | [code] |
 
 The sequencer task writes `chain_pos`, `chain_side`, `chain_row` and `chain_wrapping` only. The
-panel task writes `cur_pat`, `cur_bar`, `cur_side`, `chain_sel`, `chain_swallow`, `chain_jump`,
+panel task writes `cur_pat`, `cur_bar`, `cur_side`, `wc_bar`, `chain_sel`, `chain_swallow`, `chain_jump`,
 the log index and the playback cache. Each hand-off between them is one byte written last, after
 the data it describes: `chain_jump` (the bar the panel just selected) and the per-bar
-`cache_idx` (flipped after the bar copy). No buffer is written by both tasks.
+`cache_idx` (flipped after the bar copy) and `wc_bar` (written after the working copy is
+loaded). No buffer is written by both tasks.
 
 `FUN_600095F0` restarts the pattern at start and at every wrap
 ([FINDINGS.md](FINDINGS.md) section 7, "Pattern restart and variation"). It first fills the
@@ -368,7 +369,7 @@ dropped program before the erase leaves both copies and takes the same path.
 `sync()`, which scans on its first pass (or when the pattern changed) and then fills the playback
 cache; the sequencer never calls it. The index is 128 bytes (16 patterns x 8 bars), which
 no longer fits the developer-dump region, so it lives with the code **in the application image**
-above the firmware bss (`0x60281E68` onward, `.bss`); the image grows to cover it and the RTOS
+above the firmware bss (`0x60281ED0` onward, `.bss`); the image grows to cover it and the RTOS
 pool start moves by 64 KB (see "Code space"). The image is decompressed from flash at every boot,
 so the index is in place and zeroed before `store_init` runs — there is no patch RAM and no boot
 hook for the chain.
@@ -380,6 +381,15 @@ buffer the index names, so a bar boundary never issues a flash read and never se
 entry; a buffer whose first word is not the magic means the bar has no entry, and the pattern slot
 is played. The panel fills the cache on a pattern change (before `cur_pat` is written) and after
 every save.
+
+**The bar in the working copy plays from the working copy.** The cache only changes when a bar is
+stored, which happens when the playhead or the user leaves it. TR-REC, the step pads and LAST STEP
+edit slot 0, so `struct_bar` plays the bar that is in slot 0 (`wc_bar`, written by the panel task
+after each load, `0xFF` during it) from slot 0, and every other bar from the cache. A step entered
+while a bar plays is heard at that bar's next pass. Before this, a one-bar sequence, which never
+leaves its bar, played the cached steps until the next stop (reported on the unit: steps entered
+in TR-REC were silent until stop/start). Slot 0 has the layout of a pattern slot, so the same code
+reads both.
 
 **Pattern save is redirected only while the pattern has a chain.** The firmware's pattern save
 (`FUN_6001B7D8` -> `FUN_6000FC78`) normally copies area 4 slot 0 over slot *n+1*. While the
@@ -441,17 +451,17 @@ space"):
 
 | What | Where | Size |
 |---|---|---|
-| Code, `.data` | `0x60281200`-`0x60281E67` in the application image | 3174 + 1 bytes |
-| Bar index, playback cache and other state | `0x60281E68`-`0x60282794` (`.bss`, in the image) | 2348 bytes |
+| Code, `.data` | `0x60281200`-`0x60281ECD` in the application image | 3276 + 2 bytes |
+| Bar index, playback cache and other state | `0x60281ED0`-`0x602827FB` (`.bss`, in the image) | 2348 bytes |
 
 The cache alone is 2048 bytes (`bar_ram[2][8][32]`), so the patcher reserves 8 KB for the payload
-region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x60282794`.
+region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x602827FC`.
 
 The firmware's bss ends at `0x60280987` (the startup code zeroes it) and the RTOS pool starts at
 `0x60280988`. The zero-fill bounds are their own startup literals (`0x601264EC` at `0x6000015C`,
 size `0x15A49C` at `0x60000160`), so the pool move does not extend the zeroing over the chain. The
 patcher writes the payload at `0x60281200` and **extends the decompressed image
-to `0x60282794`** with zeros; the boot loader decompresses that size to `0x60000000` without a
+to `0x602827FC`** with zeros; the boot loader decompresses that size to `0x60000000` without a
 fixed cap (it is bounded only by `destination + decompressed size`, verified in `FUN_01000B3C` /
 `0x01000C76`). The startup zero-fill still stops at `0x60280987`, so the code and its state
 survive. The patcher then moves the RTOS pool start literal (`0x600104A8`) from `0x60280988` to
@@ -640,7 +650,7 @@ writes a side length, a bar or the pattern:
   beyond the image, like the Python one. The tenth build's flash log, log blocks and Ptn2 lengths
   are unchanged. Emulation: 224 chain checks and the combinations; the probe is still the cave
   build. Hardware: not tested yet — the boot path is the new part.
-- Twelfth build (this one): **review fixes and the storage contract**. The sequencer no longer
+- Twelfth build: **review fixes and the storage contract**. The sequencer no longer
   reads the flash or shares a buffer with the panel: the panel task fills a two-buffer RAM copy of
   each bar (`bar_ram`, 2 KB) and the sequencer copies from it. `store_init` finishes an interrupted
   compaction from the scratch block. The pattern-save redirect applies only while the pattern has
@@ -654,7 +664,13 @@ writes a side length, a bar or the pattern:
   compaction), a power cut after each of the 19 flash operations of a compaction, torn slots
   inside the compacted block, `seqn` across 0x8000, a pattern change with VARI = 2, an A+B start
   after selecting a B bar while stopped, and checks that the sequencer issues no flash read or
-  write. Hardware: not tested yet.
+  write. Hardware: passed (`motion-poly-chain`, see below).
+- Thirteenth build (this one): **steps entered while playing are heard**. On the unit, steps
+  entered in TR-REC during playback of a chained pattern stayed silent until stop/start: each
+  pass refilled the player struct from the bar cache, which is refreshed only when the bar is
+  stored. The bar in the working copy now plays from the working copy (`wc_bar`, see "Storage").
+  Emulation: 262 chain checks, including a one-bar sequence edited while it plays (fails on
+  the twelfth build). Hardware: not tested yet.
 
 ## Hardware test (2026-11-13): the tenth build passed
 
