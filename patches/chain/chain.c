@@ -60,8 +60,15 @@ typedef void (*fl_prog_fn)(uint32_t off, int len, const void *src);
 typedef void (*fl_read_fn)(uint32_t off, int len, void *dst);
 typedef void (*fl_erase_fn)(uint32_t off);
 /* Raw flash (FINDINGS section 6): offsets from 0x03000000, program <= 0x100 bytes, erase one
- * 4 KB block. The stock code wraps these in FUN_60003E02/FUN_60003DB0; each call already
- * saves and restores the flash mapping, so they are used directly here. */
+ * 4 KB block. These three primitives only move data; they do not touch the flash chip's block
+ * protection. The firmware's store brackets a write session with FUN_600108AA (write status
+ * register 0 = nothing protected, then indirect mode) and FUN_600108BA (memory-mapped mode,
+ * write status register 0x3C = protected again), and its erase/program calls in between rely on
+ * that. A program or erase issued outside the pair is silently dropped by the chip, which is
+ * why the first hardware build saved nothing; the emulated flash accepted everything. */
+typedef void (*fl_sess_fn)(void);
+#define F_BEGIN ((fl_sess_fn)0x600108AB)   /* [code] FUN_600108AA: unprotect + indirect */
+#define F_END   ((fl_sess_fn)0x600108BB)   /* [code] FUN_600108BA: map + protect         */
 #define F_PROG  ((fl_prog_fn)0x60003E55)
 #define F_READ  ((fl_read_fn)0x60003EA3)
 #define F_ERASE ((fl_erase_fn)0x60003EDB)
@@ -84,6 +91,30 @@ static volatile uint32_t *area_slot(int area, int slot);
 static uint32_t ent_off(int i)
 {
     return FL_TOP - (uint32_t)(i / EPB) * 0x1000u + (uint32_t)(i % EPB) * ENTB;
+}
+
+/* Every program and erase goes through one of these, so the chip is never left protected while
+ * a write is pending and never left unprotected when the payload returns to the panel. */
+static void fl_erase(uint32_t off)
+{
+    F_BEGIN();
+    F_ERASE(off);
+    F_END();
+}
+
+static void fl_write(uint32_t off, const uint32_t *src)
+{
+    F_BEGIN();
+    F_PROG(off, ENTB, src);
+    F_END();
+}
+
+/* Program one log entry and read its magic back: 1 = the chip took it. */
+static int fl_put(int i)
+{
+    fl_write(ent_off(i), ebuf);
+    F_READ(ent_off(i), 4, &ebuf[31]);
+    return ebuf[31] == EMAGIC;
 }
 
 static uint32_t ecrc(const uint32_t *e)
@@ -157,7 +188,7 @@ static void store_gc(void)
         }
         if (cnt < bestn) { bestn = cnt; blk = b; }
     }
-    F_ERASE(FL_SCR);
+    fl_erase(FL_SCR);
     for (i = 0; i < EPB; i++) {
         int idx = blk * EPB + i;
         for (p = 0; p < NBARS * 16; p++)
@@ -166,23 +197,24 @@ static void store_gc(void)
         if (p == NBARS * 16)
             continue;
         F_READ(ent_off(idx), ENTB, ebuf);
-        F_PROG(FL_SCR + (uint32_t)n * ENTB, ENTB, ebuf);
+        fl_write(FL_SCR + (uint32_t)n * ENTB, ebuf);
         pr[n++] = (uint8_t)p;
     }
-    F_ERASE(FL_TOP - (uint32_t)blk * 0x1000u);
+    fl_erase(FL_TOP - (uint32_t)blk * 0x1000u);
     for (i = 0; i < n; i++) {
         F_READ(FL_SCR + (uint32_t)i * ENTB, ENTB, ebuf);
-        F_PROG(ent_off(blk * EPB + i), ENTB, ebuf);
+        fl_put(blk * EPB + i);
         tab[pr[i]] = (uint8_t)(blk * EPB + i + 1);
     }
     wr_i = (uint8_t)(blk * EPB + n);
 }
 
-/* Append the working copy (area 4 slot 0) as bar `bar` of pattern `pat`. */
-static void store_save(int pat, int bar)
+/* Append the working copy (area 4 slot 0) as bar `bar` of pattern `pat`. 1 = the entry is in
+ * the flash (it was read back), 0 = the chip did not take it. */
+static int store_save(int pat, int bar)
 {
     volatile uint32_t *s = area_slot(TR8_AREA_PATTERN, 0);
-    int i;
+    int i, ok;
     uint32_t idx;
 
     if (!inited)
@@ -201,9 +233,10 @@ static void store_save(int pat, int bar)
     ebuf[30] = s[1] & 3;              /* scale: the redirect never writes the pattern slot */
     ebuf[31] = 0;                     /* the two words after the rows are part of the checksum */
     ebuf[3] = ecrc(ebuf);
-    F_PROG(ent_off((int)idx), ENTB, ebuf);
+    ok = fl_put((int)idx);
     tab[pat * NBARS + bar] = (uint8_t)(idx + 1);
     wr_i = (uint8_t)((idx + 1) % NENT);
+    return ok;
 }
 
 /* ---------------------------------------------------------------- pattern view */
@@ -217,8 +250,9 @@ static volatile uint32_t *area_slot(int area, int slot)
 }
 
 /* Load a bar into the working copy: the log entry if there is one, else the pattern's own
- * steps (area 4 slot pat+1), which the redirect in chain_commit keeps untouched. */
-static void slot_load(int pat, int bar, int side)
+ * steps (area 4 slot pat+1), which the redirect in chain_commit keeps untouched. In the first
+ * free region: both callers (sync, chain_edit) are there and the second region is full. */
+__attribute__((section(".text.far"))) static void slot_load(int pat, int bar, int side)
 {
     volatile uint32_t *d = area_slot(TR8_AREA_PATTERN, 0);
     volatile uint32_t *src;
@@ -325,6 +359,17 @@ static void show_len(int n)
     TR8_DISPLAY_TEXT(0, txt);
 }
 
+/* The chip did not take the bar we just left (see F_BEGIN in the storage section). */
+static void show_fail(void)
+{
+    static char txt[5];
+    txt[0] = 'F';
+    txt[1] = 'A';
+    txt[2] = 'I';
+    txt[3] = 'L';
+    TR8_DISPLAY_TEXT(0, txt);
+}
+
 /* The panel changed pattern: the working copy is now that pattern's own steps, so bar 1 (or
  * the bar the user selects next) has to be loaded before anything edits or plays it. */
 __attribute__((section(".text.far"))) static void sync(void)
@@ -382,6 +427,7 @@ __attribute__((naked)) void chain_pad(void)
 __attribute__((section(".text.far"))) static void chain_edit(int pad, int a, int b)
 {
     int bar = pad;
+    int saved;
 
     if (a && b) {
         if (TR8_BTN_HELD(TR8_BTN_CLEAR) == 1) {
@@ -394,7 +440,7 @@ __attribute__((section(".text.far"))) static void chain_edit(int pad, int a, int
         return;
     }
 
-    store_save(cur_pat, cur_bar);              /* keep the bar being left */
+    saved = store_save(cur_pat, cur_bar);      /* keep the bar being left */
     cur_bar = (uint8_t)bar;
     slot_load(cur_pat, bar, b);
     struct_slot0();
@@ -414,6 +460,8 @@ __attribute__((section(".text.far"))) static void chain_edit(int pad, int a, int
         TR8_PTN2_SET(0, CHAIN_LEN, len);
     }
     show_bar(bar + 1, b);
+    if (!saved)
+        show_fail();
 }
 
 /* Replaces "bl FUN_60013B34" at 0x60013842: button press, id in r0, held bit already set.

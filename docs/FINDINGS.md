@@ -206,10 +206,22 @@ The chain patch redirects the area-4 half of that save (`0x6001B7F4`, inside `FU
 keeps the area-6 half stock: area 4 slot *n+1* keeps the pattern's own steps and the edited bar is
 appended to a 128-byte-entry log in the unused flash at `0x3DB000`-`0x3DFFFF` (four blocks of 32
 entries from `0x3DF000` down, scratch block at `0x3DB000`, newest entry per pattern/bar wins).
-That flash is inside the updater's block range but outside the module images, so an update leaves
-it alone. The raw primitives used are `FUN_60003E54(off, len, src)` (program, chunks <= 0x100,
-4-byte words), `FUN_60003EA2(off, len, dst)` (read through the mapping at `off + 0x03000000`) and
-`FUN_60003EDA(off)` (erase 4 KB); each saves and restores the flash mapping itself.
+That range is erased by any firmware update: the updater rewrites blocks over flash
+`0x30000`-`0x3DFFFF` (section 3), so the bars are lost on an update, while the chain bits survive
+in the user area. The raw primitives used are `FUN_60003E54(off, len, src)` (program, chunks <=
+0x100, 4-byte words), `FUN_60003EA2(off, len, dst)` (read through the mapping at `off + 0x03000000`)
+and `FUN_60003EDA(off)` (erase 4 KB); each saves and restores the flash mapping itself.
+
+**They do not touch block protection, and that is a trap.** While the chip's status register
+protects the array, a program or an erase is silently dropped — no error, the data simply does not
+change. The stock store (`FUN_60010BB6`) brackets its erase/program loop with
+`FUN_600108AA` (`bl` at `0x60010BE0`) and `FUN_600108BA` (`bl` at `0x60010D14`):
+`FUN_600108AA` writes status register `0x00` (nothing protected) and switches to indirect mode,
+`FUN_600108BA` returns to memory-mapped mode and writes `0x3C` (protected again). One session
+covers many operations (the factory flash test at `0x60001EEA` opens it once and runs 16 programs).
+`FUN_60003E02` is the status write, `FUN_60003DB0` writes `0x3C`. A patch that programs flash
+outside a session — as the first bar-chain build did — saves nothing at all, and an emulated
+flash that accepts every write hides the failure.
 [CHAIN.md](CHAIN.md) "Storage" has the entry layout.
 
 Area 4 (Ptn) slot word order is the descriptor order: word 0 = `VARI` (id `0xC3`), 1 = `SCALE`

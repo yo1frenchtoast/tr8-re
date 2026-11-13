@@ -48,8 +48,8 @@ content, not replays of the pattern's two passes: the selected bar is loaded int
 so TR-REC records it, and the pattern save is redirected to an append-only log in unused flash
 (`0x3DB000`-`0x3DFFFF`), which leaves the pattern's own steps intact as the default for unrecorded
 bars. Each pattern keeps its own four-bar loop and chain, so switching pattern switches the
-phrase. It is emulation-tested (69 checks, including a simulated power cycle and log compaction);
-the step engine is untouched and no pattern slot is spent on a bar.
+phrase. It is emulation-tested (82 checks, including a simulated power cycle, log compaction and
+the chip's write protection); the step engine is untouched and no pattern slot is spent on a bar.
 
 ## C. Per-instrument length (polyrhythm): done
 

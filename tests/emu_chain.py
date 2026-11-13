@@ -65,14 +65,29 @@ def crc(e):
 
 FL = bytearray(b"\xff" * 0x400000)     # simulated raw flash, offsets from 0x03000000
 
-def fl_erase(off):
+# The chip's block protection, the unit-only failure that the first build hit. FUN_60003E54
+# (program) and FUN_60003EDA (erase) are raw commands: while the status register protects the
+# array they are silently dropped. Only FUN_600108AA (write status 0, indirect mode) ... 
+# FUN_600108BA (memory-mapped mode, write status 0x3C) opens a write window, which is what the
+# stock store does around its own erase/program sequence. The log must do the same, so the
+# emulated chip refuses a write outside a session exactly like the real one.
+# `through_chip` is set for calls made by the payload; the test's own calls edit FL directly.
+PROTECT = {"on": True, "refused": 0, "left_open": 0}
+
+def fl_erase(off, through_chip=False):
+    if through_chip and PROTECT["on"]:
+        PROTECT["refused"] += 1
+        return
     FL[off:off + 0x1000] = b"\xff" * 0x1000
 
-def fl_prog(off, n, src):
+def fl_prog(off, n, src, through_chip=False):
+    if through_chip and PROTECT["on"]:
+        PROTECT["refused"] += 1
+        return
     for i, b in enumerate(uc.mem_read(src, n)):
         FL[off + i] &= b               # programming can only clear bits
 
-def fl_read(off, n, dst):
+def fl_read(off, n, dst):              # reads work in either mode
     uc.mem_write(dst, bytes(FL[off:off + n]))
 
 def entry(i):
@@ -99,6 +114,7 @@ STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E
          0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6004FB34: "f", 0x6000066E: "f",
          0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f",
          0x600522E4: "range", 0x600521E8: "f", 0x6000FC78: "commit",
+         0x600108AA: "fl_begin", 0x600108BA: "fl_end",
          0x60003E54: "fl_prog", 0x60003EDA: "fl_erase", 0x60003EA2: "fl_read"}
 def hook(uc, addr, size, _):
     if addr in STUBS:
@@ -128,9 +144,13 @@ def hook(uc, addr, size, _):
         elif name == "commit":
             log.append(("commit", r1, r2))          # FUN_6000FC78(_, area, slot, _)
         elif name == "fl_prog":
-            fl_prog(r0, r1, r2)
+            fl_prog(r0, r1, r2, through_chip=True)
         elif name == "fl_erase":
-            fl_erase(r0)
+            fl_erase(r0, through_chip=True)
+        elif name == "fl_begin":
+            PROTECT["on"] = False
+        elif name == "fl_end":
+            PROTECT["on"] = True
         elif name == "fl_read":
             fl_read(r0, r1, r2)
         uc.reg_write(UC_ARM_REG_R0, ret)
@@ -143,6 +163,8 @@ def call(fn, *args):
     uc.reg_write(UC_ARM_REG_SP, 0x7000E000)
     uc.reg_write(UC_ARM_REG_LR, RET | 1)
     uc.emu_start(fn | 1, RET, count=400000)
+    if not PROTECT["on"]:
+        PROTECT["left_open"] += 1      # the payload returned with the chip still writable
     return uc.reg_read(UC_ARM_REG_R0)
 
 def bl_target(a):
@@ -487,6 +509,8 @@ for p in range(16):
             bad.append(((p, b), slot_rows(0)[0], want))
 expect("log: every bar reads back its newest entry after wrap and compaction", bad, [])
 expect("log: the log still fits in its four blocks", len(entries()) <= 4 * EPB, True)
+expect("flash: no program or erase was issued while the chip was protected", PROTECT["refused"], 0)
+expect("flash: every write session was closed again before returning", PROTECT["left_open"], 0)
 
 # --- the sequence number wraps at 2^16, and a save just after the wrap must be the newest ----
 seed_ram()
@@ -520,5 +544,18 @@ w32(S["chain_wrapping"], 0)
 log.clear(); call(S["chain_wrap"], PTN)
 expect("wrap: the restart runs with the wrap mark set, then the mark is cleared",
        (log, r8(S["chain_wrapping"])), ([("restart", 1)], 0))
+
+# Model self-check: this is the hardware-only failure the first build hit. With the latch closed
+# a program is dropped; inside a session it lands. Without this the test would pass a payload
+# that never opens a write session, which is exactly what happened before.
+uc.mem_write(0x7000E800, b"\0\0\0\0")
+fl_erase(0x3DA000)
+PROTECT["on"] = True
+fl_prog(0x3DA000, 4, 0x7000E800, through_chip=True)
+dropped = FL[0x3DA000:0x3DA004]
+PROTECT["on"] = False
+fl_prog(0x3DA000, 4, 0x7000E800, through_chip=True)
+expect("flash model: a protected chip drops a program, an open session accepts it",
+       (dropped, FL[0x3DA000:0x3DA004]), (b"\xff" * 4, b"\0\0\0\0"))
 
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)

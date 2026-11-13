@@ -72,8 +72,10 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
 - **A pattern change selects bar 1** of the new pattern and, on the next pad press or restart,
   loads its content.
 - **Power off and on keeps the bars and the chain**; the log is flash and is rescanned on the
-  first use.
-- The display confirms each gesture; the pads keep showing steps, not bars.
+  first use. A firmware update erases the log (but not the chain, which is a pattern parameter):
+  the bars then fall back to the pattern's own steps.
+- The display confirms each gesture; the pads keep showing steps, not bars. A save the flash chip
+  refused shows **`FAIL`** instead of the bar number (see Storage).
 
 ## How it works
 
@@ -154,6 +156,18 @@ An entry is 128 bytes (32 words):
 | 30 | scale (0..3, the map 8/4/6/3) |
 | 31 | 0 (part of the checksum) |
 
+**Write session.** The three raw primitives only move data; they do not touch the flash chip's
+block protection. While the status register protects the array (the state the firmware leaves it
+in), a program or erase is silently dropped by the chip. The stock store therefore brackets its
+own erase/program sequence with `FUN_600108AA` (write status register `0x00`, indirect mode) and
+`FUN_600108BA` (memory-mapped mode, write status `0x3C`, protected again); one session covers many
+operations. The payload does the same: `fl_erase`, `fl_write` and `fl_put` each open the session,
+do one operation and close it, and `fl_put` reads the entry's magic back. A save that did not land
+shows **`FAIL`** on the numeric display instead of the bar number. (The first hardware build
+called the primitives without the session, so every program was dropped: edits vanished and a
+revisited bar played the pattern's own steps. Emulation could not see that, because the simulated
+flash accepted every write; `tests/emu_chain.py` now models the protect latch.)
+
 The log is append-only: one save is one 128-byte program, no erase, so a torn write can only lose
 the newest entry and never a pattern. When the write pointer reaches a block that is still in use,
 the block with the fewest live entries is compacted: its live entries (the newest per
@@ -176,8 +190,10 @@ accents, flams, the chain parameters) goes through the stock commit unchanged.
 (`0x137`) the length (0 = no chain, 1..4). They are written with the firmware's Ptn2 setter and
 saved with the pattern by the stock area-6 commit, so each pattern keeps its own chain. The poly
 patch uses indices 4..14 (`0x12B`..`0x135`) and leaves these two alone; a future combined build
-can use both. The updater does not write the log blocks, so a firmware update keeps the bars
-(another patch must not claim that flash).
+can use both. A firmware update erases the log blocks (the updater rewrites flash
+`0x30000`-`0x3DFFFF`, [UPDATE.md](UPDATE.md)), so the bars fall back to the pattern after an
+update; the chain length and bits survive, because they are ordinary pattern parameters in the
+user area. Another patch must not claim `0x3DB000`-`0x3DFFFF` while this one is installed.
 
 **Backup caveats.** The USB backup stores named parameters only, so neither the Ptn2 chain nor the
 bar log is in it: after a restore, the patterns are back to their own steps and every bar falls
@@ -188,12 +204,12 @@ pattern's own steps.
 ### Code space
 
 The payload uses the two developer-dump regions
-(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 584 bytes of `.text.far` plus 1 byte of
-`.data` in the first (788 available), 1600 bytes of `.text` plus 214 bytes of `.bss` in the second
-(1838 available). The literal pool between them (`0x60011464`-`0x60011484`) is live firmware data
-and is never written. The probe build (`payload_probe.json`) needs 460 + 14 bytes. That is why the
-patch is standalone for now: `motion-poly` already uses both regions, and a combined build needs
-the "grow the image" method or another dead-code region
+(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 780 bytes of `.text.far` plus 1 byte of
+`.data` in the first (788 available, 7 free), 1512 bytes of `.text` plus 219 bytes of `.bss` in the
+second (1838 available, 107 free). The literal pool between them (`0x60011464`-`0x60011484`) is
+live firmware data and is never written. The probe build (`payload_probe.json`) needs 460 + 14
+bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
+combined build needs the "grow the image" method or another dead-code region
 ([DEVELOPING.md](DEVELOPING.md) "Code space").
 
 ## Why not a real 32- or 64-step pattern
@@ -251,7 +267,10 @@ It uses the same hooks and only displays, so it never writes the chain, a bar or
   log; compaction after more than a block of saves; the ring wrapped and every block compacted
   (192 saves over all 64 bars, each bar read back through the payload's index); the sequence
   number wrapping from 0xFFFF to 0 (an entry written after the wrap still wins); the stock commit
-  for a pattern the patch has not loaded; `chain_wrap` marks the restart. The probe
+  for a pattern the patch has not loaded; `chain_wrap` marks the restart. The simulated flash
+  models the chip's block protection: program/erase outside a write session are dropped, as on the
+  unit, and the run checks that every operation happened inside a session and every session was
+  closed. The probe
   build (`--probe`, `payload_probe.json`): display strings on the press path and on the global
   LAST STEP branch, a pass-through save redirect, no pattern writes, `St` line on start.
 - Hardware, first build (pad branch of `FUN_6001961E`): LAST STEP + pad set the pattern length,
@@ -261,10 +280,16 @@ It uses the same hooks and only displays, so it never writes the chain, a bar or
 - Hardware, second build (bar = pattern, press dispatch): A + pad 2 showed ` 2A` and selected
   pattern 2, A+B played the bars. Superseded by this build (four bars per pattern, its own A and
   B step set each); the old build remains recoverable from git (`bd94eef`).
+- Hardware, third build (four bars per pattern): selecting pads 1, 2, 3 and returning to 1 lost the
+  edit and bar 1 played the unrecorded pattern again. Diagnosis: the log's programs were issued
+  while the chip's block protection was on, so the chip dropped them (the emulated flash accepted
+  them). Fixed by opening a write session around every program/erase and reading each entry back.
+  Superseded build: git `9beb1ed`.
 - Hardware checklist for this build:
   1. Plain pattern, no bar selection: A, B and A+B behave exactly as stock.
   2. Hold A, press pads 1..4: the display shows `  1A`..`  4A`; with A+B all four bars play and
-     wrap; A alone loops bar 1's A steps.
+     wrap; A alone loops bar 1's A steps. **`FAIL` in place of the bar number means the flash chip
+     refused the save of the bar being left** (stop here and report it).
   3. Record steps into bar 1, select bar 2, record different steps; select bar 1 again: its steps
      are back. Do the same on the B side and check A/B are independent.
   4. Select bar 4 and back: the display follows the pad, the pattern number and kit do not change.
