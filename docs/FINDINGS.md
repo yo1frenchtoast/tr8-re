@@ -502,15 +502,24 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 - **LEDs:** `FUN_6001A7EC(id, a, b, c)` calls the fast-code function `0x01000536` with the LED
   object `0x601488D0`. Seen: `FUN_6001A7EC(0x2A, 1, 0, 0x10)`, instrument LEDs 0x1D-0x25. The
   argument meaning is not decoded. [hyp]
-- **Step/pad pads and the palette.** Pads (step LEDs) are ids `0x1D`+step. Two setters paint them:
-  `FUN_6001774E(led, colour)` looks the colour up in the palette and calls `FUN_6001773A`; the
-  palette table is at `0x6006061C`, 12-byte entries, looked up by `FUN_60015846(obj 0x6007EB08,
-  colour, out)`. Seen: `0` = the play position (the firmware blinks it), `1`/`2`/`3`/`4` = the
-  panel's red/orange/yellow/white step groups, `0x2A` = inside the pattern length in the LAST STEP
-  view, `0x2D` = off. [code] The normal step view `FUN_600162D2` does not use the palette: it
-  calls `FUN_6001773A(led, a, b, c)` with raw levels at `0x60016376`. The view-0 pad loop of
-  `FUN_60016386` uses `FUN_6001774E` (for example `0x60016506`). Only pads 1-4 are overwritten
-  for the bar row; colour `3` renders yellow.
+- **Step/pad pads and the palette.** Pads (step LEDs) are ids `0x1D`+step (`0x1D`-`0x2C`). All
+  screens paint them through four small setters, and every one of them ends in
+  `bl FUN_6004BB4C`, a veneer to the fast-code LED function `0x01000537` called as
+  `(object 0x601488D0, led, a, b, c)`:
+  - `FUN_6001773A(led, a, b, c)` raw levels (`0x60017748`),
+  - `FUN_6001774E(led, colour)` palette lookup (`0x6001776C`),
+  - `FUN_60017E08(led, a, b)` a copy of the raw setter that always passes c = 0 (`0x60017E18`),
+  - `FUN_60017E1E(led, colour)` a copy of the palette setter (`0x60017E3A`).
+
+  Because the hook can sit in the setters, one function covers the sequencer, PTN SELECT, TR-REC
+  and every other view, and survives a pattern change (which switches screen and renderer). The
+  palette table is at `0x6006061C`, 12-byte entries `{u8 a; u32 b; u32 c}`, looked up by
+  `FUN_60015846(obj 0x6007EB08, colour, out)`. Resolved triples seen: `0` = `(1, 0, 2)` the play
+  position (the firmware blinks it), `1`/`2` = red/orange, `3` = `(1, 9, 6)` the yellow step
+  group, `4` = white, `0x2A` = `(1, 9, 2)` green (inside the pattern length in the LAST STEP
+  view), `0x2D` = `(0, 0, 2)` off. The normal step view `FUN_600162D2` does not use the palette:
+  it calls `FUN_6001773A(led, a, b, c)` with raw levels at `0x60016376`. The view-0 pad loop of
+  `FUN_60016386` uses `FUN_6001774E` (for example `0x60016506`). [code]
 
 ## 12. Code space for patches
 
@@ -521,7 +530,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   `0x60011488`-`0x60011BB5` (1838 bytes) are free. The literal pool `0x60011464`-`0x60011483` is
   still used and must stay. The motion patch uses 737 + 1568 bytes; `motion-poly` uses about
   340 + 730 bytes, its zeroed data is in patch RAM (below); `chain` uses both regions too
-  (757 + 1819 bytes), so it is standalone for the same reason.
+  (733 + 1807 bytes, 55 + 31 free), so it is standalone for the same reason.
 - **Grow the image (design, not tested on a unit).** Code appended at the end of the image
   (`0x601309E0`) would be erased, because the bss zero-fill covers `0x601264EC`-`0x60280987`.
   Instead:

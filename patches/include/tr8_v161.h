@@ -230,10 +230,13 @@ typedef void (*tr8_step_led_fn)(int led, unsigned colour);
 #define TR8_COL_IN    0x2A   /* [unit] green */
 #define TR8_COL_OFF   0x2D
 
-/* Same setter without the palette lookup: FUN_600162D2 paints the 16 pads with FUN_6001773A(led,
- * a, b, c) and raw levels (the normal step view, groups 4/0x12/6/7). */
-typedef void (*tr8_led4_fn)(int led, int a, int b, int c);
-#define TR8_FN_LED4 ((tr8_led4_fn)0x6001773B)                    /* [code] FUN_6001773A          */
+/* Raw LED setter behind everything: both wrappers below end in "bl FUN_6004BB4C", a veneer to
+ * the fast-code function 0x01000537: FUN_6004BB4C(obj, led, a, b, c) with the LED object
+ * 0x601488D0. FUN_6001773A / FUN_60017E08 pass raw levels, FUN_6001774E / FUN_60017E1E look a
+ * palette colour up first. [code] */
+typedef void (*tr8_led_set_fn)(void *obj, int led, int a, int b, int c);
+#define TR8_FN_LED_SET ((tr8_led_set_fn)0x6004BB4D)              /* [code] FUN_6004BB4C veneer   */
+#define TR8_LED_OBJ    ((void *)0x601488D0)                      /* [code] LED object            */
 
 /* LED control, arguments not decoded: FUN_6001A7EC(id, a, b, c). */
 typedef void (*tr8_led_fn)(int id, int a, int b, int c);

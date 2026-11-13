@@ -108,35 +108,21 @@ int chain_pad_c(int pad)
     return 0;                              /* handled and ignored: never edit anything */
 }
 
-/* Same two renderer sites as chain.c: the probe has no current bar, so all four bars are yellow
- * while A or B is held. This checks the LED hook on hardware; the real build blinks the selected
- * bar in the play colour. */
-static unsigned bar_led(int led)
+/* Same four setter hook sites as chain.c: the probe has no current bar, so all four bars are
+ * yellow while A or B is held and pads 5..16 are off. This checks the LED hook on hardware. */
+void chain_led4(void *obj, int led, int a, int b, int c)
 {
-    int b = led - TR8_LED_STEP(0);
+    int p = led - TR8_LED_STEP(0);
 
-    if ((unsigned)b > 3)
-        return 0x100;
-    if ((TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) == (TR8_BTN_HELD(TR8_BTN_VARI_B) == 1))
-        return 0x100;
-    return TR8_COL_YELLOW;
-}
-
-void chain_led_rgb(int led, int a, int b, int c)
-{
-    unsigned col = bar_led(led);
-
-    if (col & 0x100)
-        TR8_FN_LED4(led, a, b, c);
-    else
-        TR8_FN_STEP_LED(led, col);
-}
-
-void chain_led_col(int led, unsigned col)
-{
-    unsigned bar = bar_led(led);
-
-    TR8_FN_STEP_LED(led, (bar & 0x100) ? col : bar);
+    if ((unsigned)p <= 15
+        && (TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) != (TR8_BTN_HELD(TR8_BTN_VARI_B) == 1)) {
+        if (p < 4) {
+            a = 1; b = 9; c = 6;       /* yellow */
+        } else {
+            a = 0; b = 0; c = 2;       /* off */
+        }
+    }
+    TR8_FN_LED_SET(obj, led, a, b, c);
 }
 
 /* Same site as chain.c (the redirect of the pattern save): the probe never redirects. */

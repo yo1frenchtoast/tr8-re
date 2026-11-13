@@ -26,8 +26,8 @@
  *   The gesture lives on the press dispatch (0x60013842, before the screen): the screen takes a
  *   bare pad press, so the global button handler never sees it (see the first hardware build).
  *   chain_release swallows the matching release.
- *   While VARIATION A or B is held, pads 1..4 are repainted as the four bars by wrapping the two
- *   pad renderers (chain_led_rgb / chain_led_col, see the bar row section).
+ *   While VARIATION A or B is held, all 16 pads become the bar row (bars 1..4 lit, 5..16 off) by
+ *   wrapping the four pad setters (chain_led4, see the bar row section).
  *
  * Storage: the pattern's own step content is the pattern record (area 4), which stays the
  * source of the default bar. Extra bars live in a small log in the unused flash between the
@@ -119,7 +119,8 @@ static int fl_put(int i)
     return ebuf[31] == EMAGIC;
 }
 
-static uint32_t ecrc(const uint32_t *e)
+/* .text.far: the second region is full (see the bar row section). */
+__attribute__((section(".text.far"))) static uint32_t ecrc(const uint32_t *e)
 {
     uint32_t h = 0x811C9DC5u;
     int i;
@@ -417,41 +418,32 @@ void chain_wrap(void *obj)
 
 /* ---------------------------------------------------------------- bar row LEDs */
 
-/* While VARIATION A or B is held, pads 1..4 show the four bars: the selected one in the
- * firmware's blinking play colour (what the panel uses for the playing step), the other three
- * yellow (the panel's 9-12 group). Releasing the button gives the pads back to steps 1-4, so no
- * step is ever hidden. Two renderers paint the pads and each has its own call site: chain_led_rgb
- * replaces "bl FUN_6001773A" (the normal view of FUN_600162D2, raw levels) and chain_led_col
- * replaces "bl FUN_6001774E" (view 0 of FUN_60016386, palette). 0x100 = "not a bar", which is
- * outside the palette (the largest entry is 0x2D).
- * It lives in .text.far (the first free region): dropping the LAST STEP fallback (chain_pad) made
- * room for the bar row, and the second region has only 19 bytes free. */
-__attribute__((section(".text.far"))) static unsigned bar_led(int led)
+/* While exactly one of VARIATION A/B is held the 16 pads are the bar row: pads 1..4 show the four
+ * bars (the selected one in the firmware's blinking play colour 0, the other three in the panel's
+ * yellow 3) and pads 5..16 are off, so only the four bars are lit. Releasing the button gives the
+ * pads back to whatever the screen wants to show.
+ *
+ * Every screen paints pads through one of four tiny setters, so the hook is inside them, not on a
+ * view: 0x60017748 (raw setter FUN_6001773A), 0x6001776C (palette setter FUN_6001774E),
+ * 0x60017E18 (raw copy FUN_60017E08) and 0x60017E3A (palette copy FUN_60017E1E) are all
+ * "bl FUN_6004BB4C" with (obj, led, a, b, c). Replacing those four calls with this one function
+ * covers the sequencer, PTN SELECT, TR-REC, LAST STEP and every other view, and keeps working
+ * after a pattern change (which switches the screen). The raw triples are the palette entries:
+ * 0 = (1, 0, 2) blinking play, 3 = (1, 9, 6) yellow, 0x2D = (0, 0, 2) off. */
+void chain_led4(void *obj, int led, int a, int b, int c)
 {
-    int b = led - TR8_LED_STEP(0);
+    int p = led - TR8_LED_STEP(0);
 
-    if ((unsigned)b > 3)
-        return 0x100;
-    if ((TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) == (TR8_BTN_HELD(TR8_BTN_VARI_B) == 1))
-        return 0x100;                    /* neither held, or A+B (the chain-length gesture) */
-    return (b == (int)cur_bar) ? TR8_COL_PLAY : TR8_COL_YELLOW;
-}
+    if ((unsigned)p <= 15
+        && (TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) != (TR8_BTN_HELD(TR8_BTN_VARI_B) == 1)) {
+        int row = p < NBARS;
+        int yel = row && p != (int)cur_bar;
 
-void chain_led_rgb(int led, int a, int b, int c)
-{
-    unsigned col = bar_led(led);
-
-    if (col & 0x100)
-        TR8_FN_LED4(led, a, b, c);
-    else
-        TR8_FN_STEP_LED(led, col);
-}
-
-void chain_led_col(int led, unsigned col)
-{
-    unsigned bar = bar_led(led);
-
-    TR8_FN_STEP_LED(led, (bar & 0x100) ? col : bar);
+        a = row;                       /* pads 5..16: off (palette 0x2D = 0, 0, 2) */
+        b = yel ? 9 : 0;
+        c = 2 + (yel ? 4 : 0);         /* row: 1,0,2 play or 1,9,6 yellow */
+    }
+    TR8_FN_LED_SET(obj, led, a, b, c);
 }
 
 /* A or B + pad 1..4: make bar n the working copy and paint it with that side. A+B + pad:

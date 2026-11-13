@@ -93,8 +93,10 @@ PATCHES["chain"] = {
         (0x600098CA, thumb_bl(0x600098CA, 0x600095F0), "chain_wrap"),   # pattern wrap: mark it as a wrap
         (0x60013842, thumb_bl(0x60013842, 0x60013B34), "chain_press"),  # button press: before the screen
         (0x600137D2, thumb_bl(0x600137D2, 0x60013B56), "chain_release"),# matching release of that pad
-        (0x60016376, thumb_bl(0x60016376, 0x6001773A), "chain_led_rgb"),# pads 1..4 as bars (normal view)
-        (0x60016506, thumb_bl(0x60016506, 0x6001774E), "chain_led_col"),# pads 1..4 as bars (view 0)
+        (0x60017748, thumb_bl(0x60017748, 0x6004BB4C), "chain_led4"),  # raw pad setter
+        (0x6001776C, thumb_bl(0x6001776C, 0x6004BB4C), "chain_led4"),  # palette pad setter
+        (0x60017E18, thumb_bl(0x60017E18, 0x6004BB4C), "chain_led4"),  # raw pad setter (copy)
+        (0x60017E3A, thumb_bl(0x60017E3A, 0x6004BB4C), "chain_led4"),  # palette pad setter (copy)
         (0x6001B7F4, thumb_bl(0x6001B7F4, 0x6000FC78), "chain_commit"), # pattern save: store the bar, not the slot
     ],
 }

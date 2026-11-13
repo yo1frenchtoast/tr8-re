@@ -26,7 +26,7 @@ accepts.
 | **Motion recording** | **Works on a real TR-8**: hold TR-REC to record, hold CLEAR to erase. RAM only, one global buffer |
 | **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. Saved with each pattern ([docs/POLY.md](docs/POLY.md)) |
 | **Motion + per-instrument length together** | **Works on a real TR-8** ([docs/COMBO.md](docs/COMBO.md)) |
-| **Bar chain (more than two bars)** | **Emulation-tested**: hold A or B + a pad to paint a bar (pads 1-4 light up as the bar row while the button is held), A+B + a pad to set the length. Saved with each pattern ([docs/CHAIN.md](docs/CHAIN.md)) |
+| **Bar chain (more than two bars)** | **Emulation-tested**: hold A or B + a pad to paint a bar (pads 1-4 light as the bar row while the button is held and pads 5-16 go dark, on every screen), A+B + a pad to set the length. Saved with each pattern ([docs/CHAIN.md](docs/CHAIN.md)) |
 | Web flasher | Same output as `tr8patch.py`, byte for byte (`tests/site_check.mjs`) |
 | Per-pattern saved motion, more than two bars | Assessed; the bar chain is implemented ([docs/FEASIBILITY.md](docs/FEASIBILITY.md), [docs/CHAIN.md](docs/CHAIN.md)) |
 

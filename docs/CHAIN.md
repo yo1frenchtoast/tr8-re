@@ -75,10 +75,11 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
   first use. A firmware update erases the log (but not the chain, which is a pattern parameter):
   the bars then fall back to the pattern's own steps.
 - The display confirms each gesture. While VARIATION A or B is **held**, pads 1-4 show the four
-  bars: the selected bar blinks (the firmware's play colour) and the other three are yellow, so a
-  pad press visibly picks a bar. Releasing the button gives pads 1-4 back to steps 1-4, so no step
-  is ever hidden (A+B keeps the length gesture and leaves the pads stock). A save the flash chip
-  refused shows **`FAIL`** instead of the bar number (see Storage).
+  bars: the selected bar blinks (the firmware's play colour) and the other three are yellow, while
+  pads 5-16 are off, so only the four bars are lit. This works in every screen (sequencer, PTN
+  SELECT, TR-REC, ...) and after a pattern change. Releasing the button gives the pads back to
+  whatever the screen was showing (A+B keeps the length gesture and leaves the pads stock). A save
+  the flash chip refused shows **`FAIL`** instead of the bar number (see Storage).
 
 ## How it works
 
@@ -88,8 +89,10 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
 | `0x600098CA` in `FUN_6000989C` | `bl FUN_600095F0` (pattern wrap) | `bl chain_wrap` |
 | `0x60013842` in `FUN_600137DE` | `bl FUN_60013B34` (press dispatch) | `bl chain_press` |
 | `0x600137D2` in `FUN_6001377C` | `bl FUN_60013B56` (release dispatch) | `bl chain_release` |
-| `0x60016376` in `FUN_600162D2` | `bl FUN_6001773A` (normal pad renderer) | `bl chain_led_rgb` |
-| `0x60016506` in `FUN_60016386` | `bl FUN_6001774E` (view 0 pad loop) | `bl chain_led_col` |
+| `0x60017748` in `FUN_6001773A` | `bl FUN_6004BB4C` (raw LED setter) | `bl chain_led4` |
+| `0x6001776C` in `FUN_6001774E` | `bl FUN_6004BB4C` (palette LED setter) | `bl chain_led4` |
+| `0x60017E18` in `FUN_60017E08` | `bl FUN_6004BB4C` (raw setter copy) | `bl chain_led4` |
+| `0x60017E3A` in `FUN_60017E1E` | `bl FUN_6004BB4C` (palette setter copy) | `bl chain_led4` |
 | `0x6001B7F4` in `FUN_6001B7D8` | `bl FUN_6000FC78` (pattern save) | `bl chain_commit` |
 | `0x60011E00`, `0x60011E04` | developer dump calls | `nop.w` (frees the regions) |
 
@@ -121,20 +124,30 @@ selects the bar and returns 1, so the screen never sees the pad; otherwise it fo
 and swallows the release of a pad whose press was taken, so the screen never gets a release
 without a press.
 
-**The bar row.** Two functions paint the pads and both are wrapped so the row shows up in either
-view:
+**The bar row.** Every screen paints the 16 pads through one of four tiny setters, so the hook is
+inside them rather than on a view:
 
-- `0x60016376` in `FUN_600162D2` (the normal step view) calls `FUN_6001773A(led, a, b, c)` with
-  raw levels; `chain_led_rgb` replaces it.
-- `0x60016506` in the view-0 pad loop of `FUN_60016386` calls `FUN_6001774E(led, colour)` with a
-  palette entry; `chain_led_col` replaces it.
+| Setter | Signature | Hook |
+|---|---|---|
+| `FUN_6001773A` | raw `(led, a, b, c)` | `0x60017748` |
+| `FUN_6001774E` | palette `(led, colour)` | `0x6001776C` |
+| `FUN_60017E08` | raw copy `(led, a, b)` | `0x60017E18` |
+| `FUN_60017E1E` | palette copy `(led, colour)` | `0x60017E3A` |
 
-Both compute the same thing: pads 1-4 (`led` = `0x1D`..`0x20`) become the bar row only while
-exactly one of VARIATION A/B is held (`TR8_BTN_HELD` = 1). The selected bar gets colour `0` (the
-play colour, which the firmware blinks) and the other three colour `3` (the panel's yellow, the
-9-12 step group). For any other pad, or with neither/both buttons held, the wrapper calls the
-original function with the original arguments, so the pads keep their stock colours. A+B is
-excluded on purpose: it is the chain-length gesture, not bar selection.
+All four end in `bl FUN_6004BB4C`, a veneer to the fast-code LED function `0x01000537` called as
+`(object 0x601488D0, led, a, b, c)`. `chain_led4` replaces those four calls and gets the resolved
+triple, so it does not care whether the caller used raw levels or a palette colour:
+
+- pads 1-4 (`led` `0x1D`..`0x20`) while exactly one of VARIATION A/B is held: the selected bar
+  gets `(1, 0, 2)` = palette `0`, the blinking play colour, and the others `(1, 9, 6)` = palette
+  `3`, the panel's yellow,
+- pads 5-16 in the same state: `(0, 0, 2)` = palette `0x2D`, off, so only the four bars are lit,
+- everything else (any other LED, or neither/both buttons held) is forwarded unchanged.
+
+Because the hook is in the setters, the row appears in every screen (sequencer, PTN SELECT,
+TR-REC, LAST STEP, ...) and keeps working after a pattern change, which is when the screen
+switches to another renderer. A+B is excluded on purpose: it is the chain-length gesture, not bar
+selection.
 
 ### Editing a bar
 
@@ -225,10 +238,10 @@ pattern's own steps.
 ### Code space
 
 The payload uses the two developer-dump regions
-(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 756 bytes of `.text.far` plus 1 byte of
-`.data` in the first (788 available, 31 free), 1600 bytes of `.text` plus 219 bytes of `.bss` in
-the second (1838 available, 19 free). The literal pool between them (`0x60011464`-`0x60011484`) is
-live firmware data and is never written. The probe build (`payload_probe.json`) needs 616 + 14
+(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 732 bytes of `.text.far` plus 1 byte of
+`.data` in the first (788 available, 55 free), 1588 bytes of `.text` plus 219 bytes of `.bss` in
+the second (1838 available, 31 free). The literal pool between them (`0x60011464`-`0x60011484`) is
+live firmware data and is never written. The probe build (`payload_probe.json`) needs 568 + 14
 bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
 combined build needs the "grow the image" method or another dead-code region
 ([DEVELOPING.md](DEVELOPING.md) "Code space").
@@ -251,8 +264,9 @@ is 4 bars x 2 sides per pattern, independent for all 16 patterns.
    it when selecting a bar.
 4. **The chain only plays with A+B selected.** A alone or B alone loops that side of the selected
    bar; that is the editing mode.
-5. **The pads show the bar row only while A or B is held.** Release the button and pads 1-4 are
-   steps 1-4 again; with A+B they stay stock.
+5. **The pads show the bar row only while A or B is held.** Release the button and the pads show
+   what the screen was showing; with A+B they stay stock. In the row, pads 5-16 are deliberately
+   dark (their step display is hidden while you pick a bar).
 6. **The build must be this one.** The first hardware build hooked the pad branch of
    `FUN_6001961E`, which a bare pad never reaches; A + pad showed nothing there (see "How it
    works"). Build the file again from the current tree and check the sha256.
@@ -275,7 +289,7 @@ writes the chain, a bar or the pattern:
 | ` 3--` (plain pad 3) | hook runs on every press and sees no modifier; the text is written after the firmware handled the pad |
 | ` 8-L` (LAST STEP + pad 8) | LAST STEP is held, so the press goes to the firmware first (pattern length) and the text is written after it |
 | ` 3CL` (A+B + LAST STEP + pad 3) | the same with both variation buttons held: LAST STEP wins, no bar selection |
-| pads 1-4 yellow while A is held | the LED hook runs in both pad renderers (the probe has no current bar, so all four are yellow; the real build blinks the selected one) |
+| pads 5-16 dark while A is held | the bar row: pads 1-4 lit (the probe has no current bar, so all four are yellow; the real build blinks the selected one), the rest off |
 | nothing at all | the payload is not running: the build is not the patched one |
 
 ## Test history
@@ -295,9 +309,10 @@ writes the chain, a bar or the pattern:
   for a pattern the patch has not loaded; `chain_wrap` marks the restart. The simulated flash
   models the chip's block protection: program/erase outside a write session are dropped, as on the
   unit, and the run checks that every operation happened inside a session and every session was
-  closed. The bar row: both pad renderers turn pads 1-4 into the bar row (bar 1 in the play
-  colour, the rest yellow) while A or B is held, and call the original renderer with the original
-  arguments when neither or both are held and for pads 5-16. The probe
+  closed. The bar row: all four pad setters (both raw, both palette) resolve pads 1-4 into the row
+  (bar 1 in the play triple, the rest yellow) and pads 5-16 to off while exactly one of A/B is
+  held, and forward the original triple when neither or both are held and for every other LED;
+  after a bar press the play triple follows the new bar. The probe
   build (`--probe`, `payload_probe.json`): display strings on the press path and on the global
   LAST STEP branch, a pass-through save redirect, no pattern writes, `St` line on start.
 - Hardware, first build (pad branch of `FUN_6001961E`): LAST STEP + pad set the pattern length,
@@ -312,12 +327,19 @@ writes the chain, a bar or the pattern:
   while the chip's block protection was on, so the chip dropped them (the emulated flash accepted
   them). Fixed by opening a write session around every program/erase and reading each entry back.
   Superseded build: git `9beb1ed`.
+- Hardware, fourth build (bar row on the two pad renderers): the four bars played and recorded,
+  but the LEDs were wrong: more than four pads lit, no row on PTN SELECT or TR-REC, and no row
+  after a pattern change. Diagnosis: only two of the four pad setters were hooked, and other
+  screens paint through the duplicate setters `FUN_60017E08`/`FUN_60017E1E`. Fixed in this build
+  by hooking all four setters (pads 5-16 are forced off in the row); re-check on the unit pending.
 - Hardware checklist for this build:
   1. Plain pattern, no bar selection: A, B and A+B behave exactly as stock.
-  2. Hold A, press pads 1..4: the display shows `  1A`..`  4A`. While A is held, pads 1-4 are the
-     bar row: the selected bar blinks and the others are yellow; pressing pad 2 moves the blink to
-     pad 2 and the display shows `  2A`. Release A: pads 1-4 are steps 1-4 again. Do the same with
-     B, and check A+B shows no bar row (pads stay stock). With A+B all four bars play and wrap; A
+  2. Hold A, press pads 1..4: the display shows `  1A`..`  4A`. While A is held, **only** pads
+     1-4 are lit: the selected bar blinks and the others are yellow, pads 5-16 are dark. Pressing
+     pad 2 moves the blink to pad 2 and the display shows `  2A`. The same row appears on PTN
+     SELECT and in TR-REC, and still works after changing pattern. Release A: the pads show what
+     that screen was showing. Do the same with B, and check A+B shows no bar row (pads stay
+     stock). With A+B all four bars play and wrap; A
      alone loops bar 1's A steps. **`FAIL` in place of the bar number means the flash chip
      refused the save of the bar being left** (stop here and report it).
   3. Record steps into bar 1, select bar 2, record different steps; select bar 1 again: its steps

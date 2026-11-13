@@ -48,10 +48,12 @@ content, not replays of the pattern's two passes: the selected bar is loaded int
 so TR-REC records it, and the pattern save is redirected to an append-only log in unused flash
 (`0x3DB000`-`0x3DFFFF`), which leaves the pattern's own steps intact as the default for unrecorded
 bars. Each pattern keeps its own four-bar loop and chain, so switching pattern switches the
-phrase. It is emulation-tested (91 checks, including a simulated power cycle, log compaction and
+phrase. It is emulation-tested (114 checks, including a simulated power cycle, log compaction and
 the chip's write protection); the step engine is untouched and no pattern slot is spent on a bar.
 While VARIATION A or B is held, pads 1-4 show the four bars (selected bar blinking, the rest
-yellow), so a bar press is visible; releasing the button returns the pads to steps 1-4.
+yellow) and pads 5-16 go dark, so only the four bars are lit; releasing the button returns the
+pads to whatever the screen was showing, on any screen, and the row keeps working after a pattern
+change.
 
 ## C. Per-instrument length (polyrhythm): done
 
