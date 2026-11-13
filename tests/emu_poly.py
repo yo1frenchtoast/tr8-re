@@ -143,7 +143,7 @@ def leds(*buttons, running=0, pos=None):
     w32(0x60149F38 + 0x20, 0)
     uc.mem_write(0x6007E102, bytes([running]))
     if pos is not None:
-        uc.mem_write(S["poly_pos"] + CH, bytes([pos]))
+        w32(S["poly_n"], pos + 1)              # head = (advances - 1) % length
     call(0x60016386, 0x70003000)
     held.clear()
     return [c for _, c in sorted(log)]
@@ -194,6 +194,24 @@ pw(POS, 15)
 call(S["poly_run"], P, 0, 1)
 m = play(7)
 expect("after stop/start: CH from its step 0 again", fired(m, CH), [0, 3, 6])
+
+# Restart on the fly (TAP + START/STOP, FUN_600099B6): the panel task runs stop, start and one
+# tick, and the sequencer task can run its own tick in between. The heads are the number of
+# advances since the start, whichever task made them: two advances after the restart put every
+# poly instrument on its step 2, like the firmware's own position.
+setup()
+pw(POS, 15); play(4)                           # mid-cycle: CH head 3 % 3 = 0, RS head 3
+call(S["poly_run"], P, 0, 0)                   # panel: stop
+call(S["poly_run"], P, 0, 1)                   # panel: start
+pw(POS, 15)
+m = [call(S["poly_trig"], P, -1, 0)]           # sequencer task preempts: its tick
+m += [call(S["poly_trig"], P, -1, 0)]          # panel task: the restart's own tick
+expect("restart on the fly: firmware on step 2", pr(POS), 1)
+expect("restart on the fly: CH and RS on their step 2 too (no head left behind)",
+       (fired(m, CH), fired(m, RS), r32(S["poly_n"])), ([0], [0, 1], 2))
+m = play(4)
+expect("restart on the fly: CH stays aligned afterwards (steps 3..6: head 2, 0, 1, 2)", fired(m, CH), [1])
+expect("poly state that two tasks write is one word", [k for k in S if k in ("poly_pos", "poly_reset")], [])
 
 # Pattern shorter than 16 steps: CH keeps its own cycle
 setup(last=7)

@@ -12,6 +12,14 @@
  * wraps after L steps, independent of the pattern's last step. Instruments with L = 0 follow
  * the pattern as before. Heads restart at 0 when the sequencer starts or stops.
  *
+ * The heads are not stored: poly_n counts the advances since the last start or stop, and the
+ * head of instrument i is (poly_n - 1) % L. The tick also runs in the panel task (TAP +
+ * START/STOP restarts the pattern from there, docs/POLY.md "Tasks"), so poly_n is the only
+ * state two tasks write: the advance is an atomic increment (LDREX/STREX; a task switch clears
+ * the exclusive monitor, so an interrupted increment retries) and start/stop is one word store.
+ * Whatever the interleaving, the heads equal the number of advances, like the firmware's own
+ * position.
+ *
  * How (docs/FINDINGS.md section 7, "Step trigger"):
  *   The trigger function FUN_600262F2(P, step, flam) owns the play position P[0x66]. With
  *   step = -1 it advances it (when P[1] != 0, wrap after P[3]), then tests ONE bit
@@ -41,8 +49,7 @@
 
 #define NI 11
 
-uint8_t poly_pos[NI];
-uint8_t poly_reset = 1;
+volatile uint32_t poly_n;     /* advances since the last start or stop */
 
 /* Length of instrument i in the current pattern: 0 = follow the pattern, else 1..16. */
 static int len(int i)
@@ -51,20 +58,28 @@ static int len(int i)
     return v <= 16 ? (int)v : 0;
 }
 
+/* Head of instrument i after n advances (0 before the first one or without a length). */
+static int head(int i, uint32_t n)
+{
+    int l = len(i);
+    return n && l ? (int)((n - 1) % (uint32_t)l) : 0;
+}
+
 static const uint8_t rows[3] = { TR8_PL_INST, TR8_PL_ACC, TR8_PL_FLAM };
 
 /* back = 0: save each mask of a poly instrument and replace bit s with bit pos[i].
  * back = 1: put the saved mask back, unless the mask changed since (a panel edit wins). */
-static void swap(volatile uint32_t *p, int s, uint32_t *saved, int back)
+static void swap(volatile uint32_t *p, int s, uint32_t *saved, int back, uint32_t n)
 {
     for (int i = 0; i < NI; i++) {
         if (!len(i))
             continue;
+        int h = head(i, n);
         for (int k = 0; k < 3; k++) {
             volatile uint32_t *m = &p[rows[k] + i];
             uint32_t *v = &saved[i * 3 + k];
             uint32_t o = back ? *v : *m;
-            uint32_t t = (o & ~(1u << s)) | (((o >> poly_pos[i]) & 1u) << s);
+            uint32_t t = (o & ~(1u << s)) | (((o >> h) & 1u) << s);
             if (!back) {
                 *v = o;
                 *m = t;
@@ -103,7 +118,7 @@ void poly_led(int led, unsigned colour)
         if (!l || TR8_BTN_HELD(TR8_BTN_INST(i)) != 1)
             continue;
         int u = led - TR8_LED_STEP(0);
-        colour = (TR8_SEQ_RUNNING && u == poly_pos[i]) ? TR8_COL_PLAY
+        colour = (TR8_SEQ_RUNNING && u == head(i, poly_n)) ? TR8_COL_PLAY
                : u < l                                  ? TR8_COL_IN
                :                                          TR8_COL_OFF;
         break;
@@ -131,22 +146,19 @@ void poly_lsled(int id, int a, int b)
 
 void poly_run(void *p, int a, int run)
 {
-    poly_reset = 1;
+    poly_n = 0;                                   /* the next advance is every head's step 1 */
     TR8_FN_PLAYER_RUN(p, a, run);
 }
 
 uint32_t poly_trig(volatile uint32_t *p, int step, int flam)
 {
-    int s = step, i;
+    int s = step;
+    uint32_t n = poly_n;                          /* a flam hit uses the heads of the last advance */
     if (step == -1) {
         s = (int)p[TR8_PL_POS];
         if (p[TR8_PL_RUN]) {
             s = (s >= (int)p[TR8_PL_LAST]) ? 0 : s + 1;   /* what the firmware will do */
-            for (i = 0; i < NI; i++) {
-                int n = poly_pos[i] + 1;
-                poly_pos[i] = (poly_reset || n >= len(i)) ? 0 : n;
-            }
-            poly_reset = 0;
+            n = __atomic_add_fetch(&poly_n, 1, __ATOMIC_RELAXED);
         }
         if (*(volatile int16_t *)((volatile uint8_t *)p + TR8_PL_SCATTER) != -1)
             s = -1;                               /* scatter reorders steps: leave it alone */
@@ -155,8 +167,8 @@ uint32_t poly_trig(volatile uint32_t *p, int step, int flam)
         return TR8_FN_TRIGGER(p, step, flam);
 
     uint32_t saved[NI * 3];
-    swap(p, s, saved, 0);
+    swap(p, s, saved, 0, n);
     uint32_t r = TR8_FN_TRIGGER(p, step, flam);
-    swap(p, s, saved, 1);
+    swap(p, s, saved, 1, n);
     return r;
 }

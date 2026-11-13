@@ -68,9 +68,21 @@ The task of each site comes from `tools/callgraph.py up` ([DEVELOPING.md](DEVELO
 The clock tick `FUN_6000989C` is called by the sequencer task (`FUN_60008F6C`) and also by
 `FUN_600099B6`, which the panel's button handler `FUN_6001961E` calls for START/STOP (`0x1B`)
 pressed while playing with TAP (`0x2E`) held [unit]: a restart from step 1 without stopping
-(stop, start, one tick), with no lock against the sequencer task. So `poly_trig` and `poly_run`,
-and the variables they write (`poly_pos`, `poly_reset`), can run in two tasks during that gesture.
-This is an open point for review rule 1, not a seen fault.
+(stop, start, one tick), with no lock against the sequencer task. So `poly_trig` and `poly_run`
+can run in two tasks during that gesture, and the sequencer (priority 10) can preempt the panel
+(15) at any instruction.
+
+The poly state is therefore one word, `poly_n`: the number of advances since the last start or
+stop. The head of instrument i is not stored, it is `(poly_n - 1) % L`. `poly_trig` advances with
+an atomic increment (`LDREX`/`STREX`: the task switch clears the exclusive monitor, so an
+interrupted increment retries), and `poly_run` resets with one word store. Whatever the
+interleaving, the heads equal the number of advances since the start, which is also what the
+firmware's own position counts. The earlier build kept one head per instrument plus a reset flag
+and updated them in a loop: a preemption inside that loop could leave some heads one step behind
+until the next start. That was never seen on the unit; it was found from the task table
+(review rule 1). The emulation test runs the restart's calls in both orders but cannot preempt
+inside a call, so the atomic increment itself is checked by reading the listing
+(`patches/poly/poly.lst`).
 
 `poly_last` checks the instrument buttons (`0x21 + i`, held bitmap): none held -> the original
 call; else it sets the lengths and shows the result with `FUN_60015980`.
@@ -109,8 +121,8 @@ The length of instrument i is id `0x12B + i` (Ptn2 index `4 + i`). Values outsid
   [code].
 
 Code: `patches/poly/poly.c`. The first developer-dump region (`0x60011150`-`0x60011464`) holds
-695 bytes of code and is nearly full, so `poly_lsled` (108 bytes) and the data (6 + 11 bytes) are
-in the second one (`0x60011488`-`0x60011505`), which the standalone poly build has to itself.
+691 bytes of code and is nearly full, so `poly_lsled` (108 bytes) and the data (5 + 4 bytes) are
+in the second one (`0x60011488`-`0x600114FF`), which the standalone poly build has to itself.
 `motion-poly` links both features into the two regions itself ([COMBO.md](COMBO.md)).
 Emulation test: `tests/emu_poly.py` runs the firmware's own `FUN_600262F2` through the hook,
 the gesture through the firmware's own button handler `FUN_6001961E`, and the write through
@@ -193,6 +205,20 @@ Set CH to 3 steps (LAST STEP + CH + pad 3), leave BD without a length. Pattern l
 | 7 | Leave TR-REC (another mode button) | LAST STEP as stock |
 | 8 | Pattern length 12 (LAST STEP + pad 12), select BD | LAST STEP lit steadily (stock) |
 
+## Hardware test 6 (restart on the fly, one advance counter): not done yet
+
+Set CH to 3 steps and RS to 5. Put CH on its step 1 only, RS on its steps 1 and 2, and BD on
+steps 1, 5, 9, 13.
+
+| # | Action | Expected |
+|---|---|---|
+| 1 | Play, hold LAST STEP + CH | The CH position moves over steps 1-3, as before |
+| 2 | Stop, start, several times | CH and RS start on their step 1 with BD every time |
+| 3 | While playing, TAP + START/STOP, at different points of the bar | The pattern restarts from step 1 without stopping; CH and RS restart on their step 1 with BD |
+| 4 | TAP + START/STOP fast, several times a second, for 20 s, then let it play | No freeze; afterwards CH every 3 steps and RS 2 of 5, aligned on BD |
+| 5 | Change CH to 4 while playing (LAST STEP + CH + pad 4) | CH continues with 4 steps |
+| 6 | Flam on CH's step 1, play | The flam follows CH's head |
+
 ## Limitations and next steps
 
 1. The USB backup (`TR8_PTN`) does not contain the lengths [code].
@@ -222,3 +248,6 @@ Set CH to 3 steps (LAST STEP + CH + pad 3), leave BD without a length. Pattern l
 - LAST STEP blinks in TR-REC when the selected instrument has a length (`poly_lsled`, first
   `b.w` hook site: `tools/tr8patch.py` and the web flasher take `"b:symbol"`). Emulation tests
   pass. Hardware test 5 (2026-11-13, `motion-poly-chain`): passed, every check as described.
+- One advance counter (`poly_n`) instead of the per-instrument heads and the reset flag, so the
+  restart on the fly (TAP + START/STOP, panel task) and the sequencer never write the same
+  variables in two steps. Same behaviour; emulation tests pass. Hardware test 6 pending.
