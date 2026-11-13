@@ -25,7 +25,7 @@ accepts.
 | Boot loader, updater, recovery path | Decoded; recovery confirmed in use |
 | Sequencer, controls, buttons, panel mode, sound parameter path | Mapped ([docs/FINDINGS.md](docs/FINDINGS.md)) |
 | **Motion recording** | **Works on a real TR-8**: hold TR-REC to record, hold CLEAR to erase. RAM only, one global buffer |
-| **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. Saved with each pattern ([docs/POLY.md](docs/POLY.md)) |
+| **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. In TR-REC, LAST STEP blinks while the selected instrument has its own length. Saved with each pattern ([docs/POLY.md](docs/POLY.md)) |
 | **Motion + per-instrument length together** | **Works on a real TR-8** ([docs/COMBO.md](docs/COMBO.md)) |
 | **Bar chain (more than two bars)** | Hold A or B + a pad 1..8 to paint a bar and set that side's length (`A/B + CLEAR + pad n` shrinks it), A+B + pad sets both. Each side plays its own bars in order and A+B plays A then B. The step view follows the bar you hear; while A or B is held the pads show that side's bars. Saved with each pattern. **Works on a real TR-8**, alone and together with motion and poly (one firmware), and is in the web flasher ([docs/CHAIN.md](docs/CHAIN.md)) |
 | **Bar chain + motion, + poly, or both** | One firmware, one payload and one set of hook sites; the chain no longer takes the developer-dump region ([docs/CHAIN.md](docs/CHAIN.md), [docs/COMBO.md](docs/COMBO.md)) |

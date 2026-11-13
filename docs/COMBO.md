@@ -71,7 +71,7 @@ while the patch RAM ends at `0x60281183`.
   `0x60290988`-`0x62000000`, startup stack unchanged.
 - `tests/emu_motion.py` and `tests/emu_poly.py` with `--payload patches/combo/payload.json`:
   every motion and poly scenario on the combined image.
-- `tests/emu_chain.py` on `chain`, `motion-chain`, `poly-chain` and `motion-poly-chain` (224
+- `tests/emu_chain.py` on `chain`, `motion-chain`, `poly-chain` and `motion-poly-chain` (262
   chain checks each, including the image growth and the moved pool); `emu_motion.py` on
   `motion-chain`, `emu_poly.py` on `poly-chain`, `emu_combo.py` on `motion-poly-chain`, with the
   merged payload.
@@ -85,7 +85,7 @@ while the patch RAM ends at `0x60281183`.
 | 1 | Switch on | Normal start, patterns and kits present |
 | 2 | Play a factory pattern for a few minutes, change patterns and kits | Normal sound, no freeze |
 | 3 | Motion checks 3-6 of [UPDATE.md](UPDATE.md) | As with the motion patch |
-| 4 | Poly test 2 (gesture) and test 3 (step LEDs) of [POLY.md](POLY.md) | As with the poly patch |
+| 4 | Poly test 2 (gesture), test 3 (step LEDs) and test 5 (LAST STEP blinks) of [POLY.md](POLY.md) | As with the poly patch |
 | 5 | CH at 3 steps + record a BD decay motion | Both at the same time, no interference |
 | 6 | Edit a pattern (the TR-8 saves it automatically), USB backup | Works (the memory pool is 64 KB smaller) |
 | 7 | Switch off and on | Motion gone (RAM only), lengths kept with their pattern (tested, [POLY.md](POLY.md) test 4), unit starts normally |

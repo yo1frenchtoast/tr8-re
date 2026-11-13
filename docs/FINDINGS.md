@@ -603,8 +603,8 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   `0x60011E04` in `FUN_60011DBE`). With those two calls replaced by `nop.w`,
   `0x60011150`-`0x60011463` (788 bytes) and `0x60011488`-`0x60011BB5` (1838 bytes) are free. The
   literal pool `0x60011464`-`0x60011483` is still used and must stay. The motion patch uses
-  737 + 1568 bytes; `motion-poly` uses about 340 + 730 bytes, its zeroed data is in patch RAM
-  (below). The bar chain used these regions in its earlier builds and no longer does.
+  737 + 1568 bytes, `poly` 695 + 125 bytes; `motion-poly` uses about 340 + 840 bytes, its zeroed
+  data is in patch RAM (below). The bar chain used these regions in its earlier builds and no longer does.
 - **Grow the image (used by the bar chain since the module build).** Code appended at the end of
   the image (`0x601309E0`) would be erased, because the bss zero-fill covers
   `0x601264EC`-`0x60280987`. Instead:

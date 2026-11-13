@@ -183,7 +183,7 @@ Set CH to 3 steps (LAST STEP + CH + pad 3), leave BD without a length. Pattern l
 
 | # | Action | Expected |
 |---|---|---|
-| 1 | TR-REC, select CH | LAST STEP blinks. If it is lit steadily or off instead, report it: the blink flag on a button LED is the guess |
+| 1 | TR-REC, select CH | LAST STEP blinks |
 | 2 | Select BD | LAST STEP off (stock: pattern length 16) |
 | 3 | Select RS, then HC (RS/HC button swap) | RS: as BD; HC: as BD. Then give RS a length: RS blinks, HC does not |
 | 4 | Select CH, hold LAST STEP, release it | Held: the stock LED. Released: blinking again (if not, the release does not request the repaint) |
