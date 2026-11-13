@@ -182,6 +182,32 @@ Low-level access: `FUN_6000F80E(ctx, area, n)` then `FUN_6000F844(ctx, id, &out)
 global id. Change handlers (`FUN_6000A15A`..`FUN_6000AFDC`) copy values into the pattern struct at
 `0x6012FA64`.
 
+### Slot copy, commit and pattern load
+
+Two different 12-byte contexts exist; mixing them silently copies nothing:
+
+- **Getter context** (reading): `FUN_6000F80E(ctx, area, slot)` fills
+  `{+0 pointer to the first value word, +4 area, +5 0x25, +8 first id}`; `FUN_6000F844(ctx, id,
+  &out)` then reads `ctx[0] + 4 * (id - ctx[8])`.
+- **Storage descriptor** (copying): `FUN_6000F3C2(ctx, area, slot)` fills
+  `{u8 area, pad, u32 slot, u8 0xFF, ...}` — an area/slot address, not a value pointer.
+
+`FUN_6000F3EC(ctx, area, src, 0)` copies area slot `src` into the descriptor's destination slot
+and notifies when the destination is slot 0. The pattern load `FUN_6001B842` is exactly
+`FUN_6000F3C2(ctx, 4, 0)` + `FUN_6000F3EC(ctx, 4, n+1, 0)` (area 4 slot `n+1` -> working copy).
+
+`FUN_6000FC78(_, area, slot, _)` is the **commit**: it copies area slot 0 into slot `slot` and
+writes the result to flash (disassembly `0x6000FC82`-`0x6000FCC2`: `FUN_6000F3C2`, `FUN_6000F3EC`,
+then `FUN_60010E92` store). The firmware calls it on a pattern change, so it is also the safe way
+for a patch to persist the pattern being left. Only this one touches flash; the copies above are
+RAM only.
+
+Area 4 (Ptn) slot word order is the descriptor order: word 0 = `VARI` (id `0xC3`), 1 = `SCALE`
+(`0xC4`), 2 = `LAST_A` (`0xC5`), 3 = `LAST_B` (`0xC6`), then the 26 A/B mask pairs. A plain
+VARIATION A/B press changes `VARI` through the Ptn database object `0x6007ED24`:
+`FUN_600186FA(0x6007ED24, 0, 0 or 1, 0)` (index 0 = `VARI`), so writing slot 0 word 0 has the same
+effect as the button.
+
 HMI parameter databases (names at `0x6007EC0C`): System, Setup, Efx, Patch, Ptn, Patch2, Ptn2,
 Testmode, TMP. Each has a getter `get(db, index, default)` that maps a local index to a global id:
 
@@ -244,6 +270,16 @@ Inside it, `FUN_6000E404` applies the variation: struct +0x0C is the panel setti
 variation (+0x10, read as `0x6012FA74`) is toggled, else `VARI` is stored. Then `FUN_6000E152`
 writes the step, accent and flam masks of that variation into the player object. The last step is
 read **after** this (`FUN_600525F8`), so the variation must be set before `FUN_600095F0` returns.
+
+The struct is filled from area 4 **slot 0** (the working copy) just before that, by
+`FUN_6000E0FE` (called at `0x6000960E`): `+0x0C` = id `0xC3` (`VARI`), `+0x14` = `0xC5`
+(`LAST_A`), `+0x18` = `0xC6` (`LAST_B`), `+0x1C` = `0xC4` (`SCALE`, passed through
+`FUN_6000E0E0`, which maps 0->8, 1->4, 2->6, **3->3**), then the 26 mask pairs. So a restart
+always reloads the working copy; a patch that wants other content must write the struct after
+`FUN_6000E0FE` and before the last-step read (this is what the chain patch does at `0x60009614`).
+
+`FUN_6000E4A6` (pass end, called from `0x60009964`) is gated by `FUN_6000E472` and only loads a
+*pending* pattern change, so it does not clobber content written by such a hook during playback.
 
 Button handler `FUN_6001961E` dispatches button id 0x00-0x0F to `0x600199F4`, which first tests
 LAST STEP (`0x1A`) and then sets the pattern length (`FUN_6001B8D6` at `0x60019A10`). The pad id
@@ -445,12 +481,14 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 
 ## 12. Code space for patches
 
-- **Developer dump cave** (used by the `motion`, `poly` and `motion-poly` patches): `FUN_6001114E` and `FUN_600113B2` are only
+- **Developer dump cave** (used by the `motion`, `poly`, `motion-poly` and opaque `chain` patches):
+  `FUN_6001114E` and `FUN_600113B2` are only
   called from a developer branch of the USB backup (`0x60011E00`, `0x60011E04` in `FUN_60011DBE`).
   With those two calls replaced by `nop.w`, `0x60011150`-`0x60011463` (788 bytes) and
   `0x60011488`-`0x60011BB5` (1838 bytes) are free. The literal pool `0x60011464`-`0x60011483` is
   still used and must stay. The motion patch uses 737 + 1568 bytes; `motion-poly` uses about
-  340 + 730 bytes, its zeroed data is in patch RAM (below).
+  340 + 730 bytes, its zeroed data is in patch RAM (below); `chain` uses both regions too
+  (408 + 504 + 14 bytes), so it is standalone for the same reason.
 - **Grow the image (design, not tested on a unit).** Code appended at the end of the image
   (`0x601309E0`) would be erased, because the bss zero-fill covers `0x601264EC`-`0x60280987`.
   Instead:

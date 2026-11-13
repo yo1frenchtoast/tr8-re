@@ -42,12 +42,12 @@ has 16 step buttons. The step engine limit comes from `LAST_A`/`LAST_B` and the 
 (`FUN_600525F8`). A 32-step view would also need a page selector the panel does not have.
 
 The useful part of the feature is a longer **arrangement**, and that is implemented as the bar
-chain ([CHAIN.md](CHAIN.md)): a pattern plays up to 16 bars, each one an A or B pass, painted
-with A/B + pad and saved with the pattern. It is emulation-tested; the step engine is untouched.
-What it does not give is more than two bars of *material*: for four different bars, either add
-C/D variation storage (same masks, 16 more parameters per pattern) or make each chain entry a
-whole pattern (4-bit pattern + 1-bit variation per bar still fits in the spare Ptn2 ids), which
-needs the pattern-select path.
+chain ([CHAIN.md](CHAIN.md)): a pattern plays up to 16 bars, painted with A/B + pad and saved
+with the pattern. A bar is a whole pattern variation (16 patterns x 2 variations = 32 bars
+shared by all songs), so the material is not limited to the two passes of one pattern either; a
+song spends one pattern per bar. It is emulation-tested; the step engine is untouched. Selecting
+bar *n* switches the pattern being edited, through the firmware's own save/load primitives, so
+TR-REC records each bar into its own pattern.
 
 ## C. Per-instrument length (polyrhythm): done
 

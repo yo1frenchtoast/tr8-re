@@ -80,11 +80,11 @@ PATCHES["poly"] = {
 
 # Bar chain (patches/chain/chain.c, docs/CHAIN.md).
 # More than two bars per pattern: A/B + pad paints a bar, A+B + pad sets the length.
-# Same free region as motion and poly: cannot be combined with them yet.
+# Same free regions as motion and poly: cannot be combined with them yet.
 PATCHES["chain"] = {
     "doc": "Bar chain: A/B + pad paints a bar, A+B + pad sets the length (docs/CHAIN.md)",
     "payload": "patches/chain/payload.json",
-    "allowed": [(0x60011150, 0x60011464)],
+    "allowed": [(0x60011150, 0x60011464), (0x60011488, 0x60011BB6)],
     "keep": [(0x60011464, 0x60011484)],
     "sites": [
         (0x60011E00, thumb_bl(0x60011E00, 0x6001114E), "nop"),          # dev dump 1 (frees the cave)

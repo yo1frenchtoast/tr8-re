@@ -123,6 +123,59 @@ typedef int (*tr8_btn_fn)(int id);
 
 /* ---------------------------------------------------------------- parameters */
 
+/* Parameter storage (FINDINGS section 6). Every area is a table of 32-bit values, one per
+ * global id, stored in "slots": slot 0 is the working copy that the panel edits and the
+ * sequencer plays, slot n+1 is pattern n. A slot context is 12 bytes:
+ *   +0  pointer to the first value word of that slot
+ *   +4  area byte (0..7)
+ *   +5  0x25, the type byte the getter/setter check
+ *   +8  first global id of the area
+ * Read and write a value word directly through the pointer; the getter/setter add range
+ * checks and change notifications on top. */
+typedef void (*tr8_pctx_fn)(void *ctx, int area, int slot);
+#define TR8_FN_PCTX ((tr8_pctx_fn)0x6000F80F)                   /* [code] FUN_6000F80E */
+#define TR8_AREA_SETUP   1      /* Setup: word n = Setup[n], global id 0x2A + n            */
+#define TR8_AREA_PATTERN 4      /* Ptn: word 0 VARI, 1 scale, 2 LAST_A, 3 LAST_B,          */
+                                /*      4..55 = 26 pairs (A mask, B mask) per step row     */
+#define TR8_AREA_PTN2    6      /* Ptn2: weak accent, flams, spare ids (POLY.md)           */
+#define TR8_SETUP_PATTERN 2     /* [code] Setup[2]: pattern that slot 0 belongs to         */
+#define TR8_SETUP_PENDING 3     /* [code] Setup[3]: pattern to load (-1 = none)            */
+#define TR8_SETUP_DISPLAY 0xF   /* [code] Setup[0xF]: pattern number shown by the panel    */
+
+/* Copy one slot of an area into another: FUN_6000F3C2 fills a 12-byte descriptor for the
+ * destination slot, then FUN_6000F3EC(ctx, area, src_slot, 0) copies (area, src_slot) into
+ * the destination and notifies when the destination is slot 0. This is how the firmware
+ * loads a pattern: it copies area 4 slot n+1 into slot 0 (FUN_6001B842). RAM only, no flash
+ * write. The descriptor is {byte area, pad, word slot, byte 0xFF, ...}: a *storage* address,
+ * not the getter context of TR8_FN_PCTX below (which holds a value pointer). */
+typedef void (*tr8_copy_ctx_fn)(void *ctx, int area, int dst_slot);
+typedef void (*tr8_copy_fn)(void *ctx, int area, int src_slot, int unused);
+#define TR8_FN_COPY_CTX ((tr8_copy_ctx_fn)0x6000F3C3)            /* [code] FUN_6000F3C2 */
+#define TR8_FN_COPY ((tr8_copy_fn)0x6000F3ED)                   /* [code] FUN_6000F3EC */
+
+/* Copy area slot 0 into `slot` and write that slot to the user flash. FUN_6001B7D8(_, n)
+ * does this for area 4 and area 6 with slot = n + 1 when the panel changes pattern. The
+ * first and last arguments are unused (the firmware passes a database object and 0). */
+typedef void (*tr8_commit_fn)(int unused, int area, int slot, int unused2);
+#define TR8_FN_COMMIT ((tr8_commit_fn)0x6000FC79)               /* [code] FUN_6000FC78 */
+
+/* FUN_6000E0E0(struct, scale) maps the pattern scale word (0..3) to the step grouping
+ * written to the player struct at +0x1C: 8, 4, 6, 3. */
+typedef void (*tr8_scale_fn)(void *obj, int scale);
+#define TR8_FN_SCALE ((tr8_scale_fn)0x6000E0E1)                 /* [code] FUN_6000E0E0 */
+
+/* Player struct 0x6012FA64 (the object that FUN_600095F0 fills and FUN_6000E152 applies):
+ *   +0x0C VARI, +0x10 effective variation, +0x14/+0x18 LAST_A/LAST_B, +0x1C scale,
+ *   +0x20..+0xAE the 26 A/B mask pairs that FUN_6000E080 writes and FUN_6000E152 reads.
+ * FUN_6000E0FE fills the scalars from area 4 slot 0; FUN_6000E4A6 loads the pattern named
+ * by +0x08 into slot 0 and fills everything. */
+#define TR8_PTN_STRUCT ((volatile uint8_t *)0x6012FA64)         /* [code] DAT_6000991C     */
+#define TR8_PTN_VARI   0x0C
+#define TR8_PTN_EFF    0x10
+#define TR8_PTN_LAST_A 0x14
+#define TR8_PTN_LAST_B 0x18
+#define TR8_PTN_SCALE  0x1C
+
 /* HMI parameter databases. All take the object pointer as first argument. */
 typedef int (*tr8_get_fn)(void *db, int idx, int def);
 #define TR8_HMI_SETUP ((void *)0x60149F38)                      /* [code] Setup database object */
