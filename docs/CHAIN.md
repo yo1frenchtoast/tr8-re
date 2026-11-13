@@ -389,6 +389,11 @@ call for area 4: instead of the copy it appends the working copy as the current 
 entry. So area 4 slot *n+1* keeps the pattern's **own** steps, which is exactly what an unrecorded
 bar plays, and the pattern is never overwritten with one of its bars. A pattern with no side
 sequence keeps the stock commit, so its edits stay in area 4 and survive a reflash or an update.
+Bars recorded while the pattern had a sequence stay in the log after `A+B+CLEAR`, but they are not
+loaded while the pattern has none: `sync` and the playhead follow check the lengths first, so an old
+bar can never reach the working copy and be written over the pattern by the stock commit. They come
+back when a side is selected again. Edits that a build before this rule saved in the log for a
+pattern with no sequence are ignored the same way: that pattern plays its last stock save.
 If the save names a pattern the patch has not loaded (the firmware also saves a pattern the panel
 only just selected), the working copy is that pattern and not a bar, so the stock commit runs
 instead. `A+B+CLEAR+pad` loads the pattern's own steps into slot 0 before clearing the lengths, so

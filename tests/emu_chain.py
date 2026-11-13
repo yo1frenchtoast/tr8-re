@@ -1380,4 +1380,46 @@ fl_prog(0x3D8000, 4, 0x7000E800, through_chip=True)
 expect("flash model: a protected chip drops a program, an open session accepts it",
        (dropped, FL[0x3D8000:0x3D8004]), (b"\xff" * 4, b"\0\0\0\0"))
 
+# --- a bar left in the log must not overwrite a pattern that has no sequence any more ------
+# A bar recorded while the pattern had a sequence stays in the log after A+B+CLEAR. The stock
+# commit saves the pattern from then on, so neither a pattern change (sync) nor the playhead
+# follow (chain_view) may load that old bar into the working copy: the next stock save would
+# write it into the pattern slot and lose the edits made since.
+seed_ram()
+for blk in range(NBLK):
+    fl_erase(BASE + blk * 0x1000)
+fl_erase(SCR)
+cold_boot()
+set_pattern(0)
+sync_panel()
+def save_p0():
+    """The firmware's pattern save; the stub of the stock commit copies slot 0 to slot 1."""
+    log.clear()
+    call(S["chain_commit"], 0, 4, 1, 0)
+    stock = ("commit", 4, 1) in log
+    if stock:
+        uc.mem_write(slot_addr(1), bytes(uc.mem_read(slot_addr(0), 4 * C4)))
+    return stock
+press(1, A)
+w32(slot_addr(0) + 4 * 4, 0xAAAA)
+expect("stale bar: with a sequence, the bar goes to the log", save_p0(), False)
+press(1, A, B, CLEAR)
+w32(slot_addr(0) + 4 * 4, 0xBBBB)
+expect("stale bar: after A+B+CLEAR the stock commit saves the pattern",
+       (save_p0(), slot_rows(1)[0][0]), (True, 0xBBBB))
+set_pattern(1)
+sync_panel()
+set_pattern(0)
+sync_panel()
+expect("stale bar: back on the pattern, the working copy is the pattern, not the old bar",
+       slot_rows(0)[0][0], 0xBBBB)
+expect("stale bar: ... and the next save keeps it", (save_p0(), slot_rows(1)[0][0]), (True, 0xBBBB))
+uc.mem_write(S["chain_row"], bytes([2, 0]))          # left over from the earlier sequence
+uc.mem_write(S["chain_side"], bytes([0]))
+w32(RUN, 1)
+log.clear()
+call(S["chain_view"], 0x70002000)
+expect("stale bar: stock playback does not follow an old chain_row", slot_rows(0)[0][0], 0xBBBB)
+w32(RUN, 0)
+
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)

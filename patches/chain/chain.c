@@ -292,8 +292,10 @@ static void store_init(void)
         k = ekey(ebuf);
         if (tab[k])
             continue;
-        if (!find_free())
-            break;                  /* no free slot: the five blocks always keep one */
+        if (!find_free()) {
+            flash_bad = 1;          /* no free slot: keep the scratch block, it holds the rest */
+            break;
+        }
         F_READ(FL_SCR + (uint32_t)i * ENTB, ENTB, ebuf);   /* find_free() used ebuf */
         if (!eok(ebuf, -1))
             continue;
@@ -573,7 +575,13 @@ static void sync(void)
         cur_side = (uint8_t)side;
         chain_sel[0] = 0;
         chain_sel[1] = 0;
-        slot_load(p, 0, side);
+        /* With no side sequence the working copy is the pattern itself and the stock commit
+         * saves it: a bar left in the log from an earlier sequence must not be loaded over it,
+         * or that save would write the old bar into the pattern slot. */
+        if (clen(0) || clen(1))
+            slot_load(p, 0, side);
+        else
+            clean = wchash(wc);
         wc[0] = vari;                      /* slot_load wrote the side: keep A+B */
         cur_pat = (uint8_t)p;
         view_hold = 1;                     /* this pass must not follow the old row */
@@ -681,7 +689,10 @@ void chain_view(void *obj)
     } else {
         side = (int)chain_side;
         bar = (int)chain_row[side];
-        if (TR8_SEQ_RUNNING && (bar != (int)cur_bar || side != (int)cur_side)) {
+        /* Follow only while the pattern has a side sequence: in stock playback chain_row is
+         * left over from an earlier sequence and the working copy is the pattern (see sync). */
+        if (TR8_SEQ_RUNNING && (clen(0) || clen(1)) &&
+            (bar != (int)cur_bar || side != (int)cur_side)) {
             if (!store_save(cur_pat, cur_bar))  /* keep the bar being left, if it was edited */
                 show_fail();
             cur_bar = (uint8_t)bar;

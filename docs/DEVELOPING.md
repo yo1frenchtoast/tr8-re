@@ -255,6 +255,10 @@ Two kinds of tests are needed:
   B side with VARI = 2.
 - A value read from flash is not valid until its magic and its checksum are checked. Never use a
   field of an unchecked slot as an array index: an erased slot reads `0xFFFFFFFF`.
+- When a patch stops redirecting a save, the data it stored before must not be loaded over the
+  data the stock save now keeps: the next stock save would write the old data into the slot. Check
+  the condition (for example "this pattern has a sequence") on every load path, not only on the
+  save.
 - A comment or a document that describes the code must change in the same commit as the code.
   Addresses, block counts and sizes in FINDINGS.md that no longer match the code mislead the next
   author and the reviewer.
