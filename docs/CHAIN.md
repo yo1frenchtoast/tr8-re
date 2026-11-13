@@ -13,7 +13,7 @@ side that was never selected stays stock.
 Every pattern has its own four bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 141 checks). Not yet tested on hardware.
+Status: **works in emulation** (`tests/emu_chain.py`, 148 checks). Not yet tested on hardware.
 Like the other patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
@@ -27,8 +27,8 @@ it uses the two developer-dump regions, and so do `motion` and `poly`.
 
 | Gesture | Result |
 |---|---|
-| Hold **VARIATION A**, press pad 1..4 | Bar *n* becomes the bar being edited, on its **A** steps, and the A side becomes at least *n* bars long. The display shows `  1A`..`  4A` |
-| Hold **VARIATION B**, press pad 1..4 | The same bar on its **B** steps; the B side becomes at least *n* bars long. The display shows `  1B`..`  4B` |
+| Hold **VARIATION A**, press pad 1..4 | Bar *n* becomes the bar being edited, on its **A** steps, and the A side becomes at least *n* bars long. The display shows `  A1`..`  A4` |
+| Hold **VARIATION B**, press pad 1..4 | The same bar on its **B** steps; the B side becomes at least *n* bars long. The display shows `  B1`..`  B4` |
 | Hold **A + B**, press pad 1..4 | Both sides are *n* bars long (extend or shrink). The display shows `AB 1`..`AB 4` |
 | Hold **A + B + CLEAR**, press a pad | Both sides back to stock (no bar sequence). The display shows `AB--` |
 | Press **A** (no pad) | Play the A sequence: bars 1..Na, A steps |
@@ -99,6 +99,10 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
   button gives the pads back to whatever the screen was showing (A+B keeps the length gesture and
   leaves the pads stock). A save the flash chip refused shows **`FAIL`** instead of the bar
   number (see Storage).
+- The bar number (`  A1`) is only the confirmation of the pad press. Releasing VARIATION A or B
+  sets the screen's repaint bit (`0x40` in the halfword at `0x60149F38`), which makes the panel
+  draw its own numeric text again on its next pass, so the display returns to its normal view
+  instead of staying on the bar ([FINDINGS.md](FINDINGS.md) section 11).
 
 ## How it works
 
@@ -270,14 +274,15 @@ the pattern's own steps.
 
 The payload uses the two developer-dump regions
 (`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 784 bytes of `.text.far` plus 1 byte of
-`.data` in the first (788 available, 3 free), 1600 bytes of `.text` plus 212 bytes of `.bss` in
-the second (1838 available, 26 free). The literal pool between them (`0x60011464`-`0x60011484`) is
+`.data` in the first (788 available, 3 free), 1624 bytes of `.text` plus 212 bytes of `.bss` in
+the second (1838 available, 2 free). The literal pool between them (`0x60011464`-`0x60011484`) is
 live firmware data and is never written. The probe build (`payload_probe.json`) needs 568 + 14
 bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
 combined build needs the "grow the image" method or another dead-code region
 ([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths and the slot-0 notification needed
 `-fno-inline`; `struct_bar`, `clen` and `show_fail` live in the first region, `show_ab` is back in
 the second, and `slot_notify` is inlined into `chain_edit` (a separate function no longer fits).
+The release-time display hand-back is what took the second region to 2 free bytes.
 
 ## Why not a real 32- or 64-step pattern
 
@@ -328,14 +333,15 @@ writes a side length, a bar or the pattern:
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 141 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 148 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..4` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar selection
   and the working copy (bar 1 = pattern, bar 2 loaded after a save, last steps and B side; the
   same round trip while stopped: `A + pad 3`, edit a step, `A + pad 1`, back to `A + pad 3` with
   the edit, and the slot-0 `{0, 4}` notification after every load but not after the A+B length
-  gesture); the
+  gesture); the display hand-back (releasing VARIATION A or B sets the screen's `0x40` repaint
+  bit, a swallowed pad release leaves it clear, another button does not touch it); the
   pattern-save redirect (no pattern slot written, one log entry with the 26 rows and LAST_A/B,
   area 4 slot *n+1* unchanged); playback of an A sequence, a B sequence and the A+B A-then-B
   sequence, with the recorded bar's content (masks, last steps, scale); a side that was never
@@ -376,7 +382,8 @@ writes a side length, a bar or the pattern:
 - Hardware checklist for this build:
   1. Plain pattern, no side selected: A, B and A+B behave exactly as stock; while A or B is held
      the row shows just bar 1 (the pattern itself) blinking yellow and pads 2-16 dark.
-  2. Give A four bars (`A + pad 1`, then 2, 3, 4): the display shows `  1A`..`  4A`; while A is
+  2. Give A four bars (`A + pad 1`, then 2, 3, 4): the display shows `  A1`..`  A4`, and each
+     disappears again when A is released (the panel draws its normal text); while A is
      held, all four bars are green and the playing bar blinks yellow, pads 5-16 dark. Press A: the
      four A bars play in order and wrap. Press B: B has no bars yet, so it is stock. Press A+B:
      the A sequence only. **`FAIL` in place of the bar number means the flash chip refused the

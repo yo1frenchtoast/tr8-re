@@ -52,6 +52,7 @@ A4, C4 = 0x60144EA0, 56               # area 4 (Ptn), 17 slots; slot 0 = working
 PTN = 0x6012FA64                      # player struct
 VARI, EFF = 0x6012FA70, 0x6012FA74    # panel VARI, effective variation (= TR8_SEQ_VARIATION)
 RUN = 0x6007E102                      # sequencer running
+HMI = 0x60149F38                      # panel screen object: low halfword is the repaint bits
 CNT = 17                              # Ptn2 index for the two side lengths (id 0x138)
 
 # The flash log (chain.c): 4 blocks of 32 entries, 128 bytes each, top block first.
@@ -191,6 +192,13 @@ def texts(entries):
 
 def r8(a):
     return uc.mem_read(a, 1)[0]
+
+def repaint():
+    """0x40 in the screen object's bit word: the panel will repaint its own numeric text."""
+    return r8(HMI) & 0x40
+
+def clear_repaint():
+    uc.mem_write(HMI, bytes([r8(HMI) & 0xBF]))
 
 fails = 0
 def expect(name, got, want):
@@ -441,7 +449,7 @@ expect("press: LAST STEP + pad keeps the stock path", press(8, LAST), [("press",
 expect("press: LAST STEP + A + pad keeps the stock path", press(2, LAST, A), [("press", 1)])
 
 r = press(1, A)
-expect("press: A + pad 1 shows bar 1 A", edits(r), [("text", "  1A")])
+expect("press: A + pad 1 shows bar 1 A", edits(r), [("text", "  A1")])
 expect("press: ... and plays A", applied(r), [("apply", 0)])
 # (the length setter above also notifies, with its own event; the slot-0 event is {0, 4})
 expect("press: ... and tells the screens the working copy changed",
@@ -451,7 +459,7 @@ expect("press: the A side is now one bar", pget(CNT), 0x01)
 expect("press: bar 1 was stored", (bar_entry(0, 0) or {}).get("rows"), slot_rows(1))
 
 r = press(2, B)
-expect("press: B + pad 2 shows bar 2 B", edits(r), [("text", "  2B")])
+expect("press: B + pad 2 shows bar 2 B", edits(r), [("text", "  B2")])
 expect("press: ... and plays B", applied(r), [("apply", 1)])
 expect("press: the working copy is bar 2 of the pattern", slot_rows(0), slot_rows(1))
 expect("press: the sides are one and two bars long", pget(CNT), 0x21)
@@ -483,11 +491,11 @@ expect("save: area 4 slot 1 still holds the pattern's own steps", slot_rows(1), 
 
 # Selecting another bar and coming back restores the recorded content. Leaving bar 2 saves it
 # again (the working copy is what it is), so the entry must stay the one just edited.
-expect("press: bar 4", edits(press(4, A)), [("text", "  4A")])
+expect("press: bar 4", edits(press(4, A)), [("text", "  A4")])
 expect("press: bar 4 is the untouched pattern", slot_rows(0), slot_rows(1))
 expect("press: the A side is now four bars", pget(CNT), 0x24)
 r = press(2, B)
-expect("press: back to bar 2 B", edits(r), [("text", "  2B")])
+expect("press: back to bar 2 B", edits(r), [("text", "  B2")])
 expect("press: ... with the recorded masks", slot_rows(0)[5], (0x7777, 0x8888))
 expect("press: ... and its last steps", slot_scalars(0), (0x0C, 0x0D))
 expect("press: ... and its scale", r32(slot_addr(0) + 4), 2)
@@ -495,12 +503,12 @@ expect("press: ... and the B side selected", (r32(VARI), r32(EFF)), (1, 1))
 
 # Stopped, the same on the A side: load a bar, edit it, leave and come back. This is the
 # "A + pad loads the bar for editing" flow; nothing here starts the sequencer (RUN stays 0).
-expect("stopped: A + pad 3 loads bar 3", edits(press(3, A)), [("text", "  3A")])
+expect("stopped: A + pad 3 loads bar 3", edits(press(3, A)), [("text", "  A3")])
 w32(slot_addr(0) + 4 * (4 + 2 * 8), 0x0123)     # TR-REC: step 9 of the A side
 call(S["chain_commit"], 0, 4, 1, 0)             # the firmware save, redirected to the log
-expect("stopped: A + pad 1 loads bar 1", edits(press(1, A)), [("text", "  1A")])
+expect("stopped: A + pad 1 loads bar 1", edits(press(1, A)), [("text", "  A1")])
 expect("stopped: ... bar 1 is the pattern itself", slot_rows(0), slot_rows(1))
-expect("stopped: A + pad 3 loads the edited bar again", edits(press(3, A)), [("text", "  3A")])
+expect("stopped: A + pad 3 loads the edited bar again", edits(press(3, A)), [("text", "  A3")])
 expect("stopped: ... with the step edited while stopped", slot_rows(0)[8], (0x0123, 0x5108))
 
 r = press(3, A, B)
@@ -515,10 +523,24 @@ expect("press: ... and the recorded bar is still there", (bar_entry(0, 1) or {})
 expect("press: A+B+LAST STEP + pad keeps the stock path", press(2, A, B, LAST), [("press", 1)])
 
 # A swallowed press must swallow its release, or the screen sees a release without a press.
-expect("press: A + pad 3 is taken", edits(press(3, A)), [("text", "  3A")])
+expect("press: A + pad 3 is taken", edits(press(3, A)), [("text", "  A3")])
+clear_repaint()
 expect("press: its release is swallowed", release(3), [])
+expect("press: ... and leaves the bar on the display", repaint(), 0)
 expect("press: other pads still release normally", release(6), [("release", 5)])
 expect("press: the same pad releases normally afterwards", release(3), [("release", 2)])
+
+# The bar number is only the confirmation of the pad press. Releasing the variation button asks
+# the panel to repaint its own text (the dispatcher's 0x40 bit, served on its next pass).
+clear_repaint()
+expect("release: VARIATION A goes to the firmware", release(A + 1), [("release", A)])
+expect("release: ... and hands the display back", repaint(), 0x40)
+clear_repaint()
+expect("release: VARIATION B goes to the firmware", release(B + 1), [("release", B)])
+expect("release: ... and hands the display back", repaint(), 0x40)
+clear_repaint()
+expect("release: another button leaves the display alone", release(0x13), [("release", 0x12)])
+expect("release: ... with the bit still clear", repaint(), 0)
 
 # --- playback ---------------------------------------------------------------------
 # Every sequence starts on bar 1 and advances one bar per wrap. A side and B side have their own
@@ -643,7 +665,7 @@ seed_ram()
 cold_boot()
 FL[:] = b"\xff" * len(FL)
 set_pattern(2)                        # the panel switches pattern; the Ptn2 slots follow
-expect("pattern 2: A + pad 1 selects its bar 1", edits(press(1, A)), [("text", "  1A")])
+expect("pattern 2: A + pad 1 selects its bar 1", edits(press(1, A)), [("text", "  A1")])
 expect("pattern 2: the working copy is pattern 2", slot_rows(0), slot_rows(3))
 expect("pattern 2: its own A length", pget(CNT), 0x01)
 w32(slot_addr(0) + 4 * (4 + 2 * 2), 0x6A6A)
@@ -754,7 +776,7 @@ put_entry(1, 0xFFFF, 1, 2, 0x3333, 0x4444)
 cold_boot()
 w32(SETUP + 8, 1)
 w32(SETUP + 0x3C, 1)
-expect("sequence wrap: the newest of two entries is loaded", edits(press(3, A)), [("text", "  3A")])
+expect("sequence wrap: the newest of two entries is loaded", edits(press(3, A)), [("text", "  A3")])
 expect("sequence wrap: ... which is the second one", slot_rows(0)[0], (0x3333, 0x4444))
 w32(slot_addr(0) + 4 * 4, 0x7777)
 call(S["chain_commit"], 0, 4, 2, 0)

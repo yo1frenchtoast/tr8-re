@@ -7,7 +7,8 @@
  *   hold VARIATION B, press pad 1..4 -> the same bar, its B steps; the B side grows the same way.
  *   hold A + B, press pad 1..4       -> both sides are n bars long (extend or shrink).
  *   hold A + B + CLEAR, press a pad  -> both sides back to stock (no bar sequence).
- *   The numeric display confirms each gesture ("  1A", "  4B", "AB 3", "AB--").
+ *   The numeric display confirms each gesture ("  A1", "  B4", "AB 3", "AB--"); the bar number
+ *   gives way to the screen's own text as soon as the variation button is released.
  *
  * Playback: variation A plays bars 1..Na with each bar's A steps, variation B plays bars 1..Nb
  * with each bar's B steps, and A+B plays the A sequence then the B sequence. Every sequence
@@ -366,12 +367,14 @@ __attribute__((section(".text.far"))) static int clen(int side)
 
 static char txt[5];                   /* the four-character numeric display */
 
+/* "  A1": the side, then the bar. It is only a confirmation of the pad press; releasing the
+ * variation button hands the display back to the screen (see chain_release). */
 static void show_bar(int n, int is_b)
 {
     txt[0] = ' ';
     txt[1] = ' ';
-    txt[2] = (char)('0' + n);
-    txt[3] = is_b ? 'B' : 'A';
+    txt[2] = (char)('A' + is_b);          /* 'A' or 'B' */
+    txt[3] = (char)('0' + n);
     TR8_DISPLAY_TEXT(0, txt);
 }
 
@@ -575,11 +578,21 @@ int chain_press(int id)
 /* Replaces "bl FUN_60013B56" at 0x600137D2: button release, id in r0. */
 int chain_release(int id)
 {
+    int r;
+
     if ((unsigned)id < 16 && (chain_swallow & (1u << id))) {
         chain_swallow &= (uint16_t)~(1u << id);
         return 0;                              /* the press was taken: swallow the release too */
     }
-    return TR8_FN_BTN_RELEASE(id);
+    r = TR8_FN_BTN_RELEASE(id);
+    /* The bar number on the display is only the confirmation of the pad press. Releasing the
+     * variation button asks the panel to repaint its own text, so the default view comes back. */
+    if ((unsigned)(id - TR8_BTN_VARI_A) < 2) {
+        volatile uint8_t *p = (volatile uint8_t *)TR8_HMI_SETUP;
+
+        *p = (uint8_t)(*p | TR8_HMI_REPAINT);
+    }
+    return r;
 }
 
 /* Replaces "bl FUN_6000FC78" at 0x6001B7F4 (the firmware's pattern save, FUN_6001B7D8).

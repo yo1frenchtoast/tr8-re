@@ -50,7 +50,7 @@ so TR-REC records it, and the pattern save is redirected to an append-only log i
 bars. Each side of a pattern has its own length: A plays bars 1..Na with its A steps, B plays
 1..Nb with its B steps, and A+B plays the A sequence then the B sequence. Each pattern keeps its
 own four bars and its own two lengths, so switching pattern switches the phrases. It is
-emulation-tested (141 checks, including a simulated power cycle, log compaction and the chip's
+emulation-tested (148 checks, including a simulated power cycle, log compaction and the chip's
 write protection); the step engine is untouched and no pattern slot is spent on a bar. While
 VARIATION A or B is held, the pads show that side's bars: green, with the playing bar blinking
 yellow, and the remaining pads dark, so only the bars that side has are lit; releasing the button

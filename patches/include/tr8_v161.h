@@ -190,6 +190,10 @@ typedef void (*tr8_scale_fn)(void *obj, int scale);
 /* HMI parameter databases. All take the object pointer as first argument. */
 typedef int (*tr8_get_fn)(void *db, int idx, int def);
 #define TR8_HMI_SETUP ((void *)0x60149F38)                      /* [code] Setup database object */
+/* Low halfword bits of the panel's screen object (same object): the dispatcher FUN_60016C08
+   serves 0x01..0x40 in order (0x40 = redraw the default numeric text with FUN_60015986) and
+   clears each bit. Setting 0x40 hands the display back after a temporary message. */
+#define TR8_HMI_REPAINT 0x40                                    /* [code] default numeric text */
 #define TR8_SETUP_GET ((tr8_get_fn)0x6001B12F)                  /* [code] Setup idx n = global 0x2A+n */
 #define TR8_SYSTEM_GET ((tr8_get_fn)0x6001B433)                 /* [code] FUN_6001B432          */
 #define TR8_PTN_GET   ((tr8_get_fn)0x6001B737)                  /* [code] FUN_6001B736          */
