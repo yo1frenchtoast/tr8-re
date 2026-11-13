@@ -115,6 +115,7 @@ STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E
          0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f",
          0x600522E4: "range", 0x600521E8: "f", 0x6000FC78: "commit",
          0x600108AA: "fl_begin", 0x600108BA: "fl_end",
+         0x6001773A: "led4", 0x6001774E: "led",
          0x60003E54: "fl_prog", 0x60003EDA: "fl_erase", 0x60003EA2: "fl_read"}
 def hook(uc, addr, size, _):
     if addr in STUBS:
@@ -151,6 +152,10 @@ def hook(uc, addr, size, _):
             PROTECT["on"] = False
         elif name == "fl_end":
             PROTECT["on"] = True
+        elif name == "led":
+            log.append(("led", r0, r1))
+        elif name == "led4":
+            log.append(("led4", r0, r1, r2, uc.reg_read(UC_ARM_REG_R3) & 0xFFFFFFFF))
         elif name == "fl_read":
             fl_read(r0, r1, r2)
         uc.reg_write(UC_ARM_REG_R0, ret)
@@ -260,12 +265,52 @@ def struct_scalars():
 
 seed_ram()
 
-# The hook sites point at the payload
-for site, sym in ((0x60009614, "chain_var"), (0x600098CA, "chain_wrap"),
-                  (0x60013842, "chain_press"), (0x600137D2, "chain_release"),
-                  (0x600199F6, "chain_pad"), (0x6001B7F4, "chain_commit")):
+# The hook sites point at the payload. chain_pad (the LAST STEP fallback of the step-pad branch)
+# is only in the probe build: the real one drops it to make room for the bar row.
+SITES = [(0x60009614, "chain_var"), (0x600098CA, "chain_wrap"),
+         (0x60013842, "chain_press"), (0x600137D2, "chain_release"),
+         (0x60016376, "chain_led_rgb"), (0x60016506, "chain_led_col"),
+         (0x6001B7F4, "chain_commit")]
+if "--probe" in sys.argv:
+    SITES.append((0x600199F6, "chain_pad"))
+for site, sym in SITES:
     t = bl_target(site)
     expect(f"site 0x{site:08x} branches to {sym}", (t & ~1) == (S[sym] & ~1), True)
+
+# --- the bar row ------------------------------------------------------------------
+# Pads 1..4 are LED ids 0x1D..0x20. While exactly one of VARIATION A/B is held they are the four
+# bars: the selected bar in the play colour (0, the firmware blinks it) and the rest yellow (3).
+# Otherwise the pad renderer must see the original call, with its own arguments.
+TR8_LED_STEP = lambda n: 0x1D + n
+
+def led_row(fn, *buttons):
+    held.clear(); held.update(buttons); log.clear()
+    for led in (TR8_LED_STEP(0), TR8_LED_STEP(1), TR8_LED_STEP(2), TR8_LED_STEP(3)):
+        if fn == "chain_led_rgb":
+            call(S[fn], led, 0x10 + led, 0x20, 0x21)
+        else:
+            call(S[fn], led, 0x2A)
+    held.clear()
+    return list(log)
+
+STOCK_RGB = [("led4", 0x1D + i, 0x10 + 0x1D + i, 0x20, 0x21) for i in range(4)]
+STOCK_COL = [("led", 0x1D + i, 0x2A) for i in range(4)]
+if "--probe" in sys.argv:                  # the probe has no current bar: all four yellow
+    BAR_ROW = [("led", 0x1D + i, 3) for i in range(4)]
+else:                                      # bar 1 is the current (blinking) bar
+    BAR_ROW = [("led", 0x1D, 0)] + [("led", 0x1E + i, 3) for i in range(3)]
+
+expect("LED: normal renderer, A held -> bar row", led_row("chain_led_rgb", A), BAR_ROW)
+expect("LED: palette renderer, A held -> bar row", led_row("chain_led_col", A), BAR_ROW)
+expect("LED: normal renderer, B held -> bar row", led_row("chain_led_rgb", B), BAR_ROW)
+expect("LED: normal renderer, nothing held -> stock pads", led_row("chain_led_rgb"), STOCK_RGB)
+expect("LED: palette renderer, nothing held -> stock pads", led_row("chain_led_col"), STOCK_COL)
+expect("LED: A+B is the length gesture, not the bar row", led_row("chain_led_rgb", A, B), STOCK_RGB)
+
+held.clear(); held.update([A]); log.clear()
+call(S["chain_led_rgb"], TR8_LED_STEP(4), 1, 2, 3)      # pad 5: not part of the bar row
+held.clear()
+expect("LED: pads beyond the row are never touched", list(log), [("led4", TR8_LED_STEP(4), 1, 2, 3)])
 
 if "--probe" in sys.argv:
     expect("probe: plain pad is shown after the firmware handled it", press(3),

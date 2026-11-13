@@ -25,7 +25,9 @@
  *   begins at bar 1 and a wrap advances one bar.
  *   The gesture lives on the press dispatch (0x60013842, before the screen): the screen takes a
  *   bare pad press, so the global button handler never sees it (see the first hardware build).
- *   chain_release swallows the matching release; chain_pad keeps the LAST STEP path stock.
+ *   chain_release swallows the matching release.
+ *   While VARIATION A or B is held, pads 1..4 are repainted as the four bars by wrapping the two
+ *   pad renderers (chain_led_rgb / chain_led_col, see the bar row section).
  *
  * Storage: the pattern's own step content is the pattern record (area 4), which stays the
  * source of the default bar. Extra bars live in a small log in the unused flash between the
@@ -413,18 +415,50 @@ void chain_wrap(void *obj)
     chain_wrapping = 0;
 }
 
-int chain_pad_c(int pad);
+/* ---------------------------------------------------------------- bar row LEDs */
 
-/* Replaces "bl FUN_60013168" at 0x600199F6 (step pad branch of FUN_6001961E, id still in r6). */
-__attribute__((naked)) void chain_pad(void)
+/* While VARIATION A or B is held, pads 1..4 show the four bars: the selected one in the
+ * firmware's blinking play colour (what the panel uses for the playing step), the other three
+ * yellow (the panel's 9-12 group). Releasing the button gives the pads back to steps 1-4, so no
+ * step is ever hidden. Two renderers paint the pads and each has its own call site: chain_led_rgb
+ * replaces "bl FUN_6001773A" (the normal view of FUN_600162D2, raw levels) and chain_led_col
+ * replaces "bl FUN_6001774E" (view 0 of FUN_60016386, palette). 0x100 = "not a bar", which is
+ * outside the palette (the largest entry is 0x2D).
+ * It lives in .text.far (the first free region): dropping the LAST STEP fallback (chain_pad) made
+ * room for the bar row, and the second region has only 19 bytes free. */
+__attribute__((section(".text.far"))) static unsigned bar_led(int led)
 {
-    __asm__("mov r0, r6\n\tb chain_pad_c\n");
+    int b = led - TR8_LED_STEP(0);
+
+    if ((unsigned)b > 3)
+        return 0x100;
+    if ((TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) == (TR8_BTN_HELD(TR8_BTN_VARI_B) == 1))
+        return 0x100;                    /* neither held, or A+B (the chain-length gesture) */
+    return (b == (int)cur_bar) ? TR8_COL_PLAY : TR8_COL_YELLOW;
+}
+
+void chain_led_rgb(int led, int a, int b, int c)
+{
+    unsigned col = bar_led(led);
+
+    if (col & 0x100)
+        TR8_FN_LED4(led, a, b, c);
+    else
+        TR8_FN_STEP_LED(led, col);
+}
+
+void chain_led_col(int led, unsigned col)
+{
+    unsigned bar = bar_led(led);
+
+    TR8_FN_STEP_LED(led, (bar & 0x100) ? col : bar);
 }
 
 /* A or B + pad 1..4: make bar n the working copy and paint it with that side. A+B + pad:
  * chain length. A+B+CLEAR + pad: chain off. a = VARIATION A held, b = VARIATION B held. */
-/* In the second free region (link.ld): the first one is full. */
-__attribute__((section(".text.far"))) static void chain_edit(int pad, int a, int b)
+/* .text.far (the first region, link.ld); noinline keeps clang from folding it into chain_press,
+ * which overflowed the second region. */
+__attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, int a, int b)
 {
     int bar = pad;
     int saved;
@@ -506,22 +540,4 @@ __attribute__((section(".text.far"))) void chain_commit(int a, int area, int slo
         return;
     }
     TR8_FN_COMMIT(a, area, slot, b);
-}
-
-/* In the second free region (link.ld): the first one is full. */
-__attribute__((section(".text.far"))) int chain_pad_c(int pad)
-{
-    int a = TR8_BTN_HELD(TR8_BTN_VARI_A) == 1; /* VARIATION A */
-    int b = TR8_BTN_HELD(TR8_BTN_VARI_B) == 1; /* VARIATION B */
-
-    if (!a && !b)                              /* normal pad: return the stock condition */
-        return TR8_BTN_HELD(TR8_BTN_LAST_STEP) == 1;
-    if (TR8_BTN_HELD(TR8_BTN_LAST_STEP) == 1)  /* LAST STEP wins (also the poly gesture) */
-        return 1;
-    if ((unsigned)pad >= NBARS)
-        return 1;
-
-    sync();
-    chain_edit(pad, a, b);
-    return 0;
 }

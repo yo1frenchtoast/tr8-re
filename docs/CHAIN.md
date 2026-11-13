@@ -74,7 +74,10 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
 - **Power off and on keeps the bars and the chain**; the log is flash and is rescanned on the
   first use. A firmware update erases the log (but not the chain, which is a pattern parameter):
   the bars then fall back to the pattern's own steps.
-- The display confirms each gesture; the pads keep showing steps, not bars. A save the flash chip
+- The display confirms each gesture. While VARIATION A or B is **held**, pads 1-4 show the four
+  bars: the selected bar blinks (the firmware's play colour) and the other three are yellow, so a
+  pad press visibly picks a bar. Releasing the button gives pads 1-4 back to steps 1-4, so no step
+  is ever hidden (A+B keeps the length gesture and leaves the pads stock). A save the flash chip
   refused shows **`FAIL`** instead of the bar number (see Storage).
 
 ## How it works
@@ -85,9 +88,14 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
 | `0x600098CA` in `FUN_6000989C` | `bl FUN_600095F0` (pattern wrap) | `bl chain_wrap` |
 | `0x60013842` in `FUN_600137DE` | `bl FUN_60013B34` (press dispatch) | `bl chain_press` |
 | `0x600137D2` in `FUN_6001377C` | `bl FUN_60013B56` (release dispatch) | `bl chain_release` |
-| `0x600199F6` in `FUN_6001961E` | `bl FUN_60013168` (LAST STEP check) | `bl chain_pad` |
+| `0x60016376` in `FUN_600162D2` | `bl FUN_6001773A` (normal pad renderer) | `bl chain_led_rgb` |
+| `0x60016506` in `FUN_60016386` | `bl FUN_6001774E` (view 0 pad loop) | `bl chain_led_col` |
 | `0x6001B7F4` in `FUN_6001B7D8` | `bl FUN_6000FC78` (pattern save) | `bl chain_commit` |
 | `0x60011E00`, `0x60011E04` | developer dump calls | `nop.w` (frees the regions) |
+
+The probe build also replaces `0x600199F6` in `FUN_6001961E` (`bl FUN_60013168`, the LAST STEP
+test of the step-pad branch) with `bl chain_pad`; the real build does not, to make room in the
+second region (see Code space).
 
 `FUN_600095F0` restarts the pattern at start and at every wrap
 ([FINDINGS.md](FINDINGS.md) section 7, "Pattern restart and variation"). It first fills the
@@ -111,9 +119,22 @@ call itself, before the screen: with VARIATION A and/or B held, no LAST STEP and
 selects the bar and returns 1, so the screen never sees the pad; otherwise it forwards the id to
 `FUN_60013B34` unchanged. `chain_release` replaces the matching `bl FUN_60013B56` at `0x600137D2`
 and swallows the release of a pad whose press was taken, so the screen never gets a release
-without a press. `chain_pad` still replaces the LAST STEP test in the step-pad branch of
-`FUN_6001961E` (pad id still in `r6`, moved to `r0` by a naked trampoline); it keeps the stock
-LAST STEP path and is a fallback if a pad press with A/B held ever reaches that branch.
+without a press.
+
+**The bar row.** Two functions paint the pads and both are wrapped so the row shows up in either
+view:
+
+- `0x60016376` in `FUN_600162D2` (the normal step view) calls `FUN_6001773A(led, a, b, c)` with
+  raw levels; `chain_led_rgb` replaces it.
+- `0x60016506` in the view-0 pad loop of `FUN_60016386` calls `FUN_6001774E(led, colour)` with a
+  palette entry; `chain_led_col` replaces it.
+
+Both compute the same thing: pads 1-4 (`led` = `0x1D`..`0x20`) become the bar row only while
+exactly one of VARIATION A/B is held (`TR8_BTN_HELD` = 1). The selected bar gets colour `0` (the
+play colour, which the firmware blinks) and the other three colour `3` (the panel's yellow, the
+9-12 step group). For any other pad, or with neither/both buttons held, the wrapper calls the
+original function with the original arguments, so the pads keep their stock colours. A+B is
+excluded on purpose: it is the chain-length gesture, not bar selection.
 
 ### Editing a bar
 
@@ -204,10 +225,10 @@ pattern's own steps.
 ### Code space
 
 The payload uses the two developer-dump regions
-(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 780 bytes of `.text.far` plus 1 byte of
-`.data` in the first (788 available, 7 free), 1512 bytes of `.text` plus 219 bytes of `.bss` in the
-second (1838 available, 107 free). The literal pool between them (`0x60011464`-`0x60011484`) is
-live firmware data and is never written. The probe build (`payload_probe.json`) needs 460 + 14
+(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 756 bytes of `.text.far` plus 1 byte of
+`.data` in the first (788 available, 31 free), 1600 bytes of `.text` plus 219 bytes of `.bss` in
+the second (1838 available, 19 free). The literal pool between them (`0x60011464`-`0x60011484`) is
+live firmware data and is never written. The probe build (`payload_probe.json`) needs 616 + 14
 bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
 combined build needs the "grow the image" method or another dead-code region
 ([DEVELOPING.md](DEVELOPING.md) "Code space").
@@ -230,7 +251,8 @@ is 4 bars x 2 sides per pattern, independent for all 16 patterns.
    it when selecting a bar.
 4. **The chain only plays with A+B selected.** A alone or B alone loops that side of the selected
    bar; that is the editing mode.
-5. **The display is the feedback.** The pads keep showing steps; they never show bars.
+5. **The pads show the bar row only while A or B is held.** Release the button and pads 1-4 are
+   steps 1-4 again; with A+B they stay stock.
 6. **The build must be this one.** The first hardware build hooked the pad branch of
    `FUN_6001961E`, which a bare pad never reaches; A + pad showed nothing there (see "How it
    works"). Build the file again from the current tree and check the sha256.
@@ -241,7 +263,8 @@ The **probe build** shows what the firmware actually sees:
 python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_probe.BIN --patch chain-probe
 ```
 
-It uses the same hooks and only displays, so it never writes the chain, a bar or the pattern:
+It uses the same hooks (plus the LAST STEP branch of `FUN_6001961E`) and only displays, so it never
+writes the chain, a bar or the pattern:
 
 | Display | Meaning |
 |---|---|
@@ -252,11 +275,13 @@ It uses the same hooks and only displays, so it never writes the chain, a bar or
 | ` 3--` (plain pad 3) | hook runs on every press and sees no modifier; the text is written after the firmware handled the pad |
 | ` 8-L` (LAST STEP + pad 8) | LAST STEP is held, so the press goes to the firmware first (pattern length) and the text is written after it |
 | ` 3CL` (A+B + LAST STEP + pad 3) | the same with both variation buttons held: LAST STEP wins, no bar selection |
+| pads 1-4 yellow while A is held | the LED hook runs in both pad renderers (the probe has no current bar, so all four are yellow; the real build blinks the selected one) |
 | nothing at all | the payload is not running: the build is not the patched one |
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`): all six hook sites branch into the payload; the gesture
+- Emulation (`tests/emu_chain.py`): all hook sites of the real build branch into the payload (the
+  probe also has `chain_pad`); the gesture
   through the press dispatch (`A/B + pad 1..4`, pads 5..16 forwarded, LAST STEP wins, length and
   chain off, display strings, release swallowed); bar selection and the working copy (bar 1 =
   pattern, bar 2 loaded after a save, last steps and B side); the pattern-save redirect (no
@@ -270,7 +295,9 @@ It uses the same hooks and only displays, so it never writes the chain, a bar or
   for a pattern the patch has not loaded; `chain_wrap` marks the restart. The simulated flash
   models the chip's block protection: program/erase outside a write session are dropped, as on the
   unit, and the run checks that every operation happened inside a session and every session was
-  closed. The probe
+  closed. The bar row: both pad renderers turn pads 1-4 into the bar row (bar 1 in the play
+  colour, the rest yellow) while A or B is held, and call the original renderer with the original
+  arguments when neither or both are held and for pads 5-16. The probe
   build (`--probe`, `payload_probe.json`): display strings on the press path and on the global
   LAST STEP branch, a pass-through save redirect, no pattern writes, `St` line on start.
 - Hardware, first build (pad branch of `FUN_6001961E`): LAST STEP + pad set the pattern length,
@@ -287,8 +314,11 @@ It uses the same hooks and only displays, so it never writes the chain, a bar or
   Superseded build: git `9beb1ed`.
 - Hardware checklist for this build:
   1. Plain pattern, no bar selection: A, B and A+B behave exactly as stock.
-  2. Hold A, press pads 1..4: the display shows `  1A`..`  4A`; with A+B all four bars play and
-     wrap; A alone loops bar 1's A steps. **`FAIL` in place of the bar number means the flash chip
+  2. Hold A, press pads 1..4: the display shows `  1A`..`  4A`. While A is held, pads 1-4 are the
+     bar row: the selected bar blinks and the others are yellow; pressing pad 2 moves the blink to
+     pad 2 and the display shows `  2A`. Release A: pads 1-4 are steps 1-4 again. Do the same with
+     B, and check A+B shows no bar row (pads stay stock). With A+B all four bars play and wrap; A
+     alone loops bar 1's A steps. **`FAIL` in place of the bar number means the flash chip
      refused the save of the bar being left** (stop here and report it).
   3. Record steps into bar 1, select bar 2, record different steps; select bar 1 again: its steps
      are back. Do the same on the B side and check A/B are independent.

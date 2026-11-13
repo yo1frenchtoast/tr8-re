@@ -93,15 +93,20 @@ PATCHES["chain"] = {
         (0x600098CA, thumb_bl(0x600098CA, 0x600095F0), "chain_wrap"),   # pattern wrap: mark it as a wrap
         (0x60013842, thumb_bl(0x60013842, 0x60013B34), "chain_press"),  # button press: before the screen
         (0x600137D2, thumb_bl(0x600137D2, 0x60013B56), "chain_release"),# matching release of that pad
-        (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),    # LAST STEP pad branch: keep it stock
+        (0x60016376, thumb_bl(0x60016376, 0x6001773A), "chain_led_rgb"),# pads 1..4 as bars (normal view)
+        (0x60016506, thumb_bl(0x60016506, 0x6001774E), "chain_led_col"),# pads 1..4 as bars (view 0)
         (0x6001B7F4, thumb_bl(0x6001B7F4, 0x6000FC78), "chain_commit"), # pattern save: store the bar, not the slot
     ],
 }
 
-# Hardware probe: same sites, display only (patches/chain/probe.c, docs/CHAIN.md).
+# Hardware probe: same sites, display only (patches/chain/probe.c, docs/CHAIN.md). It keeps the
+# LAST STEP fallback dropped in the real build, to show what that branch sees.
 PATCHES["chain-probe"] = dict(PATCHES["chain"],
                               doc="Bar chain hardware probe: pads and modifiers on the display (no edits)",
-                              payload="patches/chain/payload_probe.json")
+                              payload="patches/chain/payload_probe.json",
+                              sites=PATCHES["chain"]["sites"] + [
+                                  (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),
+                              ])
 
 # Motion + poly together (patches/combo). Code in both developer-dump regions; tables in patch
 # RAM: the RTOS pool start moves from 0x60280988 to 0x60290988 (64 KB), zeroed by ram_init at boot.

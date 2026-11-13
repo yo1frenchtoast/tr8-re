@@ -226,8 +226,14 @@ typedef void (*tr8_step_led_fn)(int led, unsigned colour);
 #define TR8_LED_STEP(n) (0x1D + (n))
 #define TR8_COL_PLAY  0x00   /* [unit] blinks while playing */
 #define TR8_COL_RED   0x01   /* [unit] red, POLY.md test 3 */
+#define TR8_COL_YELLOW 0x03  /* [unit] steps 9-12 group, the panel's yellow */
 #define TR8_COL_IN    0x2A   /* [unit] green */
 #define TR8_COL_OFF   0x2D
+
+/* Same setter without the palette lookup: FUN_600162D2 paints the 16 pads with FUN_6001773A(led,
+ * a, b, c) and raw levels (the normal step view, groups 4/0x12/6/7). */
+typedef void (*tr8_led4_fn)(int led, int a, int b, int c);
+#define TR8_FN_LED4 ((tr8_led4_fn)0x6001773B)                    /* [code] FUN_6001773A          */
 
 /* LED control, arguments not decoded: FUN_6001A7EC(id, a, b, c). */
 typedef void (*tr8_led_fn)(int id, int a, int b, int c);
