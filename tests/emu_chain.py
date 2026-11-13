@@ -52,7 +52,8 @@ A4, C4 = 0x60144EA0, 56               # area 4 (Ptn), 17 slots; slot 0 = working
 PTN = 0x6012FA64                      # player struct
 VARI, EFF = 0x6012FA70, 0x6012FA74    # panel VARI, effective variation (= TR8_SEQ_VARIATION)
 RUN = 0x6007E102                      # sequencer running
-HMI = 0x60149F38                      # panel screen object: low halfword is the repaint bits
+HMI = 0x60149B8C                      # panel screen object: low halfword is the repaint bits
+SETUP_DB = 0x60149F38                 # Setup database handle: writing it corrupts the database
 CNT = 17                              # Ptn2 index for the two side lengths (id 0x138)
 
 # The flash log (chain.c): 4 blocks of 32 entries, 128 bytes each, top block first.
@@ -117,6 +118,7 @@ STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E
          0x6001B736: "ptn_get", 0x6001B280: "f", 0x6001B12E: "setup_get",
          0x6004BCBE: "engine", 0x6004B962: "engine_go", 0x6004FB34: "f", 0x6000066E: "f",
          0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f",
+         0x60051E20: "repaint_panel",
          0x600522E4: "range", 0x600521E8: "f", 0x6000FC78: "commit",
          0x600108AA: "fl_begin", 0x600108BA: "fl_end",
          0x6004BB4C: "led_set",
@@ -138,6 +140,11 @@ def hook(uc, addr, size, _):
             log.append(("apply", r32(EFF)))
         elif name == "notify":
             log.append(("notify", tuple(uc.mem_read(r1, 2))))
+        elif name == "repaint_panel":
+            # FUN_60051E20: the firmware's own "repaint step pads and numeric text" (0x44 on the
+            # panel object). The payload must go through this, not write the object by hand.
+            log.append(("repaint_panel",))
+            uc.mem_write(HMI, struct.pack("<H", r16(HMI) | 0x44))
         elif name == "text":
             log.append(("text", bytes(uc.mem_read(r1, 4)).decode()))
         elif name == "press":
@@ -206,6 +213,17 @@ def expect(name, got, want):
     ok = got == want
     fails += not ok
     print(f"{'PASS' if ok else 'FAIL'} {name}: {got}" + ("" if ok else f"  (want {want})"))
+
+# Build regression, before anything runs: the repaint request belongs on the panel object
+# (0x60149B8C). An earlier build wrote it into the Setup database handle (0x60149F38), which
+# corrupted the database and froze the whole unit (see docs/CHAIN.md, hardware fifth build).
+CODE = b"".join(bytes.fromhex(r["data"]) for r in pay["regions"]
+                if r["section"].startswith(".text"))
+expect("build: the payload never references the Setup database object",
+       struct.pack("<I", SETUP_DB) in CODE, False)
+if "--probe" not in sys.argv:
+    expect("build: the repaint request names the panel object",
+           struct.pack("<I", HMI) in CODE, True)
 
 # Pad press through the firmware button handler FUN_6001961E(ctx, button id 0..15)
 A, B, LAST, CLEAR = 0x17, 0x18, 0x1A, 0x1C
@@ -531,13 +549,17 @@ expect("press: ... and leaves the bar on the display", repaint(), 0)
 expect("press: other pads still release normally", release(6), [("release", 5)])
 expect("press: the same pad releases normally afterwards", release(3), [("release", 2)])
 
-# The bar number is only the confirmation of the pad press. Releasing the variation button asks
-# the panel to repaint its own text (the dispatcher's 0x40 bit, served on its next pass).
+# The bar number is only the confirmation of the pad press. Releasing the variation button calls
+# the firmware's own "repaint pads and text" helper (FUN_60051E20, 0x44 on the panel object,
+# served by the dispatcher on its next pass), so the default view comes back. The patch must go
+# through that helper: writing the panel object by hand is what went wrong in an earlier build.
 clear_repaint()
-expect("release: VARIATION A goes to the firmware", release(A + 1), [("release", A)])
+expect("release: VARIATION A goes to the firmware, then asks the panel to repaint",
+       release(A + 1), [("release", A), ("repaint_panel",)])
 expect("release: ... and hands the display back", repaint(), 0x40)
 clear_repaint()
-expect("release: VARIATION B goes to the firmware", release(B + 1), [("release", B)])
+expect("release: VARIATION B goes to the firmware, then asks the panel to repaint",
+       release(B + 1), [("release", B), ("repaint_panel",)])
 expect("release: ... and hands the display back", repaint(), 0x40)
 clear_repaint()
 expect("release: another button leaves the display alone", release(0x13), [("release", 0x12)])

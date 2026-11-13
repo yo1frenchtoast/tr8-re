@@ -13,7 +13,7 @@ side that was never selected stays stock.
 Every pattern has its own four bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 148 checks). Not yet tested on hardware.
+Status: **works in emulation** (`tests/emu_chain.py`, 150 checks). Not yet tested on hardware.
 Like the other patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
@@ -44,8 +44,10 @@ never selected are the pattern's own steps.
 Selecting a bar does not depend on the transport: with the machine **stopped**, `A + pad 2`
 loads bar 2 into the working copy and redraws the step view at once, so the step pads and TR-REC
 edit bar 2; `A + pad 1` stores bar 2 and switches to bar 1, and `A + pad 2` brings it back. The
-load sets the screen's "repaint the step view" bit (`0x04` in the halfword at `0x60149F38`), which
-the panel dispatcher serves on its next pass; see the note on the hardware freeze below.
+load sets the screen's "repaint the step view" bit (`0x04` in the halfword at `0x60149B8C`), which
+the panel dispatcher serves on its next pass; see the note on the hardware freeze below. That is
+the panel's screen object, not the Setup database `0x60149F38` — see
+[FINDINGS.md](FINDINGS.md) section 11.
 
 The pads only ever choose a bar 1..4; pads 5..16 stay ordinary step pads and LAST STEP + pad
 still sets the pattern length (the poly gesture), because LAST STEP wins over A/B in the patch.
@@ -103,9 +105,10 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
   leaves the pads stock). A save the flash chip refused shows **`FAIL`** instead of the bar
   number (see Storage).
 - The bar number (`  A1`) is only the confirmation of the pad press. Releasing VARIATION A or B
-  sets the screen's repaint bit (`0x40` in the halfword at `0x60149F38`), which makes the panel
-  draw its own numeric text again on its next pass, so the display returns to its normal view
-  instead of staying on the bar ([FINDINGS.md](FINDINGS.md) section 11).
+  calls the firmware's own repaint helper `FUN_60051E20` (`0x44` on the panel object
+  `0x60149B8C`), so the panel redraws its pads and its own numeric text on the next pass and the
+  display returns to its normal view instead of staying on the bar
+  ([FINDINGS.md](FINDINGS.md) section 11).
 
 ## How it works
 
@@ -188,7 +191,7 @@ working copy:
    side); a bar with no log entry copies the whole pattern slot,
 3. the player struct and the sound masks are filled from slot 0, so the bar plays while it is
    edited,
-4. the screen's step-view repaint bit (`0x04` in the halfword at `0x60149F38`) is set, so the
+4. the screen's step-view repaint bit (`0x04` in the halfword at `0x60149B8C`) is set, so the
    panel redraws the step pads and the view on its next pass and they show the bar that was
    loaded. Without this the step view kept the previous bar until something else refreshed it —
    the machine being stopped made that obvious. The earlier build sent the firmware's synchronous
@@ -338,7 +341,7 @@ writes a side length, a bar or the pattern:
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 148 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 150 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..4` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar selection
@@ -346,8 +349,10 @@ writes a side length, a bar or the pattern:
   same round trip while stopped: `A + pad 3`, edit a step, `A + pad 1`, back to `A + pad 3` with
   the edit, and the step-view repaint bit `0x04` set after every load but not after the A+B
   length gesture, and no slot-0 notification at all); the display hand-back (releasing VARIATION
-  A or B sets the screen's `0x40` repaint
-  bit, a swallowed pad release leaves it clear, another button does not touch it); the
+  A or B calls the firmware's repaint helper — the payload must go through `FUN_60051E20` and
+  never write the object by hand — a swallowed pad release leaves it alone, another button does
+  not touch it); two build-level checks that the payload never references the Setup database
+  object `0x60149F38` and does reference the panel object `0x60149B8C`; the
   pattern-save redirect (no pattern slot written, one log entry with the 26 rows and LAST_A/B,
   area 4 slot *n+1* unchanged); playback of an A sequence, a B sequence and the A+B A-then-B
   sequence, with the recorded bar's content (masks, last steps, scale); a side that was never
@@ -381,26 +386,33 @@ writes a side length, a bar or the pattern:
 - Hardware, fourth build (bar row on all four pad setters): the four bars played and recorded and
   the row was correct on every screen. Confirmed on the unit; the old chain build is recoverable
   from git (`bd94eef`, write-session fix `bfdc63d`).
-- Hardware, fifth build (the same change with the display hand-back, `8941d9e`): the unit froze
-  when a bar was changed during playback. The only new runtime code between the confirmed build
-  and that one is the synchronous slot-0 notification in `chain_edit`
-  (`FUN_60010148(dispatcher, {0, 4})`, added with the stopped-editing build) and the release-time
-  `0x40` repaint. The notification walks the screen observers from inside the press dispatch,
-  which is not where the firmware ever sends it (a stock load sends it from the pattern/sequencer
-  task); it is removed and replaced with the panel's deferred step-view repaint bit `0x04`. The
-  automatic bar-change path is the one confirmed in the fourth build. Build `8941d9e` remains
-  flashable for a bisect; `bd47883` is the confirmed baseline.
-- This build (sequential per-side playback, the green/blink row and the deferred repaint) adds the
-  two side lengths, the per-side sequences and the A+B A-then-B order. Emulation passes; hardware
-  check pending. The first hardware build of *this* change must confirm the order, the row, the
-  counts and that neither a bar change during playback nor selecting a bar while playing freezes
-  the unit; if a side misbehaves, flash the probe build and report which display string it shows.
+- Hardware, fifth build (`8941d9e`, the display hand-back) and sixth build (`bd5fcdc`, the
+  deferred repaint instead of the slot-0 notification): the unit froze. Every report has the same
+  shape — hold VARIATION A on its own, or `A + pad 5` stopped, or `A + pad n` while playing, or
+  `A+B + pad n` — and the unit dies within a second or two, taking sound, buttons and display
+  with it. Diagnosis: both builds asked for the repaint by writing the bit into `0x60149F38`,
+  which is the **Setup parameter database** (the `db` handle of `FUN_6001B12E(db, idx, def)`),
+  not a panel object. The panel's screen object is `0x60149B8C`, `0x3AC` higher
+  ([docs/FINDINGS.md](FINDINGS.md) section 11). ORing `0x04`/`0x40` into the database's first
+  byte corrupted it, the panel then read through the bad pointer, and the unit hung. That the two
+  objects are different is also why emulation never saw it: the panel and the database are both
+  stubbed there, so a write to the wrong one has no visible effect. The notification was not the
+  cause (`A+B + pad n` touches no flash and never notified, and still froze).
+- Seventh build: the repaint requests now go to the panel object only. `chain_edit` ORs `0x04`
+  into `0x60149B8C` (the panel's own pass redraws the step pads, leaving the bar number on the
+  display), and `chain_release` calls the firmware's own `FUN_60051E20` (thumb `0x60051E21`, which
+  sets `0x44`), so the patch no longer writes a firmware object by hand. This build also carries
+  the sequential per-side playback, the two side lengths, the green/blink row and the stopped bar
+  editing. Emulation passes (150 checks, two of them build-level: the payload never mentions
+  `0x60149F38` and still names `0x60149B8C`); hardware check pending. The previous confirmed
+  build is `bd47883`, kept as `work/TR8_UPD_chain_b4.BIN` for an immediate fallback.
 - Hardware checklist for this build:
-  0. **Freeze check:** press A and let the bars advance on their own through a full loop; then,
-     while playing, select bars with `A + pad n` and `B + pad n` and release A/B each time. The
-     unit must not freeze, the screen must come back to its normal text after the release, and
-     audio must keep running. Repeat while stopped. If it freezes, note whether it was the
-     automatic advance or the selection, and whether the display stayed on a bar number.
+  0. **Freeze check (do this first):** hold VARIATION A alone for a few seconds and release it
+     (the smallest failing case of the previous build); then `A + pad 5` while stopped; then,
+     while playing, `A + pad n` and `B + pad n`, releasing A/B each time; then `A+B + pad n`.
+     Nothing may freeze, the normal text must come back after each release, and audio must keep
+     running. Repeat once while stopped. If it freezes, power cycle, flash
+     `work/TR8_UPD_chain_b4.BIN` (the confirmed fourth build) and report which case did it.
   1. Plain pattern, no side selected: A, B and A+B behave exactly as stock; while A or B is held
      the row shows just bar 1 (the pattern itself) blinking yellow and pads 2-16 dark.
   2. Give A four bars (`A + pad 1`, then 2, 3, 4): the display shows `  A1`..`  A4`, and each

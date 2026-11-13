@@ -510,19 +510,28 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   `FUN_60049F9C` (an `sprintf`, for example `" %c%2d"`) and call it. The factory test shows the
   4-letter control names with the same call (`FUN_6001A406`). The active screen overwrites the
   text on its next refresh. [code]
-- **The screen's repaint bits.** The screen object `0x60149F38` (the Setup database object) keeps a
-  halfword of dirty bits at +0. The panel dispatcher `FUN_60016C08(obj)` serves them one per pass
-  and clears each: `0x01` the pad LEDs (`FUN_60016BB8`), `0x02` `FUN_600169A4`, `0x04`
-  `FUN_60016386`, `0x08` `FUN_60016026`, `0x10` `FUN_60015EFA`, `0x20` `FUN_60015C8C`, `0x40` the
-  screen's own numeric text (`FUN_60015986`); any bit still left ends with the whole word cleared.
+- **The screen's repaint bits.** The screen object is `0x60149B8C` (not the Setup database object
+  `0x60149F38`; the two are `0x3AC` apart). It keeps a halfword of dirty bits at +0. The panel
+  dispatcher `FUN_60016C08(obj)` serves them one per pass and clears each: `0x01` the pad LEDs
+  (`FUN_60016BB8`), `0x02` `FUN_600169A4`, `0x04` `FUN_60016386` (the view-0 step pads), `0x08`
+  `FUN_60016026`, `0x10` `FUN_60015EFA`, `0x20` `FUN_60015C8C`, `0x40` the screen's own numeric
+  text (`FUN_60015986`); any bit still left ends with the whole word cleared.
+  The firmware's own "repaint pads and text" is `FUN_60051E20`: `ldr r0,[0x60051E2C]` =
+  `0x60149B8C`, `ldrh r1,[r0]; orr r1,#0x44; strh r1,[r0]; bx lr` — thumb `0x60051E21`. The panel
+  calls it at `0x60008CDA`, `0x60008D4C`, `0x60008DA4`, `0x60008DC8` and `0x60008E36`.
   The tick `FUN_60016D00` counts down and tail-calls the dispatcher, and the setter
   `FUN_60016D58(obj, value)` writes `value` at +8, sets `0x40` and lets the dispatcher draw it
   (`str r1,[r0,#8]; ldrh; orr #0x40; strh; bx lr`). So a patch can show its own text and then set
-  `0x40` to have the screen paint its normal value again on the next tick. The chain patch uses
-  `0x04` to redraw the step view after it loads a bar into area 4 slot 0 (the same effect the
-  firmware gets by notifying the screens, but done on the panel's own pass). [code] Do not call
-  the slot-0 notification `FUN_60010148` from inside the button dispatch: the chain build that
-  did froze the unit when a bar was changed. [unit]
+  `0x40` to have the screen paint its normal value again on the next tick; calling
+  `FUN_60051E20` sets both `0x04` and `0x40`. The chain patch sets `0x04` itself (a halfword OR
+  on `0x60149B8C`) to redraw the step view after it loads a bar into area 4 slot 0, and calls
+  `FUN_60051E20` when the variation button is released. [code]
+  **Never write `0x60149F38`:** it is the Setup parameter database (the `db` of
+  `FUN_6001B12E(db, idx, def)`), and ORing a repaint bit into its first byte corrupts the
+  database; the panel then reads through a bad pointer and the whole unit hangs (the chain
+  builds `8941d9e` and `bd5fcdc` froze that way). [unit]
+  Do not call the slot-0 notification `FUN_60010148` from inside the button dispatch either: the
+  chain build that did froze the unit when a bar was changed. [unit]
 - **LEDs:** `FUN_6001A7EC(id, a, b, c)` calls the fast-code function `0x01000536` with the LED
   object `0x601488D0`. Seen: `FUN_6001A7EC(0x2A, 1, 0, 0x10)`, instrument LEDs 0x1D-0x25. The
   argument meaning is not decoded. [hyp]

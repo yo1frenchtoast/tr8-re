@@ -540,8 +540,9 @@ __attribute__((section(".text.far"), noinline)) static void chain_edit(int pad, 
     }
     /* The bar is in slot 0 and in the player struct; ask the panel to repaint its step pads on
      * its next pass instead of notifying the screens from inside the press dispatch (that
-     * synchronous observer walk is what froze the unit). */
-    *(volatile uint8_t *)TR8_HMI_SETUP |= TR8_HMI_REPAINT_PADS;
+     * synchronous observer walk is what froze the unit). Only the pads: the display was just
+     * written with the bar number, so leave the text alone. */
+    *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
     show_bar(bar + 1, b);               /* the confirmation of the pad press */
     if (!saved)
         show_fail();
@@ -576,12 +577,11 @@ int chain_release(int id)
     }
     r = TR8_FN_BTN_RELEASE(id);
     /* The bar number on the display is only the confirmation of the pad press. Releasing the
-     * variation button asks the panel to repaint its own text, so the default view comes back. */
-    if ((unsigned)(id - TR8_BTN_VARI_A) < 2) {
-        volatile uint8_t *p = (volatile uint8_t *)TR8_HMI_SETUP;
-
-        *p = (uint8_t)(*p | TR8_HMI_REPAINT);
-    }
+     * variation button asks the panel to repaint its own view, so the default text comes back;
+     * this is the firmware's own helper (0x44: step pads and numeric text), so the patch never
+     * writes a firmware object by hand. */
+    if ((unsigned)(id - TR8_BTN_VARI_A) < 2)
+        TR8_FN_REPAINT();
     return r;
 }
 

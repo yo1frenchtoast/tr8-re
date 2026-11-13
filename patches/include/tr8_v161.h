@@ -189,13 +189,20 @@ typedef void (*tr8_scale_fn)(void *obj, int scale);
 
 /* HMI parameter databases. All take the object pointer as first argument. */
 typedef int (*tr8_get_fn)(void *db, int idx, int def);
-#define TR8_HMI_SETUP ((void *)0x60149F38)                      /* [code] Setup database object */
-/* Low halfword bits of the panel's screen object (same object): the dispatcher FUN_60016C08
-   serves 0x01..0x40 in order and clears each bit. 0x04 repaints the view-0 step pads
-   (FUN_60016386); 0x40 redraws the default numeric text (FUN_60015986). Setting a bit asks the
-   panel task to repaint on its next pass, which is safe from inside a button handler. */
-#define TR8_HMI_REPAINT_PADS 0x04                                /* [code] step pads, view 0 */
-#define TR8_HMI_REPAINT 0x40                                    /* [code] default numeric text */
+#define TR8_HMI_SETUP ((void *)0x60149F38)                      /* [code] Setup database object:
+                                                                   a handle, never a screen object */
+/* The panel's screen object. Its low halfword holds the repaint requests: the dispatcher
+   FUN_60016C08 serves 0x01..0x40 in order and clears each bit, so setting a bit asks the panel
+   task to repaint on its next pass (safe from inside a button handler). 0x04 repaints the view-0
+   step pads (FUN_60016386); 0x40 redraws the default numeric text (FUN_60015986).
+   This is NOT the Setup database above: the two objects are 0x3AC apart and writing the Setup
+   database's first byte corrupts the database and hangs the panel. The firmware's own "repaint
+   pads and text" helper FUN_60051E20 ORs 0x44 into this object. */
+#define TR8_HMI_PANEL ((volatile uint16_t *)0x60149B8C)          /* [code] DAT_60051E2C          */
+#define TR8_HMI_REPAINT_PADS 0x04                                /* [code] step pads, view 0     */
+#define TR8_HMI_REPAINT 0x40                                    /* [code] default numeric text  */
+typedef void (*tr8_repaint_fn)(void);
+#define TR8_FN_REPAINT ((tr8_repaint_fn)0x60051E21)              /* [code] FUN_60051E20 (0x44)   */
 #define TR8_SETUP_GET ((tr8_get_fn)0x6001B12F)                  /* [code] Setup idx n = global 0x2A+n */
 #define TR8_SYSTEM_GET ((tr8_get_fn)0x6001B433)                 /* [code] FUN_6001B432          */
 #define TR8_PTN_GET   ((tr8_get_fn)0x6001B737)                  /* [code] FUN_6001B736          */
