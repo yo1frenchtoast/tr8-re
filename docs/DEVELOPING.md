@@ -187,7 +187,7 @@ task runs its site, and write it down in the patch document (a table: hook, site
 | Site | Task | Tag |
 |---|---|---|
 | Per-step code, `bl FUN_6000978E` at `0x60009862` / `0x60009808` | sequencer | [unit] |
-| Clock tick `FUN_6000989C` and everything it calls (`FUN_600095F0` on a wrap) | sequencer, and panel through `FUN_600099B6` (START/STOP `0x1B` + button 0x2E while playing, FINDINGS section 5) | [code] |
+| Clock tick `FUN_6000989C` and everything it calls (`FUN_600095F0` on a wrap) | sequencer, and panel through `FUN_600099B6` (TAP + START/STOP while playing: restart from step 1, FINDINGS section 5) | [code] |
 | Control event, `bl FUN_60013242` at `0x600138C8` | panel | [unit] |
 | HMI dispatcher, screens, button press/release | panel | [code] |
 

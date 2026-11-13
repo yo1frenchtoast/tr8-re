@@ -53,12 +53,12 @@ A mask that changed during the call (a panel edit) is not overwritten.
 
 | Site | Original | New | Task |
 |---|---|---|---|
-| `0x60009800` in `FUN_600097DA` | `bl FUN_600262F2` (advance) | `bl poly_trig` | sequencer; panel through START/STOP + 0x2E (see below) |
-| `0x6000985A` in `FUN_6000981E` | `bl FUN_600262F2` (advance) | `bl poly_trig` | sequencer; panel through START/STOP + 0x2E |
-| `0x60009884` in `FUN_6000981E` (counter 0) | `bl FUN_600262F2` (advance) | `bl poly_trig` | sequencer; panel through START/STOP + 0x2E |
+| `0x60009800` in `FUN_600097DA` | `bl FUN_600262F2` (advance) | `bl poly_trig` | sequencer; panel through TAP + START/STOP (see below) |
+| `0x6000985A` in `FUN_6000981E` | `bl FUN_600262F2` (advance) | `bl poly_trig` | sequencer; panel through TAP + START/STOP |
+| `0x60009884` in `FUN_6000981E` (counter 0) | `bl FUN_600262F2` (advance) | `bl poly_trig` | sequencer; panel through TAP + START/STOP |
 | `0x60009A50` in `FUN_60009A04` (delay queue) | `bl FUN_600262F2` (flam hit) | `bl poly_trig` | not traced (reached through a pointer) [hyp: sequencer] |
-| `0x6000966E` in `FUN_6000964E` (start) | `bl FUN_60026894` | `bl poly_run` | sequencer; panel through START/STOP + 0x2E |
-| `0x600096AE` in `FUN_6000969A` (stop) | `bl FUN_60026894` | `bl poly_run` | sequencer; panel through START/STOP + 0x2E; also from `FUN_6000D306`, called by the incoming-note handler `FUN_60004D8C` [hyp: MIDI task] |
+| `0x6000966E` in `FUN_6000964E` (start) | `bl FUN_60026894` | `bl poly_run` | sequencer; panel through TAP + START/STOP |
+| `0x600096AE` in `FUN_6000969A` (stop) | `bl FUN_60026894` | `bl poly_run` | sequencer; panel through TAP + START/STOP; also from `FUN_6000D306`, called by the incoming-note handler `FUN_60004D8C` [hyp: MIDI task] |
 | `0x60019A10` in `FUN_6001961E` (button handler: pad with LAST STEP `0x1A` held) | `bl FUN_6001B8D6` (set LAST_A/B) | `bl poly_last` | panel |
 | `0x60016438` in `FUN_60016386` (step LED loop, LAST STEP view only) | `bl FUN_6001774E(led, colour)` | `bl poly_led` | panel |
 | `0x60016B56` in `FUN_600169A4` (panel repaint, bit `0x02`) | `b.w FUN_60017722(id, a, b)` (tail call: LED 9, or LED 7 while LAST STEP is held) | `b.w poly_lsled` | panel |
@@ -67,10 +67,10 @@ A mask that changed during the call (a panel edit) is not overwritten.
 The task of each site comes from `tools/callgraph.py up` ([DEVELOPING.md](DEVELOPING.md) section 3).
 The clock tick `FUN_6000989C` is called by the sequencer task (`FUN_60008F6C`) and also by
 `FUN_600099B6`, which the panel's button handler `FUN_6001961E` calls for START/STOP (`0x1B`)
-pressed while playing with button `0x2E` held: a restart on the fly (stop, start, one tick), with
-no lock against the sequencer task. So `poly_trig` and `poly_run`, and the variables they write
-(`poly_pos`, `poly_reset`), can run in two tasks during that gesture. Which button `0x2E` is, is
-not known (FINDINGS section 9); this is an open point for review rule 1, not a seen fault.
+pressed while playing with TAP (`0x2E`) held [unit]: a restart from step 1 without stopping
+(stop, start, one tick), with no lock against the sequencer task. So `poly_trig` and `poly_run`,
+and the variables they write (`poly_pos`, `poly_reset`), can run in two tasks during that gesture.
+This is an open point for review rule 1, not a seen fault.
 
 `poly_last` checks the instrument buttons (`0x21 + i`, held bitmap): none held -> the original
 call; else it sets the lengths and shows the result with `FUN_60015980`.
