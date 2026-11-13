@@ -13,7 +13,7 @@ side that was never selected stays stock.
 Every pattern has its own four bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 134 checks). Not yet tested on hardware.
+Status: **works in emulation** (`tests/emu_chain.py`, 141 checks). Not yet tested on hardware.
 Like the other patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
@@ -40,6 +40,12 @@ gives B two. Selecting a lower bar again does not shrink that side; use `A+B + p
 sides to *n*, or `A+B+CLEAR + pad` to reset them. A side that has never been selected stays stock:
 on the panel, A with no A bars loops the working copy's A side exactly as before. Bars that were
 never selected are the pattern's own steps.
+
+Selecting a bar does not depend on the transport: with the machine **stopped**, `A + pad 2`
+loads bar 2 into the working copy and redraws the screen at once, so the step pads and TR-REC edit
+bar 2; `A + pad 1` stores bar 2 and switches to bar 1, and `A + pad 2` brings it back. The load
+sends the firmware's own "slot 0 changed" notification (the one a stock pattern load sends), which
+is what draws the newly selected bar.
 
 The pads only ever choose a bar 1..4; pads 5..16 stay ordinary step pads and LAST STEP + pad
 still sets the pattern length (the poly gesture), because LAST STEP wins over A/B in the patch.
@@ -72,9 +78,11 @@ still sets the pattern length (the poly gesture), because LAST STEP wins over A/
   own.
 - **Every sequence starts at bar 1** on a sequencer start and advances one bar per pattern wrap;
   the A+B sequence wraps from the last B bar back to the first A bar.
-- **The selected bar is what TR-REC edits.** Selecting a bar loads its steps into the working copy
-  (area 4 slot 0) and applies them to the sound; the stock step pads, TR-REC, LAST STEP and
-  CLEAR then work on that bar.
+- **The selected bar is what TR-REC edits, playing or stopped.** Selecting a bar loads its steps
+  into the working copy (area 4 slot 0) and applies them to the sound; the stock step pads,
+  TR-REC, LAST STEP and CLEAR then work on that bar. The load ends with the notification a stock
+  pattern load sends (`FUN_60010148`), so the screen redraws the newly selected bar at once
+  instead of waiting for some other change; selecting another bar stores the one you leave.
 - **A bar carries its steps, its LAST_A/LAST_B and its scale.** The scale is in the log entry, so
   a scale change is kept with the bar (the redirected save never writes the pattern slot).
   Weak accents and flams are area-6 parameters and stay with the pattern, shared by its bars.
@@ -173,9 +181,16 @@ working copy:
    side); a bar with no log entry copies the whole pattern slot,
 3. the player struct and the sound masks are filled from slot 0, so the bar plays while it is
    edited,
-4. the side's length in Ptn2 is raised to at least the bar number (A+B sets both lengths),
+4. the notifications the firmware sends after a load into slot 0 go out (`FUN_60050F70` returns
+   the dispatcher, `FUN_60010148(dispatcher, {0, 4})` tells its observers), so every view redraws
+   the bar that was loaded. Without this the step view kept the previous bar until something
+   else refreshed it — the machine being stopped made that obvious,
+5. the side's length in Ptn2 is raised to at least the bar number (A+B sets both lengths),
    with the firmware's own Ptn2 setter (which marks the pattern changed and leads to the normal
    save).
+
+Nothing here depends on the transport: `A + pad` while stopped loads the bar for editing exactly
+as it does while playing, and `A + pad` again switches to another bar.
 
 No pattern switch happens: `Setup[2]`, the panel's pattern number and the kit are untouched, and
 there is no area-6 reload. That is the difference from the earlier "bar = pattern" build.
@@ -255,14 +270,14 @@ the pattern's own steps.
 
 The payload uses the two developer-dump regions
 (`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 784 bytes of `.text.far` plus 1 byte of
-`.data` in the first (788 available, 3 free), 1596 bytes of `.text` plus 212 bytes of `.bss` in
-the second (1838 available, 30 free). The literal pool between them (`0x60011464`-`0x60011484`) is
+`.data` in the first (788 available, 3 free), 1600 bytes of `.text` plus 212 bytes of `.bss` in
+the second (1838 available, 26 free). The literal pool between them (`0x60011464`-`0x60011484`) is
 live firmware data and is never written. The probe build (`payload_probe.json`) needs 568 + 14
 bytes. That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
 combined build needs the "grow the image" method or another dead-code region
-([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths needed `-fno-inline` and
-moved `struct_bar`, `clen`, `show_fail` and `show_ab` into the first region; the second region's
-`.text`/`.bss` pair is the tighter one.
+([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the two lengths and the slot-0 notification needed
+`-fno-inline`; `struct_bar`, `clen` and `show_fail` live in the first region, `show_ab` is back in
+the second, and `slot_notify` is inlined into `chain_edit` (a separate function no longer fits).
 
 ## Why not a real 32- or 64-step pattern
 
@@ -313,11 +328,14 @@ writes a side length, a bar or the pattern:
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 134 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 141 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..4` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, pads 5..16 forwarded, LAST STEP wins, display strings, release swallowed); bar selection
-  and the working copy (bar 1 = pattern, bar 2 loaded after a save, last steps and B side); the
+  and the working copy (bar 1 = pattern, bar 2 loaded after a save, last steps and B side; the
+  same round trip while stopped: `A + pad 3`, edit a step, `A + pad 1`, back to `A + pad 3` with
+  the edit, and the slot-0 `{0, 4}` notification after every load but not after the A+B length
+  gesture); the
   pattern-save redirect (no pattern slot written, one log entry with the 26 rows and LAST_A/B,
   area 4 slot *n+1* unchanged); playback of an A sequence, a B sequence and the A+B A-then-B
   sequence, with the recorded bar's content (masks, last steps, scale); a side that was never
@@ -370,12 +388,15 @@ writes a side length, a bar or the pattern:
      (`AB--`) returns both sides to stock.
   5. Record different steps into A bar 1, A bar 2 and B bar 1; play A, B and A+B: each bar's own
      steps come back. Select a bar again: the display follows the pad and the steps are restored.
-  6. Select patterns 2..5 and press A: each still sounds like its own stock pattern (no side
+  6. **Stopped bar editing:** with the sequencer stopped, `A + pad 2`, record a step, `A + pad 1`,
+     then `A + pad 2` again. The screen shows bar 2's steps as soon as the pad is pressed (no play
+     needed) and the step recorded while stopped is still there.
+  7. Select patterns 2..5 and press A: each still sounds like its own stock pattern (no side
      selected); pattern 1's bars and lengths are unchanged when you return.
-  7. Give pattern 2 its own bars and lengths; switch 1 <-> 2: each pattern plays its own phrase.
-  8. Power cycle: bars, steps and side lengths are still there; a recorded bar still plays its
+  8. Give pattern 2 its own bars and lengths; switch 1 <-> 2: each pattern plays its own phrase.
+  9. Power cycle: bars, steps and side lengths are still there; a recorded bar still plays its
      own steps.
-  9. LAST STEP + pad still changes the pattern length, and the poly LAST STEP + instrument + pad
+  10. LAST STEP + pad still changes the pattern length, and the poly LAST STEP + instrument + pad
      gesture still works.
-  10. Change the pattern: playback starts at bar 1 of the new pattern, and the previous pattern's
+  11. Change the pattern: playback starts at bar 1 of the new pattern, and the previous pattern's
       bars are not overwritten.

@@ -433,7 +433,7 @@ def applied(e):
 seed_ram()
 cold_boot()
 
-# --- the gesture ------------------------------------------------------------------
+# --- the gesture, with the sequencer stopped: selecting a bar loads it for editing ----------
 expect("press: plain pad goes to the firmware", press(3), [("press", 2)])
 expect("press: plain pad sets nothing", pget(CNT), 0)
 expect("press: pads beyond the four bars go to the firmware", press(9, A), [("press", 8)])
@@ -443,6 +443,9 @@ expect("press: LAST STEP + A + pad keeps the stock path", press(2, LAST, A), [("
 r = press(1, A)
 expect("press: A + pad 1 shows bar 1 A", edits(r), [("text", "  1A")])
 expect("press: ... and plays A", applied(r), [("apply", 0)])
+# (the length setter above also notifies, with its own event; the slot-0 event is {0, 4})
+expect("press: ... and tells the screens the working copy changed",
+       [e for e in r if e == ("notify", (0, 4))], [("notify", (0, 4))])
 expect("press: bar 1 is the pattern itself", slot_rows(0), slot_rows(1))
 expect("press: the A side is now one bar", pget(CNT), 0x01)
 expect("press: bar 1 was stored", (bar_entry(0, 0) or {}).get("rows"), slot_rows(1))
@@ -490,7 +493,20 @@ expect("press: ... and its last steps", slot_scalars(0), (0x0C, 0x0D))
 expect("press: ... and its scale", r32(slot_addr(0) + 4), 2)
 expect("press: ... and the B side selected", (r32(VARI), r32(EFF)), (1, 1))
 
-expect("press: A+B + pad 3 sets both sides to three bars", edits(press(3, A, B)), [("text", "AB 3")])
+# Stopped, the same on the A side: load a bar, edit it, leave and come back. This is the
+# "A + pad loads the bar for editing" flow; nothing here starts the sequencer (RUN stays 0).
+expect("stopped: A + pad 3 loads bar 3", edits(press(3, A)), [("text", "  3A")])
+w32(slot_addr(0) + 4 * (4 + 2 * 8), 0x0123)     # TR-REC: step 9 of the A side
+call(S["chain_commit"], 0, 4, 1, 0)             # the firmware save, redirected to the log
+expect("stopped: A + pad 1 loads bar 1", edits(press(1, A)), [("text", "  1A")])
+expect("stopped: ... bar 1 is the pattern itself", slot_rows(0), slot_rows(1))
+expect("stopped: A + pad 3 loads the edited bar again", edits(press(3, A)), [("text", "  3A")])
+expect("stopped: ... with the step edited while stopped", slot_rows(0)[8], (0x0123, 0x5108))
+
+r = press(3, A, B)
+expect("press: A+B + pad 3 sets both sides to three bars", edits(r), [("text", "AB 3")])
+expect("press: ... without reloading the working copy",
+       [e for e in r if e == ("notify", (0, 4))], [])
 expect("press: three bars on both sides", pget(CNT), 0x33)
 expect("press: A+B+CLEAR + pad 2 resets both sides", edits(press(2, A, B, CLEAR)), [("text", "AB--")])
 expect("press: no side sequence, painted bars kept", pget(CNT), 0)

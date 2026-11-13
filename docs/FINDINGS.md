@@ -197,6 +197,16 @@ Two different 12-byte contexts exist; mixing them silently copies nothing:
 and notifies when the destination is slot 0. The pattern load `FUN_6001B842` is exactly
 `FUN_6000F3C2(ctx, 4, 0)` + `FUN_6000F3EC(ctx, 4, n+1, 0)` (area 4 slot `n+1` -> working copy).
 
+**The notification** (what a patch that writes slot 0 directly has to reproduce): after the copy,
+`FUN_6000F3EC` calls `FUN_60050F70` (no arguments; returns the dispatcher object `0x601264C8`)
+and then `FUN_60010148(dispatcher, event)`. `FUN_60010148` walks a circular list of observers
+(`{vtable, ..., next}`, next at +8) and calls `vtable[0](observer, event)`. The event is two
+bytes `{u8 slot, u8 area}`: `0` for the current slot of the area, `1` for another slot (the
+copy sites `0x6000F294`, `0x6000F380`, `0x6000F45A` and the setters' `0x6000F31C`, `0x6000F3BA`
+pass 0 and 1 respectively). `FUN_60050F70` may also flush an event queue first. This is how the
+screens learn that the working copy changed, and it is what makes a bar selected while the
+machine is stopped show up immediately (the chain patch sends `{0, 4}` after loading it).
+
 `FUN_6000FC78(_, area, slot, _)` is the **commit**: it copies area slot 0 into slot `slot` and
 writes the result to flash (disassembly `0x6000FC82`-`0x6000FCC2`: `FUN_6000F3C2`, `FUN_6000F3EC`,
 then `FUN_60010E92` store). The firmware calls it on a pattern change, so it is also the safe way

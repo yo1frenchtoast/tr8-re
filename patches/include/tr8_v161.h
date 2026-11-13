@@ -153,6 +153,17 @@ typedef void (*tr8_copy_fn)(void *ctx, int area, int src_slot, int unused);
 #define TR8_FN_COPY_CTX ((tr8_copy_ctx_fn)0x6000F3C3)            /* [code] FUN_6000F3C2 */
 #define TR8_FN_COPY ((tr8_copy_fn)0x6000F3ED)                   /* [code] FUN_6000F3EC */
 
+/* The notification a copy sends when it lands in slot 0: FUN_60050F70 returns the dispatcher
+ * object and FUN_60010148(dispatcher, {u8 slot, u8 area}) walks its observers, which is how the
+ * screens learn that slot 0 of an area changed. slot is 0 for the current slot and 1 for
+ * another slot of the area (FUN_6000F3EC passes 0, the setters pass 0 or 1 the same way).
+ * A patch that writes slot 0 directly has to send this too, or the views keep the old values
+ * until something else refreshes them. RAM only, no flash write. */
+typedef void (*tr8_notify_fn)(void *dispatcher, const void *event);
+typedef void *(*tr8_dispatch_fn)(void);
+#define TR8_FN_NOTIFY ((tr8_notify_fn)0x60010149)                /* [code] FUN_60010148 */
+#define TR8_FN_DISPATCH ((tr8_dispatch_fn)0x60050F71)            /* [code] FUN_60050F70 */
+
 /* Copy area slot 0 into `slot` and write that slot to the user flash. FUN_6001B7D8(_, n)
  * does this for area 4 and area 6 with slot = n + 1 when the panel changes pattern. The
  * first and last arguments are unused (the firmware passes a database object and 0). */
