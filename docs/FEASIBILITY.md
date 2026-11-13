@@ -17,8 +17,9 @@ Assessments of features that could be added. The facts behind them are in
 - **RAM** is not a constraint: the RTOS pool has about 29.5 MB (29.4 MB with `motion-poly`).
 - **Code space**: with `motion-poly`, about 1.5 KB of code space is left in the developer dump
   regions, and data goes to patch RAM (64 KB taken from the RTOS pool, [COMBO.md](COMBO.md),
-  works on the unit). A larger feature needs the "grow the image" method (FINDINGS section 12,
-  not tested) or another dead-code region.
+  works on the unit). A larger feature can use the "grow the image" method (FINDINGS section 12):
+  the bar chain now does, and passes in emulation; its boot path is waiting for the first unit
+  run ([CHAIN.md](CHAIN.md)). Another dead-code region is the alternative.
 
 ## A. Motion recording: done
 
@@ -49,12 +50,16 @@ so TR-REC records it, and the pattern save is redirected to an append-only log i
 (`0x3DA000`-`0x3DFFFF`), which leaves the pattern's own steps intact as the default for unrecorded
 bars. Each side of a pattern has its own length: A plays bars 1..Na with its A steps, B plays
 1..Nb with its B steps, and A+B plays the A sequence then the B sequence. Each pattern keeps its
-own eight bars and its own two lengths, so switching pattern switches the phrases. Its 128-byte
-bar index does not fit the two code regions, so the image moves the RTOS pool start by 64 KB
-(0x60280988 -> 0x60290988) and keeps the index in patch RAM — the move the motion-poly build
-already ran on the unit. It is emulation-tested (220 checks, including a simulated power cycle, log
-compaction and the chip's write protection); the step engine is untouched and no pattern slot is
-spent on a bar. While
+own eight bars and its own two lengths, so switching pattern switches the phrases. Its code and
+its 128-byte bar index do not fit the two developer-dump regions, so the chain uses the "grow the
+image" method: the patcher extends the decompressed image to cover 0x60281C9C and puts the code
+and state at 0x60281200, above the firmware bss that the startup code zeroes, and moves the RTOS
+pool start by 64 KB (0x60280988 -> 0x60290988) so the pool cannot reach it. The cave stays free
+for motion/poly, so the chain combines with them and the web flasher offers every combination. It
+is emulation-tested (224 chain checks plus the three combinations, including a simulated power
+cycle, log compaction and the chip's write protection); the step engine is untouched and no
+pattern slot is spent on a bar. The larger image still ends far below `appB`, and the flash log
+lives outside the application's compressed range. While
 VARIATION A or B is held, the pads show that side's bars: green, with the playing bar blinking
 yellow, and the remaining pads dark, so only the bars that side has are lit; releasing the button
 returns the pads to whatever the screen was showing, on any screen, and the row keeps working

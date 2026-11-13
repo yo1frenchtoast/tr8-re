@@ -556,26 +556,32 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 
 ## 12. Code space for patches
 
-- **Developer dump cave** (used by the `motion`, `poly`, `motion-poly` and opaque `chain` patches):
-  `FUN_6001114E` and `FUN_600113B2` are only
-  called from a developer branch of the USB backup (`0x60011E00`, `0x60011E04` in `FUN_60011DBE`).
-  With those two calls replaced by `nop.w`, `0x60011150`-`0x60011463` (788 bytes) and
-  `0x60011488`-`0x60011BB5` (1838 bytes) are free. The literal pool `0x60011464`-`0x60011483` is
-  still used and must stay. The motion patch uses 737 + 1568 bytes; `motion-poly` uses about
-  340 + 730 bytes, its zeroed data is in patch RAM (below); `chain` uses both regions too
-  (772 + 1 = 773 of 788 in the first, 15 free; 1624 + 212 of 1838 in the second, 2 free), so it
-  is standalone for the same reason.
-- **Grow the image (design, not tested on a unit).** Code appended at the end of the image
-  (`0x601309E0`) would be erased, because the bss zero-fill covers `0x601264EC`-`0x60280987`.
-  Instead:
-  1. extend the decompressed size so that the image reaches `0x60280988 + N` (the bytes between
-     `0x601309E0` and `0x60280988` are zeros and compress to about 170 KB with this LZSS; the
-     application flash area has about 1.7 MB free);
-  2. put the new code and data at `0x60280988` (above the bss, so it is not zeroed);
-  3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8` (`FUN_60010430`).
-     The other copy at `0x6012A2FC` is the startup stack top, not the pool (see the next item).
-  The boot loader decompresses any size into SDRAM; the updater only checks sizes and sums.
-  To be validated on a unit before use.
+- **Developer dump cave** (used by the `motion`, `poly` and `motion-poly` patches): `FUN_6001114E`
+  and `FUN_600113B2` are only called from a developer branch of the USB backup (`0x60011E00`,
+  `0x60011E04` in `FUN_60011DBE`). With those two calls replaced by `nop.w`,
+  `0x60011150`-`0x60011463` (788 bytes) and `0x60011488`-`0x60011BB5` (1838 bytes) are free. The
+  literal pool `0x60011464`-`0x60011483` is still used and must stay. The motion patch uses
+  737 + 1568 bytes; `motion-poly` uses about 340 + 730 bytes, its zeroed data is in patch RAM
+  (below). The bar chain used these regions in its earlier builds and no longer does.
+- **Grow the image (used by the bar chain since the module build).** Code appended at the end of
+  the image (`0x601309E0`) would be erased, because the bss zero-fill covers
+  `0x601264EC`-`0x60280987`. Instead:
+  1. extend the decompressed size so that the image reaches the new code. The bytes between
+     `0x601309E0` and the code are zeros and compress well: reaching `0x60281C9C` costs about
+     164 KB of compressed application (0xA5CF7 -> 0xCEA45), and the module still ends at file
+     offset 0x0FEA85, far below `appB` at 0x280000. `tr8patch.py` and the web flasher extend the
+     application array themselves when a payload lies beyond the current end.
+  2. put the new code and data at `0x60281200` (above the bss, so it is not zeroed). Not
+     `0x60280988`: `motion-poly`'s patch RAM occupies `0x60280A00`-`0x60281183`, and the 64 KB
+     below the moved pool is that reservation. The chain's `.text` is
+     `0x60281200`-`0x60281B7C` (2428 bytes) and its `.bss` runs to `0x60281C9C`.
+  3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8`
+     (`FUN_60010430`) becomes `0x60290988`, the same move `motion-poly` makes. The other copy at
+     `0x6012A2FC` is the startup stack top, not the pool (see the next item).
+  The boot loader decompresses any size into SDRAM: `FUN_01000B3C` reads the decompressed size
+  from the header and `FUN_01000C76` is bounded only by `destination + size`, with no fixed cap.
+  The updater only checks sizes and sums. Emulation passes (224 chain checks and the three
+  combinations); a unit run is pending, and the first boot is the thing to watch.
 - **Patch RAM by moving the pool start (used by `motion-poly`).** The pool setup `FUN_60010430`
   (called once at boot from `0x60010482`, before the RTOS starts) reads its start from the
   literal at `0x600104A8` and its end (`0x62000000`) from `0x600104A4`. Changing the start to
@@ -585,7 +591,8 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   (`0x6012A2FC`, fast code `0x01004100`) is the startup stack top returned by RVCT
   `__user_initial_stackheap` (stack `0x60280788`-`0x60280988`), not the pool: leave it. This RAM
   is not zeroed at boot; `patches/combo/ram.c` zeroes it before calling the pool setup. Do not
-  move the pool end instead: a table at `0x6007638E` lists SDRAM blocks up to `0x62000000`.
+  move the pool end instead: a table at `0x6007638E` lists SDRAM blocks up to `0x62000000`. The
+  chain only uses the pool move to keep the pool off its image region; it needs no patch RAM.
 - **Other dead code:** not searched systematically. Candidates: developer and test functions
   reachable only from the boot modes above 3.
 
@@ -598,6 +605,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 4. What runs on the second processor (`appB`) and over which link?
 5. LED function arguments; display text lifetime and how to keep a message visible.
 6. Button ids above 0x2B (START/STOP, PATTERN, ...). LAST STEP is 0x1A (section 9).
-7. The "grow the image" method (section 12) on a real unit.
+7. The "grow the image" method (section 12) on a real unit: the bar chain uses it, the boot path
+   is emulation-tested only.
 8. MIDI: the receive path (`midi\task_midi_rx.cpp`) and whether external CCs take the same path
    as `FUN_60015906`.

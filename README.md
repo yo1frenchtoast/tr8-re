@@ -2,10 +2,11 @@
 
 Reverse engineering of the Roland TR-8 firmware (system program v1.61) and a patcher that adds
 new features to it: **motion recording** (hold TR-REC and turn a knob: the TR-8 plays the
-movement back with the pattern) and **per-instrument length** (each instrument loops over its
-own number of steps, for polyrhythms).
+movement back with the pattern), **per-instrument length** (each instrument loops over its own
+number of steps, for polyrhythms) and the **bar chain** (each pattern plays up to eight bars, each
+with its own A and B step set).
 
-**Web flasher: <https://yo1frenchtoast.github.io/tr8-re/>**. Tick one mod or both, drop Roland's
+**Web flasher: <https://yo1frenchtoast.github.io/tr8-re/>**. Tick one or more mods, drop Roland's
 official update, download the patched `TR8_UPD.BIN`. Everything runs in the browser.
 
 This repository contains **no Roland code**. You download the official update from Roland; the
@@ -26,14 +27,16 @@ accepts.
 | **Motion recording** | **Works on a real TR-8**: hold TR-REC to record, hold CLEAR to erase. RAM only, one global buffer |
 | **Per-instrument length** | **Works on a real TR-8**: hold LAST STEP + an instrument, press a pad. Saved with each pattern ([docs/POLY.md](docs/POLY.md)) |
 | **Motion + per-instrument length together** | **Works on a real TR-8** ([docs/COMBO.md](docs/COMBO.md)) |
-| **Bar chain (more than two bars)** | **Works on a real TR-8**: hold A or B + a pad 1..8 to paint a bar and set that side's length (`A/B + CLEAR + pad n` shrinks it), A+B + pad sets both. Each side plays its own bars in order and A+B plays A then B. The step view follows the bar you hear; while A or B is held the pads show that side's bars. Saved with each pattern. Standalone, not in the web flasher yet ([docs/CHAIN.md](docs/CHAIN.md)) |
+| **Bar chain (more than two bars)** | Hold A or B + a pad 1..8 to paint a bar and set that side's length (`A/B + CLEAR + pad n` shrinks it), A+B + pad sets both. Each side plays its own bars in order and A+B plays A then B. The step view follows the bar you hear; while A or B is held the pads show that side's bars. Saved with each pattern. **The earlier standalone build passed on a real TR-8**; this build moved the code into the application image so it combines with motion and poly and is in the web flasher — emulation-tested, hardware check pending ([docs/CHAIN.md](docs/CHAIN.md)) |
+| **Bar chain + motion, + poly, or both** | One firmware, one payload and one set of hook sites; the chain no longer takes the developer-dump region ([docs/CHAIN.md](docs/CHAIN.md), [docs/COMBO.md](docs/COMBO.md)) |
 | Web flasher | Same output as `tr8patch.py`, byte for byte (`tests/site_check.mjs`) |
 | Per-pattern saved motion, more than two bars | Assessed; the bar chain is implemented ([docs/FEASIBILITY.md](docs/FEASIBILITY.md), [docs/CHAIN.md](docs/CHAIN.md)) |
 
 ## Use a patch
 
-The easiest way is the [web flasher](https://yo1frenchtoast.github.io/tr8-re/): tick one mod or
-both. When you tick both, it builds the `motion-poly` patch. With Python 3 instead:
+The easiest way is the [web flasher](https://yo1frenchtoast.github.io/tr8-re/): tick any
+combination of the three mods and it builds the firmware for exactly that set. With Python 3
+instead:
 
 1. Download the TR-8 system program v1.61 from Roland and unzip it (`tr8_sys_v161/TR8_UPD.BIN`).
 2. Build the patched file:
@@ -42,12 +45,15 @@ both. When you tick both, it builds the `motion-poly` patch. With Python 3 inste
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_poly.BIN --patch poly   # lengths
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_chain.BIN --patch chain # bar chain
    python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_both.BIN --patch motion-poly
+   python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_motion_chain.BIN --patch motion-chain
+   python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_poly_chain.BIN --patch poly-chain
+   python3 -I tools/tr8patch.py tr8_sys_v161/TR8_UPD.BIN TR8_UPD_all.BIN --patch motion-poly-chain
    ```
 3. Back up your patterns and kits, then flash the file you built, renamed to `TR8_UPD.BIN`,
    with Roland's normal procedure: [docs/UPDATE.md](docs/UPDATE.md).
 4. How to use them: [docs/MOTION.md](docs/MOTION.md), [docs/POLY.md](docs/POLY.md),
-   [docs/COMBO.md](docs/COMBO.md), [docs/CHAIN.md](docs/CHAIN.md). The bar chain is standalone
-   for now (same code region as motion and poly); the web flasher does not offer it yet.
+   [docs/COMBO.md](docs/COMBO.md), [docs/CHAIN.md](docs/CHAIN.md). Every combination has its own
+   `--patch` name, and the web flasher offers the same seven builds.
 
 ## Write your own feature
 
@@ -87,11 +93,12 @@ tests/run_all.sh "$F"                                # build every patch, run al
 | `tools/tr8patch.py` | Patcher: checks the input, applies a patch, rebuilds and re-checks the file (`--list`, `--check`) |
 | `tools/elf2payload.py` | Linked payload ELF -> `payload.json` for the patcher |
 | `tools/build_site.py` | Patch table -> `site/patches.json` for the web flasher |
+| `tools/merge_payloads.py` | Union of separately linked payloads (chain + motion/poly) |
 | `tools/analyze.sh`, `tools/*.java` | Ghidra headless: decompile every function and list strings |
 | `patches/include/tr8_v161.h` | Known firmware addresses and functions, with confidence tags |
 | `patches/motion/` | Motion recording: `motion.c`, hardware probe `probe.c`, `link.ld`, `build.sh`, generated `payload*.json` |
 | `patches/poly/` | Per-instrument length: `poly.c`, `link.ld`, `build.sh`, generated `payload.json` |
-| `patches/chain/` | Bar chain (more than two bars): `chain.c`, `link.ld`, `build.sh`, generated `payload.json` |
+| `patches/chain/` | Bar chain (image build): `chain.c`, `link.ld`, `probe.c`/`probe.ld`, `build.sh`, generated `payload*.json` (chain and its combinations) |
 | `patches/combo/` | Motion + poly: `ram.c` (patch RAM), `link.ld`, `build.sh`, generated `payload.json` |
 | `site/` | Web flasher (static page, `tr8patch.js` = JS port of the patcher) |
 | `tests/` | Unicorn emulation tests, `site_check.mjs` (web flasher = Python output) and `run_all.sh` |

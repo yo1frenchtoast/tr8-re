@@ -13,10 +13,14 @@ side that was never selected stays stock.
 Every pattern has its own eight bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works on a real TR-8** (`tests/emu_chain.py`, 220 checks). The tenth build — eight bars
-per side, the shrink gesture, the step view following the bar that is playing — is confirmed on
-the unit (hardware test below). Like the other patches it is built from your own copy of Roland's
-v1.61 file.
+Status: the tenth build — eight bars per side, the shrink gesture, the step view following the
+bar that is playing — **passed on a real TR-8** (hardware test below). This build moves the code
+and the bar index out of the developer-dump region and into the application image, so the chain
+**combines with `motion` and `poly`** and appears in the web flasher next to them. Emulation
+passes (224 chain checks plus the three combinations), but the new boot path — a larger
+decompressed image — has not been on a unit yet. Keep `work/TR8_UPD_chain_b4.BIN` (the confirmed
+standalone build) as the fallback. Like the other patches it is built from your own copy of
+Roland's v1.61 file.
 
 ## Use
 
@@ -24,8 +28,18 @@ v1.61 file.
 python3 -I tools/tr8patch.py TR8_UPD.BIN TR8_UPD_chain.BIN --patch chain
 ```
 
-Flash as described in [UPDATE.md](UPDATE.md) (back up first). This patch is standalone for now:
-it uses the two developer-dump regions, and so do `motion` and `poly`.
+Flash as described in [UPDATE.md](UPDATE.md) (back up first). The chain is a module like the
+others: it no longer uses the developer-dump region, so it can be built together with motion and
+poly, and the web flasher offers every combination. The `--patch` names are the same as in
+`tools/tr8patch.py --list`:
+
+| Command | Firmware |
+|---|---|
+| `--patch chain` | bar chain |
+| `--patch motion-chain` | bar chain + motion recording |
+| `--patch poly-chain` | bar chain + per-instrument length |
+| `--patch motion-poly-chain` | all three |
+| `--patch motion`, `poly`, `motion-poly` | the other patches, unchanged |
 
 | Gesture | Result |
 |---|---|
@@ -311,9 +325,11 @@ block always keeps a free slot, because there are at most 128 live entries (16 p
 bars) in 160 slots. The newest entry per `(pattern, bar)` wins by sequence number, so the scan is
 correct after the ring wraps or a block is compacted; the log is scanned once on first use, after
 which a static index of 128 bytes points at each bar's newest entry. The index is 16 patterns x 8
-bars, which neither code region has room for, so it lives in patch RAM at `0x60280A00` and the
-image moves the RTOS pool start by 64 KB (the motion-poly move, [COMBO.md](COMBO.md)); see "Code
-space".
+bars, which no longer fits the developer-dump region, so it lives with the code **in the
+application image** above the firmware bss (`0x60281B80`, `.bss`); the image grows to cover it and
+the RTOS pool start moves by 64 KB (see "Code space"). The image is decompressed from flash at
+every boot, so the index is in place and zeroed before `store_init` runs — there is no patch RAM
+and no boot hook for the chain.
 
 **Pattern save is redirected.** The firmware's pattern save (`FUN_6001B7D8` -> `FUN_6000FC78`)
 normally copies area 4 slot 0 over slot *n+1*. `chain_commit` replaces that call for area 4:
@@ -342,27 +358,37 @@ the pattern's own steps.
 
 ### Code space
 
-The payload uses the two developer-dump regions
-(`0x60011150`-`0x60011464` and `0x60011488`-`0x60011BB6`): 764 bytes of `.text.far` plus 6 bytes of
-`.data` in the first (788 available, 18 free), 1660 bytes of `.text` plus 148 bytes of `.bss` in
-the second (1838 available, 30 free). The literal pool between them (`0x60011464`-`0x60011484`) is
-live firmware data and is never written. The bar index (`tab`, 128 bytes: 16 patterns x 8 bars)
-does not fit either region, so it is **patch RAM** at `0x60280A00`: the patcher moves the RTOS
-pool start literal (`0x600104A8`) from `0x60280988` to `0x60290988`, the same 64 KB reservation
-`motion-poly` makes ([COMBO.md](COMBO.md)); the payload lists the section but does not write it
-into the image, and `store_init` clears it before use (patch RAM is not zeroed at boot). The probe
-build (`payload_probe.json`) needs 568 + 14 bytes and keeps the stock pool start.
-That is why the patch is standalone for now: `motion-poly` already uses both regions, and a
-combined build needs the "grow the image" method or another dead-code region
-([DEVELOPING.md](DEVELOPING.md) "Code space"). Fitting the lengths, the follow and the eight-bar
-row needed `-fno-inline`; the first region carries `sync`, `clen`, `struct_bar`, `slot_load`,
-`chain_edit`, `chain_commit`, `ecrc` and `save_dirty` plus the display buffer and the pattern byte,
-the second everything else. Dropping the synchronous notification gave the first region back 12
-bytes, and the follow fits in the second because `store_gc`, `store_init` and the display helpers
-were rewritten to do less arithmetic (walking the player struct and the row loop, one `eok` that
-also checks the key, one shared `show4`). The follow itself, the hash check and the `sync` guard at
-the top of `chain_view` take the second region back to 30 free bytes; the eight-bar arithmetic and
-the shrink gesture live in the first region (18 free).
+The chain used to share the two developer-dump regions with `motion` and `poly`. They are too
+small for all of it (the eight-bar index alone is 128 bytes), so this build uses the **grow the
+image** method ([FINDINGS.md](FINDINGS.md) section 12, [DEVELOPING.md](DEVELOPING.md) "Code
+space"):
+
+| What | Where | Size |
+|---|---|---|
+| Code, `.data` | `0x60281200`-`0x60281B7C` in the application image | 2428 + 1 bytes |
+| Bar index and other state | `0x60281B80`-`0x60281C9B` (`.bss`, in the image) | 284 bytes |
+
+The firmware's bss ends at `0x60280987` (the startup code zeroes it) and the RTOS pool starts at
+`0x60280988`. The patcher writes the payload at `0x60281200` and **extends the decompressed image
+to `0x60281C9C`** with zeros; the boot loader decompresses that size to `0x60000000` without a
+fixed cap (it is bounded only by `destination + decompressed size`, verified in `FUN_01000B3C` /
+`0x01000C76`). The startup zero-fill still stops at `0x60280987`, so the code and its state
+survive. The patcher then moves the RTOS pool start literal (`0x600104A8`) from `0x60280988` to
+`0x60290988`, the same 64 KB reservation `motion-poly` makes, so the pool never overwrites the
+chain and the 64 KB below it stays free for `motion-poly`'s patch RAM
+(`0x60280A00`-`0x60281183`). `0x60281200` is chosen above that RAM.
+
+Nothing is taken from the developer-dump region, so `motion`, `poly` and `motion-poly` keep their
+code and hook sites exactly as before, and a combined build is their payload plus this one and
+their sites plus these sites ([`tools/merge_payloads.py`](../tools/merge_payloads.py)). The probe
+build is the exception: it is still the old cave build (`probe.c`, `probe.ld`, 568 + 14 bytes,
+stock pool start), because it only exists to show the gesture on a unit.
+
+The image growth costs about 164 KB of compressed application (0xA5CF7 -> 0xCEA45 bytes): the
+zeros between the old image end and the new code compress well, and the module still ends at file
+offset 0x0FEA85, far below `appB` at 0x280000. The update file keeps its fixed 4 MB size. The
+patched application is recompressed by `tr8fw.pack` / the web flasher's compressor, and both
+produce the same bytes.
 
 ## Why not a real 32- or 64-step pattern
 
@@ -521,12 +547,23 @@ writes a side length, a bar or the pattern:
   `0x3DC000`-`0x3DFFFF` (now entries 32..159, so its bars are kept) and the log grew downwards to
   `0x3DB000`, with the scratch block at `0x3DA000`. 128 live entries in 160 slots keep
   compaction's free-slot invariant. Pads 1..8 select a bar; 9..16 keep their stock function, and
-  LAST STEP still wins. Emulation passes (220 checks). Confirmed on the unit (hardware test
-  below).
+  LAST STEP still wins. Emulation passes (220 checks). **Confirmed on the unit** (hardware test
+  below); kept as `work/TR8_UPD_chain_b4.BIN`.
+- Eleventh build (this one): **the chain becomes a module**. The code and the 128-byte index move
+  out of the cave and into the application image at `0x60281200`; the patcher grows the
+  decompressed image to `0x60281C9C` and moves the RTOS pool start by 64 KB
+  (`0x60280988` -> `0x60290988`). The cave is left to `motion`, `poly` and `motion-poly`, so the
+  chain no longer competes for it; the patcher gains `motion-chain`, `poly-chain` and
+  `motion-poly-chain` (merged payloads, union of the hook sites) and the web flasher offers all of
+  them. Fixed while combining: the JS patcher now grows its application array when a payload lies
+  beyond the image, like the Python one. The tenth build's flash log, log blocks and Ptn2 lengths
+  are unchanged. Emulation: 224 chain checks and the combinations; the probe is still the cave
+  build. Hardware: not tested yet — the boot path is the new part.
 
-## Hardware test (2026-11-13): passed
+## Hardware test (2026-11-13): the tenth build passed
 
-The tenth build was flashed to the unit and the checklist below behaved as described. The unit
+The tenth build (standalone, cave + patch RAM) was flashed to the unit and the checklist below
+behaved as described. The unit
 boots normally with its patterns and kits present (the RTOS pool start moved, as in
 `motion-poly`); the eight-bar row lights pads 1-8 with the head blinking, a side of eight bars
 plays eight bars and wraps on the ninth, `A + CLEAR + pad 5` shrinks to five bars and
@@ -592,3 +629,26 @@ playing, and nothing froze. The build is kept as `work/TR8_UPD_chain.BIN`.
      gesture still works.
   11. Change the pattern: playback starts at bar 1 of the new pattern, and the previous pattern's
       bars are not overwritten.
+
+## Hardware check for the image build (pending)
+
+This build changes only where the code lives and how the image boots, so the gestures, the log,
+the side lengths and the display are the tenth build's (already confirmed above). The new risks
+are the larger decompressed image and the moved pool:
+
+0. **Boot first.** Flash it and switch on: the unit must start normally with its patterns and
+   kits, play a pattern, save a pattern and take a USB backup (the pool is 64 KB smaller). Hold
+   VARIATION A alone, `A + pad 5` stopped, `A + pad n` and `B + pad n` while playing, then
+   `A+B + pad n`: nothing may freeze and the normal text must return after each release.
+   If the unit does not start, recover with step [1] at power-on and the official file, then
+   flash `work/TR8_UPD_chain_b4.BIN` (the confirmed tenth build). If it boots but the chain does
+   nothing, the payload address or the pool move is the suspect; report the display.
+1. Repeat checks 1-11 of the tenth-build checklist below on this image.
+2. Build `motion-chain`, `poly-chain` and `motion-poly-chain` and, for each: boot, boot again,
+   then run the motion checks ([MOTION.md](MOTION.md)), the poly checks ([POLY.md](POLY.md)) and
+   the chain checks 1-11. The three features must work at the same time and no gesture may
+   collide: TR-REC and CLEAR keep their motion meaning, LAST STEP keeps its poly meaning, and
+   A/B + pad 1..8 keeps its chain meaning. The `motion-poly` check list in
+   [COMBO.md](COMBO.md) applies to `motion-poly-chain` as well.
+3. Power cycle after using all three: bars and side lengths must survive (flash log and Ptn2),
+   motion must be gone (RAM only), and the unit must still boot normally.

@@ -63,7 +63,9 @@ state `FUN_60013168(0x11)` (TR-REC) and `FUN_60013168(0x1C)` (CLEAR).
 
 ## Variants
 
-`tools/tr8patch.py --list` shows them. All use the same sites, so only one can be applied.
+`tools/tr8patch.py --list` shows them. All use the same sites, so only one of these motion
+variants can be applied. (`poly`, `motion-poly` and the chain builds add other features; the bar
+chain no longer shares the motion code regions.)
 
 | `--patch` | Record | Erase | Status on the unit |
 |---|---|---|---|
