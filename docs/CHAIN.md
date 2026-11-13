@@ -13,11 +13,10 @@ side that was never selected stays stock.
 Every pattern has its own eight bars and its own two lengths. Switching pattern switches the
 phrases; nothing is carried from one pattern to another and nothing is overwritten.
 
-Status: **works in emulation** (`tests/emu_chain.py`, 220 checks). The eighth build (per-side
-sequences, green/blink row, stopped editing, bar jump) is confirmed on hardware; the step view
-following the bar that is playing and the eight-bar row are emulation-tested and pending on the
-unit.
-Like the other patches it is built from your own copy of Roland's v1.61 file.
+Status: **works on a real TR-8** (`tests/emu_chain.py`, 220 checks). The tenth build — eight bars
+per side, the shrink gesture, the step view following the bar that is playing — is confirmed on
+the unit (hardware test below). Like the other patches it is built from your own copy of Roland's
+v1.61 file.
 
 ## Use
 
@@ -513,7 +512,7 @@ writes a side length, a bar or the pattern:
   free) and 1836/1838 in the second (2 free). The same build adds `A/B + CLEAR + pad n`, which sets
   one side to exactly *n* bars: plain `A + pad n` only grows a side, so a phrase could not be
   shortened without `A+B + pad n` (which also touched the other side) or a reset. Emulation passes
-  (198 checks). Hardware check pending.
+  (198 checks); confirmed on the unit before the tenth build.
 - Tenth build (this one): **up to eight bars per side**. The bar index doubles to 128 bytes (16
   patterns x 8 bars), which the two regions cannot hold, so it lives in patch RAM at
   `0x60280A00`: the image moves the RTOS pool start from `0x60280988` to `0x60290988` (the
@@ -522,7 +521,18 @@ writes a side length, a bar or the pattern:
   `0x3DC000`-`0x3DFFFF` (now entries 32..159, so its bars are kept) and the log grew downwards to
   `0x3DB000`, with the scratch block at `0x3DA000`. 128 live entries in 160 slots keep
   compaction's free-slot invariant. Pads 1..8 select a bar; 9..16 keep their stock function, and
-  LAST STEP still wins. Emulation passes (220 checks). Hardware check pending.
+  LAST STEP still wins. Emulation passes (220 checks). Confirmed on the unit (hardware test
+  below).
+
+## Hardware test (2026-11-13): passed
+
+The tenth build was flashed to the unit and the checklist below behaved as described. The unit
+boots normally with its patterns and kits present (the RTOS pool start moved, as in
+`motion-poly`); the eight-bar row lights pads 1-8 with the head blinking, a side of eight bars
+plays eight bars and wraps on the ninth, `A + CLEAR + pad 5` shrinks to five bars and
+`A + CLEAR + pad 8` brings bars 6-8 back with their steps, the step view follows the bar that is
+playing, and nothing froze. The build is kept as `work/TR8_UPD_chain.BIN`.
+
 - Hardware checklist for this build:
   0. **Boot and freeze check (do this first):** after the update the unit must start normally
      with its patterns and kits present, save a pattern and take a USB backup (the memory pool is
