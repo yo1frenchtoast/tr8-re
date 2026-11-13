@@ -175,12 +175,75 @@ the group and notify (`FUN_60010148`), which leads to the save. `prm_storage_sub
 (`FUN_6000FD28`, `FUN_6000FE80`) copies whole areas between slots and to flash
 (`FUN_60010E92`; `storage\sf_bios.cpp` stores RAM ranges in 256-byte journaled pages).
 Ptn2 unnamed ids `0x127`, `0x128`, `0x12B`-`0x138` are read by no code and are 0 in all factory
-patterns; the poly patch uses `0x12B`-`0x135` (docs/POLY.md "Storage"). `FUN_600113B2`
-dumps the factory patterns as C text (`data_fact_ptn.inc`), a developer function.
+patterns; the poly patch uses `0x12B`-`0x135` (docs/POLY.md "Storage") and the chain patch index 17
+(id `0x138`, docs/CHAIN.md "Storage"). `FUN_600113B2` dumps the factory patterns as C text
+(`data_fact_ptn.inc`), a developer function.
 
 Low-level access: `FUN_6000F80E(ctx, area, n)` then `FUN_6000F844(ctx, id, &out)` reads a value by
 global id. Change handlers (`FUN_6000A15A`..`FUN_6000AFDC`) copy values into the pattern struct at
 `0x6012FA64`.
+
+### Slot copy, commit and pattern load
+
+Two different 12-byte contexts exist; mixing them silently copies nothing:
+
+- **Getter context** (reading): `FUN_6000F80E(ctx, area, slot)` fills
+  `{+0 pointer to the first value word, +4 area, +5 0x25, +8 first id}`; `FUN_6000F844(ctx, id,
+  &out)` then reads `ctx[0] + 4 * (id - ctx[8])`.
+- **Storage descriptor** (copying): `FUN_6000F3C2(ctx, area, slot)` fills
+  `{u8 area, pad, u32 slot, u8 0xFF, ...}` — an area/slot address, not a value pointer.
+
+`FUN_6000F3EC(ctx, area, src, 0)` copies area slot `src` into the descriptor's destination slot
+and notifies when the destination is slot 0. The pattern load `FUN_6001B842` is exactly
+`FUN_6000F3C2(ctx, 4, 0)` + `FUN_6000F3EC(ctx, 4, n+1, 0)` (area 4 slot `n+1` -> working copy).
+
+**The notification** (what a patch that writes slot 0 directly has to reproduce): after the copy,
+`FUN_6000F3EC` calls `FUN_60050F70` (no arguments; returns the dispatcher object `0x601264C8`)
+and then `FUN_60010148(dispatcher, event)`. `FUN_60010148` walks a circular list of observers
+(`{vtable, ..., next}`, next at +8) and calls `vtable[0](observer, event)`. The event is two
+bytes `{u8 slot, u8 area}`: `0` for the current slot of the area, `1` for another slot (the
+copy sites `0x6000F294`, `0x6000F380`, `0x6000F45A` and the setters' `0x6000F31C`, `0x6000F3BA`
+pass 0 and 1 respectively). `FUN_60050F70` may also flush an event queue first. This is how the
+screens learn that the working copy changed, and it is what makes a bar selected while the
+machine is stopped show up immediately. Do not send it from a payload hook: an early chain build
+sent `{0, 4}` from the press dispatch and the synchronous observer walk froze the unit. The chain
+patch sets the repaint bit `0x04` of `TR8_HMI_PANEL` instead.
+
+`FUN_6000FC78(_, area, slot, _)` is the **commit**: it copies area slot 0 into slot `slot` and
+writes the result to flash (disassembly `0x6000FC82`-`0x6000FCC2`: `FUN_6000F3C2`, `FUN_6000F3EC`,
+then `FUN_60010E92` store). The firmware calls it on a pattern change, so it is also the safe way
+for a patch to persist the pattern being left. Only this one touches flash; the copies above are
+RAM only.
+
+The chain patch redirects the area-4 half of that save (`0x6001B7F4`, inside `FUN_6001B7D8`)
+while the current pattern has a side sequence, and keeps the area-6 half stock: area 4 slot *n+1*
+keeps the pattern's own steps and the edited bar is appended to a 128-byte-entry log in the
+unused flash at `0x3DB000`-`0x3DFFFF` (five blocks of 32 entries, entry *i* at
+`0x3DB000 + i * 128`, scratch block at `0x3DA000`, newest entry per pattern/bar wins;
+[CHAIN.md](CHAIN.md) "Storage"). A pattern with no side sequence keeps the stock commit.
+That range is erased by any firmware update: the updater rewrites blocks over flash
+`0x30000`-`0x3DFFFF` (section 3), so the bars are lost on an update, while the two side lengths
+survive in the user area. The raw primitives used are `FUN_60003E54(off, len, src)` (program, chunks <=
+0x100, 4-byte words), `FUN_60003EA2(off, len, dst)` (read through the mapping at `off + 0x03000000`)
+and `FUN_60003EDA(off)` (erase 4 KB); each saves and restores the flash mapping itself.
+
+**They do not touch block protection, and that is a trap.** While the chip's status register
+protects the array, a program or an erase is silently dropped — no error, the data simply does not
+change. The stock store (`FUN_60010BB6`) brackets its erase/program loop with
+`FUN_600108AA` (`bl` at `0x60010BE0`) and `FUN_600108BA` (`bl` at `0x60010D14`):
+`FUN_600108AA` writes status register `0x00` (nothing protected) and switches to indirect mode,
+`FUN_600108BA` returns to memory-mapped mode and writes `0x3C` (protected again). One session
+covers many operations (the factory flash test at `0x60001EEA` opens it once and runs 16 programs).
+`FUN_60003E02` is the status write, `FUN_60003DB0` writes `0x3C`. A patch that programs flash
+outside a session — as the first bar-chain build did — saves nothing at all, and an emulated
+flash that accepts every write hides the failure.
+[CHAIN.md](CHAIN.md) "Storage" has the entry layout.
+
+Area 4 (Ptn) slot word order is the descriptor order: word 0 = `VARI` (id `0xC3`), 1 = `SCALE`
+(`0xC4`), 2 = `LAST_A` (`0xC5`), 3 = `LAST_B` (`0xC6`), then the 26 A/B mask pairs. A plain
+VARIATION A/B press changes `VARI` through the Ptn database object `0x6007ED24`:
+`FUN_600186FA(0x6007ED24, 0, 0 or 1, 0)` (index 0 = `VARI`), so writing slot 0 word 0 has the same
+effect as the button.
 
 HMI parameter databases (names at `0x6007EC0C`): System, Setup, Efx, Patch, Ptn, Patch2, Ptn2,
 Testmode, TMP. Each has a getter `get(db, index, default)` that maps a local index to a global id:
@@ -231,6 +294,37 @@ State struct at `0x6007E100`:
   +0x30 + 6i (instrument i steps), +0x72 + 6i (accents), +0xBA + 6i (flams). Instrument order
   BD SD LT MT HT RS HC CH OH CC RC. Read with `FUN_600528CC` / `FUN_600525D0` / `FUN_6005260A(obj, i)`:
   the mask of the current variation, 0 if muted [code].
+
+### Pattern restart and variation
+
+`FUN_600095F0` restarts the pattern: it resets the counters, loads the panel parameters into the
+pattern struct `0x6012FA64`, applies the variation, reads the last step and runs the player. It is
+called at sequencer start (`0x600091A2`, `0x600098E4`) and at **every pattern wrap**
+(`0x600098CA`, from `FUN_6000989C` when the counter passes +0x1C).
+
+Inside it, `FUN_6000E404` applies the variation: struct +0x0C is the panel setting `VARI`
+(0 = A, 1 = B, 2 = A+B, written by buttons `0x17`/`0x18`), and if it is 2 the effective
+variation (+0x10, read as `0x6012FA74`) is toggled, else `VARI` is stored. Then `FUN_6000E152`
+writes the step, accent and flam masks of that variation into the player object. The last step is
+read **after** this (`FUN_600525F8`), so the variation must be set before `FUN_600095F0` returns.
+
+The struct is filled from area 4 **slot 0** (the working copy) just before that, by
+`FUN_6000E0FE` (called at `0x6000960E`): `+0x0C` = id `0xC3` (`VARI`), `+0x14` = `0xC5`
+(`LAST_A`), `+0x18` = `0xC6` (`LAST_B`), `+0x1C` = `0xC4` (`SCALE`, passed through
+`FUN_6000E0E0`, which maps 0->8, 1->4, 2->6, **3->3**), then the 26 mask pairs. So a restart
+always reloads the working copy; a patch that wants other content must write the struct after
+`FUN_6000E0FE` and before the last-step read (this is what the chain patch does at `0x60009614`,
+filling it from the bar and side of this pass and leaving `FUN_6000E404` as the stock fallback for
+a side that has no sequence).
+
+`FUN_6000E4A6` (pass end, called from `0x60009964`) is gated by `FUN_6000E472` and only loads a
+*pending* pattern change, so it does not clobber content written by such a hook during playback.
+
+Button handler `FUN_6001961E` dispatches button id 0x00-0x0F to `0x600199F4`, which first tests
+LAST STEP (`0x1A`) and then sets the pattern length (`FUN_6001B8D6` at `0x60019A10`). The pad id
+is still in `r6` there, so a hook on the `bl FUN_60013168` at `0x600199F6` can read it. Button
+`0x17`/`0x18` with TR-REC held is already used by the firmware (`0x6001974C`, `0x60019798`, calls
+`FUN_6001B736` and rewrites +0x10), so it is not free for patches.
 
 ### Step trigger
 
@@ -364,6 +458,25 @@ handler is `FUN_6001961E(ctx, id)`:
 bitmap at `0x6014893C` (`0x60148924 + 0x18`), set by the type-5 event. The firmware uses it for
 button combinations; patches can use it the same way (the motion patch: TR-REC and CLEAR).
 
+### Press and release dispatch: the screen goes first
+
+A press (event type 5) goes to `FUN_600137DE`, which sets the held bit and then calls
+`FUN_60013B34(id)` (`bl` at `0x60013842`). That call offers the press to the **active screen**;
+the global button handler `FUN_6001961E` runs only if the screen declines it (`0x60013F74`, i.e.
+`FUN_60013F6A`). Releases (type 6) go to `FUN_6001377C`, which clears the held bit and calls
+`FUN_60013B56(id)` (`bl` at `0x600137D2`) with the same screen-first order (`0x60013F7E`).
+
+Consequences for patches:
+
+- A **bare step pad** press is taken by the screen (step edit, sound audition), so it never
+  reaches `FUN_6001961E`. LAST STEP + pad and the variation buttons are declined by the screen
+  and do reach it; that is why the stock LAST STEP gesture is implemented there.
+- A patch that must see **every** press (the bar chain, `docs/CHAIN.md`) has to replace the
+  `bl` at `0x60013842`, before the screen, and swallow the matching release at `0x600137D2` if
+  it takes the press.
+- The held bitmap is already set when the dispatch is called, so `FUN_60013168` inside such a
+  patch sees the pressing button itself as held. [unit: the first chain build's probe]
+
 ### Panel mode
 
 The mode chosen with the mode buttons is **Setup[0]** (object `0x60149F38`, global id `0x2A`),
@@ -401,29 +514,82 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   `FUN_60049F9C` (an `sprintf`, for example `" %c%2d"`) and call it. The factory test shows the
   4-letter control names with the same call (`FUN_6001A406`). The active screen overwrites the
   text on its next refresh. [code]
+- **The screen's repaint bits.** The screen object is `0x60149B8C` (not the Setup database object
+  `0x60149F38`; the two are `0x3AC` apart). It keeps a halfword of dirty bits at +0. The panel
+  dispatcher `FUN_60016C08(obj)` serves them one per pass and clears each: `0x01` the pad LEDs
+  (`FUN_60016BB8`), `0x02` `FUN_600169A4`, `0x04` `FUN_60016386` (the view-0 step pads), `0x08`
+  `FUN_60016026`, `0x10` `FUN_60015EFA`, `0x20` `FUN_60015C8C`, `0x40` the screen's own numeric
+  text (`FUN_60015986`); any bit still left ends with the whole word cleared.
+  The firmware's own "repaint pads and text" is `FUN_60051E20`: `ldr r0,[0x60051E2C]` =
+  `0x60149B8C`, `ldrh r1,[r0]; orr r1,#0x44; strh r1,[r0]; bx lr` — thumb `0x60051E21`. The panel
+  calls it at `0x60008CDA`, `0x60008D4C`, `0x60008DA4`, `0x60008DC8` and `0x60008E36`.
+  The tick `FUN_60016D00` counts down and tail-calls the dispatcher, and the setter
+  `FUN_60016D58(obj, value)` writes `value` at +8, sets `0x40` and lets the dispatcher draw it
+  (`str r1,[r0,#8]; ldrh; orr #0x40; strh; bx lr`). So a patch can show its own text and then set
+  `0x40` to have the screen paint its normal value again on the next tick; calling
+  `FUN_60051E20` sets both `0x04` and `0x40`. The chain patch sets `0x04` itself (a halfword OR
+  on `0x60149B8C`) to redraw the step view after it loads a bar into area 4 slot 0, and calls
+  `FUN_60051E20` when the variation button is released. [code]
+  **Never write `0x60149F38`:** it is the Setup parameter database (the `db` of
+  `FUN_6001B12E(db, idx, def)`), and ORing a repaint bit into its first byte corrupts the
+  database; the panel then reads through a bad pointer and the whole unit hangs (the chain
+  builds `8941d9e` and `bd5fcdc` froze that way). [unit]
+  Do not call the slot-0 notification `FUN_60010148` from inside the button dispatch either: the
+  chain build that did froze the unit when a bar was changed. [unit]
 - **LEDs:** `FUN_6001A7EC(id, a, b, c)` calls the fast-code function `0x01000536` with the LED
   object `0x601488D0`. Seen: `FUN_6001A7EC(0x2A, 1, 0, 0x10)`, instrument LEDs 0x1D-0x25. The
   argument meaning is not decoded. [hyp]
+- **Step/pad pads and the palette.** Pads (step LEDs) are ids `0x1D`+step (`0x1D`-`0x2C`). All
+  screens paint them through four small setters, and every one of them ends in
+  `bl FUN_6004BB4C`, a veneer to the fast-code LED function `0x01000537` called as
+  `(object 0x601488D0, led, a, b, c)`:
+  - `FUN_6001773A(led, a, b, c)` raw levels (`0x60017748`),
+  - `FUN_6001774E(led, colour)` palette lookup (`0x6001776C`),
+  - `FUN_60017E08(led, a, b)` a copy of the raw setter that always passes c = 0 (`0x60017E18`),
+  - `FUN_60017E1E(led, colour)` a copy of the palette setter (`0x60017E3A`).
+
+  Because the hook can sit in the setters, one function covers the sequencer, PTN SELECT, TR-REC
+  and every other view, and survives a pattern change (which switches screen and renderer). The
+  palette table is at `0x6006061C`, 12-byte entries `{u8 a; u32 b; u32 c}`, looked up by
+  `FUN_60015846(obj 0x6007EB08, colour, out)`. Resolved triples seen: `0` = `(1, 0, 2)` the play
+  position (the firmware blinks it), `1`/`2` = red/orange, `3` = `(1, 9, 6)` the yellow step
+  group, `4` = white, `0x2A` = `(1, 9, 2)` green (inside the pattern length in the LAST STEP
+  view), `0x2D` = `(0, 0, 2)` off. The normal step view `FUN_600162D2` does not use the palette:
+  it calls `FUN_6001773A(led, a, b, c)` with raw levels at `0x60016376`. The view-0 pad loop of
+  `FUN_60016386` uses `FUN_6001774E` (for example `0x60016506`). [code]
 
 ## 12. Code space for patches
 
-- **Developer dump cave** (used by the `motion`, `poly` and `motion-poly` patches): `FUN_6001114E` and `FUN_600113B2` are only
-  called from a developer branch of the USB backup (`0x60011E00`, `0x60011E04` in `FUN_60011DBE`).
-  With those two calls replaced by `nop.w`, `0x60011150`-`0x60011463` (788 bytes) and
-  `0x60011488`-`0x60011BB5` (1838 bytes) are free. The literal pool `0x60011464`-`0x60011483` is
-  still used and must stay. The motion patch uses 737 + 1568 bytes; `motion-poly` uses about
-  340 + 730 bytes, its zeroed data is in patch RAM (below).
-- **Grow the image (design, not tested on a unit).** Code appended at the end of the image
-  (`0x601309E0`) would be erased, because the bss zero-fill covers `0x601264EC`-`0x60280987`.
-  Instead:
-  1. extend the decompressed size so that the image reaches `0x60280988 + N` (the bytes between
-     `0x601309E0` and `0x60280988` are zeros and compress to about 170 KB with this LZSS; the
-     application flash area has about 1.7 MB free);
-  2. put the new code and data at `0x60280988` (above the bss, so it is not zeroed);
-  3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8` (`FUN_60010430`).
-     The other copy at `0x6012A2FC` is the startup stack top, not the pool (see the next item).
-  The boot loader decompresses any size into SDRAM; the updater only checks sizes and sums.
-  To be validated on a unit before use.
+- **Developer dump cave** (used by the `motion`, `poly` and `motion-poly` patches): `FUN_6001114E`
+  and `FUN_600113B2` are only called from a developer branch of the USB backup (`0x60011E00`,
+  `0x60011E04` in `FUN_60011DBE`). With those two calls replaced by `nop.w`,
+  `0x60011150`-`0x60011463` (788 bytes) and `0x60011488`-`0x60011BB5` (1838 bytes) are free. The
+  literal pool `0x60011464`-`0x60011483` is still used and must stay. The motion patch uses
+  737 + 1568 bytes; `motion-poly` uses about 340 + 730 bytes, its zeroed data is in patch RAM
+  (below). The bar chain used these regions in its earlier builds and no longer does.
+- **Grow the image (used by the bar chain since the module build).** Code appended at the end of
+  the image (`0x601309E0`) would be erased, because the bss zero-fill covers
+  `0x601264EC`-`0x60280987`. Instead:
+  1. extend the decompressed size so that the image reaches the new code. The bytes between
+     `0x601309E0` and the code are zeros and compress well: reaching `0x60282794` costs about
+     164 KB of compressed application (0xA5CF7 -> 0xCEDDD), and the module still ends at file
+     offset 0xFEE1D, far below `appB` at 0x280000. `tr8patch.py` and the web flasher extend the
+     application array themselves when a payload lies beyond the current end.
+  2. put the new code and data at `0x60281200` (above the bss, so it is not zeroed). Not
+     `0x60280988`: `motion-poly`'s patch RAM occupies `0x60280A00`-`0x60281183`, and the 64 KB
+     below the moved pool is that reservation. The chain's `.text` is
+     `0x60281200`-`0x60281E66` (3174 bytes) and its `.bss` (including the 2 KB playback cache)
+     runs to `0x60282794`; the patcher reserves 8 KB, `0x60281200`-`0x60283200`.
+  3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8`
+     (`FUN_60010430`) becomes `0x60290988`, the same move `motion-poly` makes. The other copy at
+     `0x6012A2FC` is the startup stack top, not the pool (see the next item). The bss zero-fill
+     has its own bounds, literals `0x601264EC` at `0x6000015C` and size `0x15A49C` at
+     `0x60000160` (startup code `bl 0x6000009E` at `0x60000078`), so moving the pool start does
+     **not** extend the zeroing over the new code.
+  The boot loader decompresses any size into SDRAM: `FUN_01000B3C` reads the decompressed size
+  from the header and `FUN_01000C76` is bounded only by `destination + size`, with no fixed cap.
+  The updater only checks sizes and sums. Emulation passes (249 chain checks and the three
+  combinations); a unit run is pending, and the first boot is the thing to watch.
 - **Patch RAM by moving the pool start (used by `motion-poly`).** The pool setup `FUN_60010430`
   (called once at boot from `0x60010482`, before the RTOS starts) reads its start from the
   literal at `0x600104A8` and its end (`0x62000000`) from `0x600104A4`. Changing the start to
@@ -433,7 +599,8 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   (`0x6012A2FC`, fast code `0x01004100`) is the startup stack top returned by RVCT
   `__user_initial_stackheap` (stack `0x60280788`-`0x60280988`), not the pool: leave it. This RAM
   is not zeroed at boot; `patches/combo/ram.c` zeroes it before calling the pool setup. Do not
-  move the pool end instead: a table at `0x6007638E` lists SDRAM blocks up to `0x62000000`.
+  move the pool end instead: a table at `0x6007638E` lists SDRAM blocks up to `0x62000000`. The
+  chain only uses the pool move to keep the pool off its image region; it needs no patch RAM.
 - **Other dead code:** not searched systematically. Candidates: developer and test functions
   reachable only from the boot modes above 3.
 
@@ -446,6 +613,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 4. What runs on the second processor (`appB`) and over which link?
 5. LED function arguments; display text lifetime and how to keep a message visible.
 6. Button ids above 0x2B (START/STOP, PATTERN, ...). LAST STEP is 0x1A (section 9).
-7. The "grow the image" method (section 12) on a real unit.
+7. The "grow the image" method (section 12) on a real unit: the bar chain uses it, the boot path
+   is emulation-tested only.
 8. MIDI: the receive path (`midi\task_midi_rx.cpp`) and whether external CCs take the same path
    as `FUN_60015906`.

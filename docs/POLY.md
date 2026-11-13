@@ -5,8 +5,8 @@ An instrument with length L plays its steps 1..L in a loop, independent of the p
 
 Status: **works on a real TR-8**: playback (hardware test 1), the panel gesture (hardware
 test 2), the step LEDs (hardware test 3) and the lengths saved with each pattern (hardware
-test 4). To get motion as well, use the `motion-poly` patch
-([COMBO.md](COMBO.md)).
+test 4). To get motion as well, use the `motion-poly` patch; for motion, the bar chain or both as
+well, use `poly-chain` or `motion-poly-chain` ([COMBO.md](COMBO.md), [CHAIN.md](CHAIN.md)).
 
 ## Use
 

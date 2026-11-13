@@ -113,12 +113,39 @@ Rules for payload code:
 
 The developer dump cave holds 788 + 1838 bytes. The motion patch alone uses most of it; the
 `motion-poly` patch moves all zeroed data to 64 KB of patch RAM taken from the RTOS pool
-([COMBO.md](COMBO.md)) and leaves about 1.5 KB of code space. Data that must survive power off
-can go in unused pattern parameters, as the poly patch does ([POLY.md](POLY.md) "Storage").
-A larger feature needs either a new free region (find dead code, replace its call sites with
-`nop.w`, keep its literal pools) or the "grow the image" method, which is designed but not yet
-tested ([FINDINGS.md](FINDINGS.md) section 12). Patches that use the same region or the same
-sites cannot be combined.
+([COMBO.md](COMBO.md)) and leaves about 1.5 KB of code space. A single patch can make the same
+move when its state does not fit: that is how the earlier eight-bar chain kept its 128-byte bar
+index.
+
+The **grow the image** method is now used by the chain and is the way to give a new feature its
+own space without taking the cave from the others ([FINDINGS.md](FINDINGS.md) section 12):
+
+1. Link the payload at `0x60281200`, above the firmware bss (`0x601264EC`-`0x60280987`, which the
+   startup code zeroes) and above `motion-poly`'s patch RAM (`0x60280A00`-`0x60281183`). The link
+   script is a single region, `patches/chain/link.ld`.
+2. List the region in the patch spec's `allowed` bounds. `tr8patch.py` and the web flasher extend
+   the application byte array with zeros when a payload lies beyond the current image end, then
+   recompress it with the larger decompressed size. The boot loader decompresses any size up to
+   its destination, so no loader change is needed.
+3. Move the RTOS pool start literal (`0x600104A8`, `0x60280988` -> `0x60290988`) so the pool
+   never covers the region. The existing startup zero-fill does not reach it.
+4. Keep `.bss` in the region: the image is reloaded from flash at every boot, so it arrives
+   zeroed. No `ram_init` hook is needed. A patch that needs RAM outside the image can still use
+   patch RAM ([COMBO.md](COMBO.md)).
+
+To combine such a patch with a cave patch, give each variant its own payload JSON that is the
+union of the parts (`tools/merge_payloads.py`) and make its site list the union of the parts'
+sites (`tools/tr8patch.py` `_merge_sites`; identical duplicates such as the pool literal are
+allowed, conflicting ones are an error). Rebuild the parts first: the merged file is generated
+from their payload JSONs.
+
+Data that must survive power off can go in unused pattern parameters, as the poly patch does
+([POLY.md](POLY.md) "Storage"). A feature that needs neither method can use a new free region
+(find dead code, replace its call sites with `nop.w`, keep its literal pools). Patches that use
+the same region or disagree about a site cannot be combined.
+
+The image-growth path passes in emulation but has not been on a unit yet; the first boot is the
+thing to watch ([CHAIN.md](CHAIN.md) hardware checklist).
 
 ## 3. Firmware API
 

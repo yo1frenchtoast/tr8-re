@@ -6,7 +6,7 @@ const FR = {
   "hero.title": "De nouvelles fonctions pour votre TR-8",
   "hero.lede": "Choisissez vos mods, déposez le fichier de mise à jour officiel de Roland, et récupérez un TR8_UPD.BIN modifié à installer avec la procédure de mise à jour habituelle. Tout se passe dans votre navigateur.",
   "mod.title": "Choisir les mods",
-  "mod.hint": "Cochez un mod ou les deux : les deux ensemble donnent un seul firmware qui contient les deux.",
+  "mod.hint": "Cochez un ou plusieurs mods : le fichier construit contient exactement ceux-là.",
   "file.title": "Charger la mise à jour officielle",
   "file.hint1": "Téléchargez",
   "file.hint2": "depuis",
@@ -86,7 +86,8 @@ function pickPatch() {
 
 function renderMods() {
   if (!manifest) return;
-  const box = $("mods"), sel = box.children.length ? checked() : features().map(([, p]) => p.provides[0]);
+  const box = $("mods"), sel = box.children.length ? checked()
+    : features().filter(([, p]) => p.status === "tested").map(([, p]) => p.provides[0]);
   box.replaceChildren();
   for (const [, p] of features()) {
     const card = $("mod-card").content.firstElementChild.cloneNode(true);

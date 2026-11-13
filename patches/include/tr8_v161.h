@@ -25,6 +25,19 @@
 #define TR8_SEQ_TICKS     (*(volatile uint32_t *)0x6007E130)  /* [code] ticks per half step   */
 #define TR8_SEQ_VARIATION (*(volatile uint32_t *)0x6012FA74)  /* [unit] 0 = A, other = B      */
 
+/* Player struct 0x6012FA64 (what FUN_600095F0 and FUN_6000E404 take):
+ *   +0x0c VARI: 0 = A, 1 = B, 2 = A+B (the panel setting)
+ *   +0x10 effective variation, i.e. TR8_SEQ_VARIATION
+ *   +0x14 / +0x18 LAST_A / LAST_B (FUN_600525F8 picks by the effective variation)
+ * FUN_600095F0 restarts the pattern: load the panel parameters, apply the variation, read the
+ * last step, run the player. It is called at sequencer start (0x600091A2, 0x600098E4) and at
+ * every pattern wrap (0x600098CA). */
+#define TR8_SEQ_VARI (*(volatile uint32_t *)0x6012FA70)        /* [code] panel VARI            */
+typedef void (*tr8_obj_fn)(void *obj);
+#define TR8_FN_VARIATION ((tr8_obj_fn)0x6000E405)              /* [code] FUN_6000E404: VARI -> effective, masks -> sound */
+#define TR8_FN_APPLY     ((tr8_obj_fn)0x6000E153)              /* [code] FUN_6000E152          */
+#define TR8_FN_RESTART   ((tr8_obj_fn)0x600095F1)              /* [code] FUN_600095F0          */
+
 /* Per-step function: called (usually twice) for every step from the clock tick.
  * Hook its call sites 0x60009862 and 0x60009808 to run code once per step. */
 typedef uint64_t (*tr8_step_fn)(void *p, int step);
@@ -78,12 +91,15 @@ typedef void (*tr8_ctrl_apply_fn)(int id, int value);
 
 /* ---------------------------------------------------------------- buttons */
 
-/* 1 while the button is held. Bitmap at 0x6014893C. */
+/* 1 while the button is held. FUN_60013168 returns exactly 0 or 1 (bit `id` of the bitmap at
+ * 0x6014893C), so a caller may use the result as a boolean or a side index. */
 typedef int (*tr8_held_fn)(unsigned id);
 #define TR8_BTN_HELD ((tr8_held_fn)0x60013169)                  /* [unit] FUN_60013168          */
 
 #define TR8_BTN_STEP(n)   ((n) - 1)   /* [code] step buttons 1..16 = ids 0x00..0x0F            */
 #define TR8_BTN_TR_REC    0x11        /* [unit]                                                */
+#define TR8_BTN_VARI_A    0x17        /* [code] writes the panel setting VARI (+0x0C)          */
+#define TR8_BTN_VARI_B    0x18        /* [code]                                                */
 #define TR8_BTN_CLEAR     0x1C        /* [unit]                                                */
 #define TR8_BTN_INST_FIRST 0x1D       /* [code] row buttons 0x1D..0x2B: AC RV EC SC, then 11 instruments */
 /* Button of instrument i (player order BD SD LT MT HT RS HC CH OH CC RC). The buttons are
@@ -96,11 +112,96 @@ typedef int (*tr8_held_fn)(unsigned id);
 typedef void (*tr8_set_last_fn)(void *obj, int pad);
 #define TR8_FN_SET_LAST ((tr8_set_last_fn)0x6001B8D7)            /* [code] FUN_6001B8D6          */
 
+/* Button press and release dispatch. The type 5 (press) event handler FUN_600137DE sets the
+ * held bit, then calls FUN_60013B34(id) (bl at 0x60013842): the active screen is offered the
+ * press first and the global button handler FUN_6001961E only runs if the screen declines it
+ * (that is why LAST STEP + pad reaches FUN_6001961E but a bare pad press does not). The type 6
+ * (release) handler FUN_6001377C calls FUN_60013B56(id) (bl at 0x600137D2) the same way.
+ * A patch that must see every press, before the screen, hooks these two calls. */
+typedef int (*tr8_btn_fn)(int id);
+#define TR8_FN_BTN_PRESS   ((tr8_btn_fn)0x60013B35)              /* [code] FUN_60013B34          */
+#define TR8_FN_BTN_RELEASE ((tr8_btn_fn)0x60013B57)              /* [code] FUN_60013B56          */
+
 /* ---------------------------------------------------------------- parameters */
+
+/* Parameter storage (FINDINGS section 6). Every area is a table of 32-bit values, one per
+ * global id, stored in "slots": slot 0 is the working copy that the panel edits and the
+ * sequencer plays, slot n+1 is pattern n. A slot context is 12 bytes:
+ *   +0  pointer to the first value word of that slot
+ *   +4  area byte (0..7)
+ *   +5  0x25, the type byte the getter/setter check
+ *   +8  first global id of the area
+ * Read and write a value word directly through the pointer; the getter/setter add range
+ * checks and change notifications on top. */
+typedef void (*tr8_pctx_fn)(void *ctx, int area, int slot);
+#define TR8_FN_PCTX ((tr8_pctx_fn)0x6000F80F)                   /* [code] FUN_6000F80E */
+#define TR8_AREA_SETUP   1      /* Setup: word n = Setup[n], global id 0x2A + n            */
+#define TR8_AREA_PATTERN 4      /* Ptn: word 0 VARI, 1 scale, 2 LAST_A, 3 LAST_B,          */
+                                /*      4..55 = 26 pairs (A mask, B mask) per step row     */
+#define TR8_AREA_PTN2    6      /* Ptn2: weak accent, flams, spare ids (POLY.md)           */
+#define TR8_SETUP_PATTERN 2     /* [code] Setup[2]: pattern that slot 0 belongs to         */
+#define TR8_SETUP_PENDING 3     /* [code] Setup[3]: pattern to load (-1 = none)            */
+#define TR8_SETUP_DISPLAY 0xF   /* [code] Setup[0xF]: pattern number shown by the panel    */
+
+/* Copy one slot of an area into another: FUN_6000F3C2 fills a 12-byte descriptor for the
+ * destination slot, then FUN_6000F3EC(ctx, area, src_slot, 0) copies (area, src_slot) into
+ * the destination and notifies when the destination is slot 0. This is how the firmware
+ * loads a pattern: it copies area 4 slot n+1 into slot 0 (FUN_6001B842). RAM only, no flash
+ * write. The descriptor is {byte area, pad, word slot, byte 0xFF, ...}: a *storage* address,
+ * not the getter context of TR8_FN_PCTX below (which holds a value pointer). */
+typedef void (*tr8_copy_ctx_fn)(void *ctx, int area, int dst_slot);
+typedef void (*tr8_copy_fn)(void *ctx, int area, int src_slot, int unused);
+#define TR8_FN_COPY_CTX ((tr8_copy_ctx_fn)0x6000F3C3)            /* [code] FUN_6000F3C2 */
+#define TR8_FN_COPY ((tr8_copy_fn)0x6000F3ED)                   /* [code] FUN_6000F3EC */
+
+/* The slot copy (FUN_6000F3C2, FUN_6000F3EC) and the observer notification (FUN_60050F70,
+ * FUN_60010148) are described in FINDINGS.md section 6. They are not offered here: the
+ * notification, sent from a payload hook, froze the unit. Use TR8_HMI_PANEL repaint bits. */
+
+/* Copy area slot 0 into `slot` and write that slot to the user flash. FUN_6001B7D8(_, n)
+ * does this for area 4 and area 6 with slot = n + 1 when the panel changes pattern. The
+ * first and last arguments are unused (the firmware passes a database object and 0). */
+typedef void (*tr8_commit_fn)(int unused, int area, int slot, int unused2);
+#define TR8_FN_COMMIT ((tr8_commit_fn)0x6000FC79)               /* [code] FUN_6000FC78 */
+
+/* FUN_6000E0E0(struct, scale) maps the pattern scale word (0..3) to the step grouping
+ * written to the player struct at +0x1C: 8, 4, 6, 3. */
+typedef void (*tr8_scale_fn)(void *obj, int scale);
+#define TR8_FN_SCALE ((tr8_scale_fn)0x6000E0E1)                 /* [code] FUN_6000E0E0 */
+
+/* Player struct 0x6012FA64 (the object that FUN_600095F0 fills and FUN_6000E152 applies):
+ *   +0x0C VARI, +0x10 effective variation, +0x14/+0x18 LAST_A/LAST_B, +0x1C scale,
+ *   +0x20..+0xAE the 26 A/B mask pairs that FUN_6000E080 writes and FUN_6000E152 reads.
+ * FUN_6000E0FE fills the scalars from area 4 slot 0; FUN_6000E4A6 loads the pattern named
+ * by +0x08 into slot 0 and fills everything. */
+#define TR8_PTN_STRUCT ((volatile uint8_t *)0x6012FA64)         /* [code] DAT_6000991C     */
+#define TR8_PTN_VARI   0x0C
+#define TR8_PTN_EFF    0x10
+#define TR8_PTN_LAST_A 0x14
+#define TR8_PTN_LAST_B 0x18
+#define TR8_PTN_SCALE  0x1C
 
 /* HMI parameter databases. All take the object pointer as first argument. */
 typedef int (*tr8_get_fn)(void *db, int idx, int def);
-#define TR8_HMI_SETUP ((void *)0x60149F38)                      /* [code] Setup database object */
+#define TR8_HMI_SETUP ((void *)0x60149F38)                      /* [code] Setup database object:
+                                                                   a handle, never a screen object */
+/* The panel's screen object. Its low halfword holds the repaint requests: the dispatcher
+   FUN_60016C08 serves 0x01..0x40 in order and clears each bit, so setting a bit asks the panel
+   task to repaint on its next pass (safe from inside a button handler). 0x04 repaints the view-0
+   step pads (FUN_60016386); 0x40 redraws the default numeric text (FUN_60015986).
+   This is NOT the Setup database above: the two objects are 0x3AC apart and writing the Setup
+   database's first byte corrupts the database and hangs the panel. The firmware's own "repaint
+   pads and text" helper FUN_60051E20 ORs 0x44 into this object. */
+#define TR8_HMI_PANEL ((volatile uint16_t *)0x60149B8C)          /* [code] DAT_60051E2C          */
+#define TR8_HMI_REPAINT_PADS 0x04                                /* [code] step pads, view 0     */
+/* FUN_60016386(obj): paints the view-0 step pads from area 4 slot 0. The dispatcher calls it at
+ * 0x60016C44 when bit 0x04 is set; a patch that hooks that call runs in the panel task, right
+ * before the paint. */
+typedef void (*tr8_paint_fn)(void *obj);
+#define TR8_FN_STEPVIEW ((tr8_paint_fn)0x60016387)              /* [code] FUN_60016386          */
+#define TR8_HMI_REPAINT 0x40                                    /* [code] default numeric text  */
+typedef void (*tr8_repaint_fn)(void);
+#define TR8_FN_REPAINT ((tr8_repaint_fn)0x60051E21)              /* [code] FUN_60051E20 (0x44)   */
 #define TR8_SETUP_GET ((tr8_get_fn)0x6001B12F)                  /* [code] Setup idx n = global 0x2A+n */
 #define TR8_SYSTEM_GET ((tr8_get_fn)0x6001B433)                 /* [code] FUN_6001B432          */
 #define TR8_PTN_GET   ((tr8_get_fn)0x6001B737)                  /* [code] FUN_6001B736          */
@@ -148,8 +249,17 @@ typedef void (*tr8_step_led_fn)(int led, unsigned colour);
 #define TR8_LED_STEP(n) (0x1D + (n))
 #define TR8_COL_PLAY  0x00   /* [unit] blinks while playing */
 #define TR8_COL_RED   0x01   /* [unit] red, POLY.md test 3 */
+#define TR8_COL_YELLOW 0x03  /* [unit] steps 9-12 group, the panel's yellow */
 #define TR8_COL_IN    0x2A   /* [unit] green */
 #define TR8_COL_OFF   0x2D
+
+/* Raw LED setter behind everything: both wrappers below end in "bl FUN_6004BB4C", a veneer to
+ * the fast-code function 0x01000537: FUN_6004BB4C(obj, led, a, b, c) with the LED object
+ * 0x601488D0. FUN_6001773A / FUN_60017E08 pass raw levels, FUN_6001774E / FUN_60017E1E look a
+ * palette colour up first. [code] */
+typedef void (*tr8_led_set_fn)(void *obj, int led, int a, int b, int c);
+#define TR8_FN_LED_SET ((tr8_led_set_fn)0x6004BB4D)              /* [code] FUN_6004BB4C veneer   */
+#define TR8_LED_OBJ    ((void *)0x601488D0)                      /* [code] LED object            */
 
 /* LED control, arguments not decoded: FUN_6001A7EC(id, a, b, c). */
 typedef void (*tr8_led_fn)(int id, int a, int b, int c);

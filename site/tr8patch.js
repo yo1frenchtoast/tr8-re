@@ -144,11 +144,18 @@ export function applyPatch(app, spec, log) {
       throw new PatchError(`payload ${r.section} outside the free regions`);
     if (spec.keep.some(([lo, hi]) => a < hi && lo < a + data.length))
       throw new PatchError(`payload ${r.section} overlaps a protected range`);
+    const end = a - BASE + data.length;
+    if (end > app.length) {                     // image region above the bss: grow the image
+      const grown = new Uint8Array(end);
+      grown.set(app);
+      app = grown;
+    }
     app.set(data, a - BASE);
     log?.(`  ${r.section.padEnd(6)} 0x${a.toString(16)}  ${data.length} bytes`);
   }
   for (const r of spec.ram || []) log?.(`  ${r.section.padEnd(6)} 0x${r.addr.toString(16)}  ${r.size} bytes (patch RAM)`);
   for (const s of spec.sites) log?.(`  site   0x${s.addr.toString(16)} -> ${s.repl.bytes ? "0x" + s.repl.bytes : s.repl}`);
+  return app;
 }
 
 export function pack(img, newApp, onProgress) {
@@ -174,7 +181,7 @@ export function pack(img, newApp, onProgress) {
 // Full build: check the input, patch, recompress, re-check the output.
 export async function build(img, manifest, names, { log, progress } = {}) {
   checkContainer(img);
-  const app = await loadApp(img, manifest);
+  let app = await loadApp(img, manifest);
   log?.("input: TR-8 v1.61 TR8_UPD.BIN, all checks OK");
   const groups = new Set();
   for (const name of names) {
@@ -183,7 +190,7 @@ export async function build(img, manifest, names, { log, progress } = {}) {
     if (groups.has(spec.group)) throw new PatchError("these patches use the same free memory and cannot be combined");
     groups.add(spec.group);
     log?.(`patch ${name}`);
-    applyPatch(app, spec, log);
+    app = applyPatch(app, spec, log);
   }
   log?.("compressing the application...");
   const out = pack(img, app, progress);

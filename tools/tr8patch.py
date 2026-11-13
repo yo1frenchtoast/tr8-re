@@ -5,7 +5,10 @@
   tr8patch.py TR8_UPD.BIN --check                  only verify that the input is supported
   tr8patch.py --list                               list the available patches
 
-Patches that use the same hook sites (all motion-* variants) cannot be combined.
+Each combination of features has its own NAME: motion, poly, chain, motion-poly, motion-chain,
+poly-chain and motion-poly-chain. The motion-* variants share hook sites and code space, so only
+one of them can be applied; the chain lives in the application image and combines with the cave
+patches. --list prints every name with its description.
 
 No Roland code is shipped here: the patcher reads the original file, checks it is exactly
 the supported version, rewrites a few instructions, adds the payload and rebuilds the
@@ -78,6 +81,51 @@ PATCHES["poly"] = {
     ],
 }
 
+# Bar chain (patches/chain/chain.c, docs/CHAIN.md).
+# Up to eight bars per pattern, each with its own A and B step set: A/B + pad 1..8 selects the bar
+# and grows that side's sequence, A+B + pad sets both lengths. The code, the 128-byte index and a
+# RAM cache of the bars live in the application image above the firmware bss (0x60281200): the
+# patcher grows the image to cover them and the RTOS pool start moves by 64 KB, the motion-poly
+# move. The developer-dump cave is left to motion/poly, so the chain combines with them.
+CHAIN_IMAGE = (0x60281200, 0x60283200)
+_chain_sites = [
+    (0x60009614, thumb_bl(0x60009614, 0x6000E404), "chain_var"),    # restart: variation of the pass
+    (0x600098CA, thumb_bl(0x600098CA, 0x600095F0), "chain_wrap"),   # pattern wrap: mark it as a wrap
+    (0x60016C44, thumb_bl(0x60016C44, 0x60016386), "chain_view"),  # panel paints the step pads
+    (0x60013842, thumb_bl(0x60013842, 0x60013B34), "chain_press"),  # button press: before the screen
+    (0x600137D2, thumb_bl(0x600137D2, 0x60013B56), "chain_release"),# matching release of that pad
+    (0x60017748, thumb_bl(0x60017748, 0x6004BB4C), "chain_led4"),  # raw pad setter
+    (0x6001776C, thumb_bl(0x6001776C, 0x6004BB4C), "chain_led4"),  # palette pad setter
+    (0x60017E18, thumb_bl(0x60017E18, 0x6004BB4C), "chain_led4"),  # raw pad setter (copy)
+    (0x60017E3A, thumb_bl(0x60017E3A, 0x6004BB4C), "chain_led4"),  # palette pad setter (copy)
+    (0x6001B7F4, thumb_bl(0x6001B7F4, 0x6000FC78), "chain_commit"), # pattern save: store the bar, not the slot
+    (0x600104A8, struct.pack("<I", 0x60280988), struct.pack("<I", 0x60290988)),  # RTOS pool +64 KB
+]
+PATCHES["chain"] = {
+    "doc": "Bar chain: A/B + pad 1..8 selects a bar and sets its side's length, A+B + pad both (docs/CHAIN.md)",
+    "payload": "patches/chain/payload.json",
+    "allowed": [CHAIN_IMAGE],
+    "keep": [],
+    "sites": _chain_sites,
+}
+
+# Hardware probe: the old cave build, display only (patches/chain/probe.c, docs/CHAIN.md). It
+# keeps the LAST STEP fallback dropped in the real build, to show what that branch sees. It uses
+# the developer-dump cave and no patch RAM, so it stays a standalone diagnostic.
+_probe_sites = [
+    (0x60011E00, thumb_bl(0x60011E00, 0x6001114E), "nop"),          # dev dump 1 (frees the cave)
+    (0x60011E04, thumb_bl(0x60011E04, 0x600113B2), "nop"),          # dev dump 2 (frees the cave)
+] + [s for s in _chain_sites if s[2] not in ("chain_view",)] + [
+    (0x600199F6, thumb_bl(0x600199F6, 0x60013168), "chain_pad"),
+]
+PATCHES["chain-probe"] = {
+    "doc": "Bar chain hardware probe: pads and modifiers on the display (no edits)",
+    "payload": "patches/chain/payload_probe.json",
+    "allowed": [(0x60011150, 0x60011464), (0x60011488, 0x60011BB6)],
+    "keep": [(0x60011464, 0x60011484)],
+    "sites": [s for s in _probe_sites if s[0] != 0x600104A8],
+}
+
 # Motion + poly together (patches/combo). Code in both developer-dump regions; tables in patch
 # RAM: the RTOS pool start moves from 0x60280988 to 0x60290988 (64 KB), zeroed by ram_init at boot.
 _motion_sites = [s for s in PATCHES["motion"]["sites"] if s[2] != "nop"]
@@ -92,6 +140,35 @@ PATCHES["motion-poly"] = {
         (0x600104A8, struct.pack("<I", 0x60280988), struct.pack("<I", 0x60290988)),  # RTOS pool start +64 KB
     ],
 }
+
+def _merge_sites(*lists):
+    """Union of hook lists; two lists may name the same site only with the same replacement."""
+    out = {}
+    for lst in lists:
+        for site in lst:
+            a, orig, repl = site
+            if a in out and (out[a][1], out[a][2]) != (orig, repl):
+                sys.exit(f"two patches disagree about site 0x{a:08x}")
+            out[a] = site
+    return [out[a] for a in sorted(out)]
+
+# Bar chain on the image region, combined with the cave patches. Each variant has its own payload
+# (chain regions + the other payloads) because the test and the web flasher read one file; the
+# sites are the union. `patches/chain/build.sh` regenerates the merged payloads.
+for _name, _payload, _others in (
+        ("motion-chain", "patches/chain/payload_motion.json", ["motion"]),
+        ("poly-chain", "patches/chain/payload_poly.json", ["poly"]),
+        ("motion-poly-chain", "patches/chain/payload_motion_poly.json", ["motion-poly"])):
+    PATCHES[_name] = {
+        "doc": "Bar chain + " + " + ".join("per-instrument length" if o == "poly" else
+                                           "motion recording" if o == "motion" else
+                                           "motion recording + per-instrument length" for o in _others)
+               + " together (docs/CHAIN.md, docs/COMBO.md)",
+        "payload": _payload,
+        "allowed": ([r for o in _others for r in PATCHES[o]["allowed"]] + [CHAIN_IMAGE]),
+        "keep": PATCHES[_others[0]]["keep"],
+        "sites": _merge_sites(*(PATCHES[o]["sites"] for o in _others), _chain_sites),
+    }
 
 def load_app(img):
     m = tr8fw.parse(img, dict(tr8fw.MODULES)["appA"])
@@ -130,10 +207,13 @@ def apply(app, spec):
         for lo, hi in spec["keep"]:
             if a < hi and lo < a + len(data):
                 sys.exit(f"payload section {r['section']} overlaps a protected range")
-        app[a - BASE:a - BASE + len(data)] = data
+        end = a - BASE + len(data)
+        if end > len(app):                      # image region above the bss: grow the image
+            app.extend(b"\0" * (end - len(app)))
+        app[a - BASE:end] = data
         print(f"  {r['section']:8s} 0x{a:08x} {len(data)} bytes")
     for r in pay.get("ram", []):
-        print(f"  {r['section']:8s} 0x{r['addr']:08x} {r['size']} bytes (patch RAM, zeroed at boot)")
+        print(f"  {r['section']:8s} 0x{r['addr']:08x} {r['size']} bytes (patch RAM, not in the image)")
     for addr, _, repl in spec["sites"]:
         print(f"  site     0x{addr:08x} -> {repl.hex() if isinstance(repl, bytes) else repl}")
     return app
