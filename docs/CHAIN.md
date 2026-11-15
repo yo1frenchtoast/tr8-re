@@ -822,7 +822,7 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   (2026-11-15, `motion-poly-chain`): the display follows the bars and comes back after the tempo.
 - Seventeenth build (this one): the display also shows the side's length: `A1-4` instead of
   `  A1` (a request after the unit test). The gesture confirmations keep `  A1`. Emulation: 325
-  chain checks. Hardware: not done yet.
+  chain checks. Hardware: passed (2026-11-15, `motion-poly-chain`): `A1-2 A2-2 B1-2 B2-2` in A+B.
 
 ## Hardware test (2026-11-13): the tenth build passed
 
