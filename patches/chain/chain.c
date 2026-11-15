@@ -727,11 +727,19 @@ void chain_view(void *obj)
          * left over from an earlier sequence and the working copy is the pattern (see sync). */
         if (TR8_SEQ_RUNNING && (clen(0) || clen(1)) &&
             (bar != (int)cur_bar || side != (int)cur_side)) {
+            volatile uint32_t *wc = area_slot(TR8_AREA_PATTERN, 0);
+            uint32_t vari;
+
             if (!store_save(cur_pat, cur_bar))  /* keep the bar being left, if it was edited */
                 show_fail();
             cur_bar = (uint8_t)bar;
             cur_side = (uint8_t)side;
+            /* Following playback is not a side selection: the panel's VARI (word 0, which the
+             * firmware copies to the player at every restart) stays as it is, so A+B keeps
+             * playing both sides. slot_load writes the side there; put VARI back. */
+            vari = wc[0];
             slot_load(cur_pat, bar, side);
+            wc[0] = vari;
         }
     }
     TR8_FN_STEPVIEW(obj);

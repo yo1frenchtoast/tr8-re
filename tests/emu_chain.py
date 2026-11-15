@@ -945,8 +945,10 @@ expect("follow: ... and bar 1 is back in the working copy", slot_rows(0), slot_r
 # The side is part of the working copy: the same bar on the other side has to be reloaded.
 uc.mem_write(S["chain_side"], b"\1")
 uc.mem_write(S["chain_row"] + 1, b"\1")
+vari0 = r32(slot_addr(0))
 expect("follow: the same bar on the B side is reloaded", panel()[1:], (0, 0))
-expect("follow: ... and the working copy carries the B variation", r32(slot_addr(0)), 1)
+expect("follow: ... and the panel's VARI is kept (following is not a side selection)",
+       r32(slot_addr(0)), vari0)
 
 # Stopped, the panel owns the working copy: nothing follows the row head.
 w32(RUN, 0)
@@ -954,7 +956,7 @@ uc.mem_write(S["chain_side"], b"\0")
 uc.mem_write(S["chain_row"], bytes([2]))
 expect("follow: stopped, the panel keeps the bar the user selected", panel(),
        (SETVIEW, 0, 0))
-expect("follow: ... nothing was loaded", r32(slot_addr(0)), 1)
+expect("follow: ... nothing was loaded", r32(slot_addr(0)), vari0)
 
 # A pattern change while playing: the panel has already put the new pattern into area 4 slot 0, so
 # a follow running with the old pattern number would store that new content as a bar of the old
@@ -1634,5 +1636,29 @@ w32(slot_addr(0) + 4 * 4, 0x1234)
 expect("expand: one bar of 16 steps -> two bars", (texts(tap_last(A)), counts()), (["A b2"], (2, 0)))
 expect("expand: playback starts on bar 1", start(vari=0), (0, 0, 0))
 expect("expand: playback plays the new bar 2 on the next wrap", (wrap()[2], wrap()[2]), (1, 0))
+
+# --- A+B keeps playing both sides while the step view follows the bar (unit bug, 2026-11-15) ----
+# The firmware refills the panel VARI (+0x0C) from word 0 of the working copy at every restart
+# (FUN_6000E0FE, just before chain_var). chain_view loads the playing bar into the working copy;
+# it must not write the side into that word, or A+B becomes B after the first B bar and B loops.
+fresh(counts=(2, 2))
+for k in range(2):
+    put_entry(k, 10 + k, 0, k, 0x0A00 + k, 0x0B00 + k)
+cold_boot()
+sync_panel()
+w32(slot_addr(0), 2)                 # the panel's A+B (B pressed while A is held)
+w32(RUN, 1)
+order = []
+w32(VARI, r32(slot_addr(0)))
+r = start(vari=2)
+for _ in range(6):
+    order.append("AB"[r[1]] + str(r[2] + 1))
+    panel()                          # the panel follows the bar that plays
+    w32(VARI, r32(slot_addr(0)))     # FUN_6000E0FE: the next restart reads VARI from slot 0
+    r = wrap()
+w32(RUN, 0)
+expect("A+B: the step view follows each bar and A+B keeps going",
+       order, ["A1", "A2", "B1", "B2", "A1", "A2"])
+expect("A+B: ... the working copy's VARI is still A+B", r32(slot_addr(0)), 2)
 
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)

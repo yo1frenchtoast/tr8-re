@@ -264,6 +264,11 @@ Two kinds of tests are needed:
 - `VARI` (the panel variation) is 0 = A, 1 = B, **2 = A+B**. Do not reduce it with `& 1`, and do
   not write a 0/1 side back into it. Keep the panel setting and the side being played as two
   different values (`TR8_SEQ_VARI` and `TR8_SEQ_VARIATION` are two different words).
+  Word 0 of the working copy (area 4 slot 0) is the same `VARI`: the firmware copies it to
+  `TR8_SEQ_VARI` at every restart (`FUN_6000E0FE`). A load into the working copy that is not a
+  side selection by the user (following playback, an expand) must put the old word 0 back, or A+B
+  turns into one side at the next pass. Seen on the unit (chain, 2026-11-15). Test: play A+B
+  through both sides with the panel loading each bar, and check that word 0 is still 2.
 - When A+B plays two sequences one after the other, a bar index inside one side is not a position
   in the A+B sequence. Convert between them in one function, and test a start and a jump on the
   B side with VARI = 2.
