@@ -139,19 +139,28 @@ fast code (`0x01000300`-`0x0100A673`, disassembled as `thumbv7m`) and `appB`.
 **Memory.** Code and internal RAM at `0x01000000`, serial flash mapped at `0x03000000` (section
 1), tightly coupled RAM at `0x20000000`, SDRAM (32 MB) at `0x60000000`. [code]
 
-**Vendor peripherals** (4 KB blocks that the code addresses) [code]:
+**Vendor peripherals.** A constant counts as a register address only when the next instructions
+use it as the base of a load or a store. Many constants in `0x40000000`-`0x401FFFFF` are the
+high words of `double` values (`0x40100000` = 4.0, `0x40140000` = 5.0, `0x40160000` = 5.5): the
+blocks `0x4014xxxx`-`0x4017xxxx` that the first scan found are such constants, not peripherals.
 
-| Blocks | Used by |
-|---|---|
-| `0x40028000`, `0x40029000` (`0x40029800`, `0x40029C00`), `0x4002D000` | boot loader, fast code, `appB` |
-| `0x4002C000` | boot loader, fast code |
-| `0x40003000`, `0x40007000`, `0x40008000`, `0x40044000` | boot loader |
-| `0x40010000`, `0x40012000`, `0x40025000`, `0x40030000`, `0x40040000` | fast code (`0x40040000`: `appB` too) |
-| `0x40100000`, `0x40101000` | fast code, `appB` |
-| `0x4014C000`/`0x4016C000`, `0x4014E000`/`0x4016E000`, `0x40150000`/`0x40170000` | fast code: one peripheral in two instances, `0x20000` apart |
+| Block | Role | Evidence | Tag |
+|---|---|---|---|
+| `0x40005000` | **Serial flash controller** (the 4 MB flash) | `FUN_60003D74`-`FUN_60003F8A` write the SPI opcode to +0x18: `0x01` (write status, data `0x3C`), `0x02` (page program), `0x20` (sector erase). +0x1C address, +0x10 length (`0x60000000` + byte count), +0x30 transmit FIFO, +0x08 FIFO level, +0x00 bits 29-30 mode (0 = memory-mapped read, 3 = command). | [code] |
+| `0x40029800` | **MIDI UART** | `midi_drv.cpp` (`FUN_60006438`) sets channel 6 to 31250 baud. The receive interrupt (fast code, load address `0x6012F074`) reads the status at `0x40029804` (error bits `0x3800`), the byte at `0x40029808` and the FIFO level at `0x40029818`. | [code] |
+| `0x40029C00` | Second serial channel, same layout as `0x40029800` | The boot loader initialises both with the same code (`0x01001AC6`, `0x01001B5C`). Use not known. | [code] |
+| `0x4002C000` | **ADC** (knobs and faders) | `ad_drv2.c`: `FUN_60001C00` configures it. The interrupt (load address `0x6012B260`) reads 8 results at +0x10-+0x2C for one of 8 multiplexer ports (`ADDRV_CONFIG_NUMOF_MPX`). `FUN_6012B34C` returns the median of 4 samples. | [code] |
+| `0x40025000` | **Timer**, channels 0x20 apart | `ad_drv2.c` (`FUN_60001AD4`): period `0x2616` at +0x00, control `0x46` at +0x08. The same values at +0x20/+0x28 (`FUN_60001DC0`). It paces the ADC scan [hyp]. | [code] |
+| `0x40007000`, `0x40008000`, `0x40044000` | **USB host** and its DMA | `usbh_dma_drv.cpp` (`FUN_6000075E`, `FUN_600007E6`) writes `0x40008608` and `0x40008C00`. The boot loader sends `appB` to the second processor (`FUN_01002374`) through these three blocks. Which block is the controller, the DMA or the PHY is not known. | [code] |
+| `0x40003000` | DMA controller [hyp] | `FUN_600002C0` waits for a free channel, writes +0x94 and +0x9C (addresses [hyp]), then sets bits 30-31 of +0xA0 (enable [hyp]). | [hyp] |
+| `0x4002D000` | Memory controller (SDRAM) [hyp] | The boot loader writes +0x00-+0x30 early (`0x010004E0`), before it decompresses to SDRAM. `FUN_6001029A` writes the same offsets. | [hyp] |
+| `0x40100000`, `0x40101000` | DSP interface [hyp] | Only fast code uses them, from the `esc2_dsp_drv.cpp` paths (`FUN_6012C9EC` and others). `appB` uses them too. | [hyp] |
+| `0x40010000` | System control (clocks, reset) [hyp] | About 30 small read-modify-write functions, from `task_sys.cpp`, `task_dsp.cpp` and the drivers. | [hyp] |
+| `0x40001000`, `0x40002000`, `0x40012000`, `0x40017000`, `0x40023000`, `0x40030000`, `0x40040000` | Not known | Few accesses each. `0x40012000`: `esc2_dsp_drv.cpp` path. `0x40040000`: also used by `appB`. | |
 
-The function of each block is not known. The block pair is perhaps two audio or serial ports
-[hyp].
+The second processor runs a USB **device** driver (`cmni\cmni_usb_dev_drv.cpp` in `appB`). With the
+USB host on the main processor, the link between the two ESC2 is probably USB [hyp]. Which chip
+drives the USB port at the back of the TR-8 is not known.
 
 **Identity.** The map matches no common microcontroller family that we compared it with (STM32,
 NXP LPC17xx/18xx, Microchip SAM3/SAM4, Fujitsu FM3, Toshiba TMPM). For example, an STM32 has its
@@ -743,9 +752,9 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 2. Where the step callback (+0x14) is installed.
 3. Is the 16-step limit only in the application, or also in the sound engine (fast code, second
    processor)?
-4. What runs on the second processor (`appB`) and over which link? It is probably the same
-   It is the same chip as the main processor, a Roland ESC2 (section 4, "Processor and
-   peripherals"). [unit]
+4. What runs on the second processor (`appB`) and over which link? It is the same chip as the
+   main processor, a Roland ESC2 [unit]. The link is probably USB: host on the main processor,
+   device on the second [hyp] (section 4, "Processor and peripherals").
 9. ~~Which chip is the main processor?~~ Answered: two Roland ESC2 chips, read on the board
    (section 4, "Processor and peripherals"). [unit]
 5. LED function arguments; display text lifetime and how to keep a message visible.

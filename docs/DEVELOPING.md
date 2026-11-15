@@ -250,10 +250,13 @@ the gaps between the tests and a real TR-8, from the easiest to close to the har
    vendor timer, not from SysTick, so that timer needs a model too.
 3. **No peripherals.** The processor is a Roland custom chip (ESC2) with no public datasheet
    ([FINDINGS.md](FINDINGS.md), "Processor and peripherals"). Each model (timers, ADC, buttons,
-   display, LEDs, MIDI UART, SPI flash) must come from its driver in the fast code. An SPI flash
-   model can cut the power at each step, which tests the contract of section 7.
-4. **No second processor and no sound.** What runs on `appB` and over which link is not known.
-   At best, a model can record the commands that the main processor sends to it.
+   display, LEDs, MIDI UART, SPI flash) must come from its driver in the fast code. The table
+   of blocks in FINDINGS.md gives the known registers: the serial flash controller and the MIDI
+   UART are the best known. An SPI flash model can cut the power at each step, which tests the
+   contract of section 7.
+4. **No second processor and no sound.** What runs on `appB` is not known. The link is
+   probably USB (host on the main processor) [hyp]. At best, a model can record the commands
+   that the main processor sends to it.
 5. **No real timing.** No emulator here is cycle-accurate, so race windows differ from the unit.
    Preemption injected at random points finds more race bugs than exact timing does.
 6. **No reference traces.** To show that an emulator behaves like the unit, compare it with
