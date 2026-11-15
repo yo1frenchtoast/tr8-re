@@ -51,7 +51,8 @@ Compression: Okumura LZSS. 4096-byte ring starting zeroed, initial position `0xF
 LSB first, flag bit 1 = literal; a match is 2 bytes: 12-bit absolute ring position and 4-bit
 length + 3. `tools/tr8fw.py` decompresses and recompresses it (round trip verified).
 
-CPU: ARMv7-M class (Thumb-2 only, `msr basepri`).
+CPU: ARMv7-M class (Thumb-2 only, `msr basepri`). Section 4, "Processor and peripherals",
+gives the details.
 
 ## 2. Boot loader
 
@@ -114,6 +115,63 @@ Scatter table at `0x60000000` (copied and zeroed by the startup code):
   memory block at `0x01000300` from image offset `0x1264EC` (length `0xA374`).
 - Reference: the decompressed application has SHA-256
   `3685edab8bbeaef8752df9ef08a73a9fd2a2e69ba8210016132f6d141f6b452e`.
+
+### Processor and peripherals
+
+Method: list every constant that the code loads with `ldr rX, [pc, #n]` and that is in
+`0x40000000`-`0x5FFFFFFF` or at `0xE0000000` and above. This was done for the boot loader, the
+fast code (`0x01000300`-`0x0100A673`, disassembled as `thumbv7m`) and `appB`.
+
+**Core.** ARMv7-M with the standard System Control Space. [code]
+
+- The code uses the NVIC priorities `0xE000E400`, AIRCR `0xE000ED0C`, VTOR `0xE000ED08`, SHPR
+  `0xE000ED18`, ICSR `0xE000ED04`, CFSR `0xE000ED28`, DEMCR `0xE000EDFC`, STIR `0xE000EF00` and
+  the ITM `0xE0000E80`.
+- It uses the bit-band alias (`0x42xxxxxx`), so the core is a Cortex-M3 or M4.
+- No FPU: no CPACR access and no VFP instruction. Six M4-only instructions (`smlad`, `smmla`,
+  `pkhtb`...) decode in the application, but they are in areas that look like data tables. So
+  nothing shows an M4, and the code is consistent with a Cortex-M3. [code]
+- **No SysTick access** in the boot loader, the application or `appB`. The only constant in
+  that range, `0xE000E01B`, is the base of a byte write at `+0x400`, which is an NVIC priority
+  (`0xE000E41B`, `0x60001DFA`). The RTOS tick comes from a vendor timer. [code]
+- The application also uses the MPU (`0xE000ED98`, `FUN_60010574`). [code]
+
+**Memory.** Code and internal RAM at `0x01000000`, serial flash mapped at `0x03000000` (section
+1), tightly coupled RAM at `0x20000000`, SDRAM (32 MB) at `0x60000000`. [code]
+
+**Vendor peripherals** (4 KB blocks that the code addresses) [code]:
+
+| Blocks | Used by |
+|---|---|
+| `0x40028000`, `0x40029000` (`0x40029800`, `0x40029C00`), `0x4002D000` | boot loader, fast code, `appB` |
+| `0x4002C000` | boot loader, fast code |
+| `0x40003000`, `0x40007000`, `0x40008000`, `0x40044000` | boot loader |
+| `0x40010000`, `0x40012000`, `0x40025000`, `0x40030000`, `0x40040000` | fast code (`0x40040000`: `appB` too) |
+| `0x40100000`, `0x40101000` | fast code, `appB` |
+| `0x4014C000`/`0x4016C000`, `0x4014E000`/`0x4016E000`, `0x40150000`/`0x40170000` | fast code: one peripheral in two instances, `0x20000` apart |
+
+The function of each block is not known. The block pair is perhaps two audio or serial ports
+[hyp].
+
+**Identity.** The map matches no common microcontroller family that we compared it with (STM32,
+NXP LPC17xx/18xx, Microchip SAM3/SAM4, Fujitsu FM3, Toshiba TMPM). For example, an STM32 has its
+flash at `0x08000000` and its RCC at `0x40023800`. [hyp]
+
+The second processor (`appB`, section 1) is the same kind of chip [code]:
+
+- its startup code is the same ARMv7-M sequence (`msr basepri`);
+- it also runs at `0x60000000`;
+- it uses the same framework (`task_frame`, `esc2_dsp_drv`, its own USB device driver
+  `cmni_usb_dev_drv`);
+- it uses the same peripheral blocks (`0x40028000`, `0x4002D000`, `0x40040000`, `0x40100000`).
+
+With the names `ESC91.000` (boot loader) and `BSSESC2` (`appB`), the TR-8 probably has **two
+Roland custom SoCs ("ESC2") with a Cortex-M3 core** [hyp]. No public datasheet or teardown
+confirms it. The markings of the chips on the board would answer the question.
+
+Consequence for emulation: the core and the NVIC are standard, but no emulator has models for
+these peripherals. Each model must come from its driver in the fast code
+([DEVELOPING.md](DEVELOPING.md), section 4, "Limits of the emulation").
 
 ## 5. Application structure
 
@@ -663,7 +721,10 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 2. Where the step callback (+0x14) is installed.
 3. Is the 16-step limit only in the application, or also in the sound engine (fast code, second
    processor)?
-4. What runs on the second processor (`appB`) and over which link?
+4. What runs on the second processor (`appB`) and over which link? It is probably the same
+   chip as the main processor (section 4, "Processor and peripherals"). [hyp]
+9. Which chip is the main processor? Read the markings on the board (section 4, "Processor and
+   peripherals").
 5. LED function arguments; display text lifetime and how to keep a message visible.
 6. Button ids above 0x2B (START/STOP, PATTERN, ...). LAST STEP is 0x1A (section 9).
 7. ~~The "grow the image" method (section 12) on a real unit.~~ Answered: the bar chain's

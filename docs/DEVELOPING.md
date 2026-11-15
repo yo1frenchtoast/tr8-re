@@ -236,6 +236,33 @@ Two kinds of tests are needed:
 
 `tests/run_all.sh TR8_UPD.BIN` builds every patch variant and runs all tests.
 
+### Limits of the emulation
+
+The tests emulate the CPU only. A passing test does not prove that the unit works. These are
+the gaps between the tests and a real TR-8, from the easiest to close to the hardest:
+
+1. **No boot.** The test writes the RAM state by hand. A full boot needs the startup code, the
+   fast-code copy to `0x01000300`, internal RAM, TCM and SDRAM ([FINDINGS.md](FINDINGS.md),
+   section 4).
+2. **No RTOS.** Firmware calls are stubs, so there is no task switch and no preemption. To run
+   the real kernel (it is in the fast code), the emulator needs the Cortex-M exception model
+   (NVIC, SVC, PendSV). Unicorn does not have it; Renode and QEMU do. The tick comes from a
+   vendor timer, not from SysTick, so that timer needs a model too.
+3. **No peripherals.** The processor is probably a Roland custom SoC with no public datasheet
+   ([FINDINGS.md](FINDINGS.md), "Processor and peripherals"). Each model (timers, ADC, buttons,
+   display, LEDs, MIDI UART, SPI flash) must come from its driver in the fast code. An SPI flash
+   model can cut the power at each step, which tests the contract of section 7.
+4. **No second processor and no sound.** What runs on `appB` and over which link is not known.
+   At best, a model can record the commands that the main processor sends to it.
+5. **No real timing.** No emulator here is cycle-accurate, so race windows differ from the unit.
+   Preemption injected at random points finds more race bugs than exact timing does.
+6. **No reference traces.** To show that an emulator behaves like the unit, compare it with
+   traces from the unit: MIDI out, or the SPI flash bus on a logic analyser.
+
+The tests on the unit (next section) cover these gaps. A test bench driven by MIDI (CCs, notes,
+Start/Stop in; MIDI out and audio captured) can make them repeatable. Flashing stays manual,
+because the updater needs step [1] held at power-on.
+
 ### On the unit
 
 1. Flash ([UPDATE.md](UPDATE.md)), check that the unit starts and plays normally.
