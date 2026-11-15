@@ -59,11 +59,11 @@
  *
  * Tasks (docs/DEVELOPING.md section 3): chain_var and chain_wrap run in the sequencer task (and
  * in the panel task during TAP + START/STOP, docs/CHAIN.md "Open points" 1);
- * chain_view, chain_press, chain_edit, chain_led4, chain_commit and the log/store code run in
- * the panel task. The sequencer never touches the flash: it reads a RAM copy of the bars that
+ * chain_view, chain_press, chain_release (with the expand and copy A->B it runs), chain_edit,
+ * chain_led4, chain_commit and the log/store code run in the panel task. The sequencer never touches the flash: it reads a RAM copy of the bars that
  * the panel task fills (bar_ram). State has one writer: the sequencer writes chain_pos,
  * chain_side, chain_row and chain_wrapping; the panel writes cur_pat, cur_bar, cur_side, wc_bar,
- * chain_sel, chain_jump, chain_swallow and the log index.
+ * chain_sel, chain_jump, chain_swallow, expand_armed and the log index.
  */
 #include "tr8_v161.h"
 
@@ -368,12 +368,12 @@ static int store_gc(void)
 /* Append the working copy (area 4 slot 0) as bar `bar` of pattern `pat`. 1 = the entry is in
  * the flash (it was read back) or the bar was not edited since it was loaded, 0 = the chip did
  * not take it. */
+static int bar_put(int pat, int bar, const volatile uint32_t *s);
+
 static int store_save(int pat, int bar)
 {
     volatile uint32_t *s = area_slot(TR8_AREA_PATTERN, 0);
     uint32_t h;
-    int i, ok;
-    uint32_t idx;
 
     if (!inited)
         store_init();
@@ -382,11 +382,29 @@ static int store_save(int pat, int bar)
     h = wchash(s);
     if (h == clean)
         return 1;                          /* nobody touched the bar: it is already stored */
+    if (!bar_put(pat, bar, s))
+        return 0;                          /* the clean hash is untouched: the next save retries */
+    clean = h;
+    return 1;
+}
+
+/* Append `s` (56 words in the layout of a pattern slot) as bar `bar` of pattern `pat`, which is
+ * cur_pat (the cache holds cur_pat's bars). 1 = the entry is in the flash (read back), 0 = not:
+ * the index and the cache are then untouched (DEVELOPING.md section 7, rule 2). */
+static int bar_put(int pat, int bar, const volatile uint32_t *s)
+{
+    int i, ok;
+    uint32_t idx;
+
+    if (!inited)
+        store_init();
+    if (flash_bad)
+        return 0;
     idx = wr_i;
     F_READ(ent_off((int)idx), 4, ebuf);
     if (ebuf[0] != 0xFFFFFFFFu) {          /* block still in use: reclaim one */
         if (!store_gc())
-            return 0;                      /* index and clean hash untouched */
+            return 0;                      /* index untouched */
         idx = wr_i;
     }
     ebuf[0] = EMAGIC;
@@ -403,7 +421,6 @@ static int store_save(int pat, int bar)
     wr_i = (uint8_t)((idx + 1) % NENT);
     if (ok) {
         tab[pat * NBARS + bar] = (uint8_t)(idx + 1);
-        clean = h;
         cache_put(bar, ebuf);              /* the bar the sequencer will play next */
     }
     return ok;
@@ -826,11 +843,219 @@ __attribute__((noinline)) static void chain_edit(int pad, int a, int b)
         show_fail();
 }
 
+/* ---------------------------------------------------------------- expand and copy A->B */
+
+/* A/B + a tap of LAST STEP doubles that side, like "copy and append" on other machines: a side
+ * of one bar shorter than 16 steps doubles its steps (4 -> 8 -> 16, 12 -> 16 copies steps 1-4),
+ * then the bars double (1 -> 2 -> 4 -> 8, 3 -> 6, 5 -> 8 copies bars 1-3). A + B + a tap of
+ * LAST STEP copies side A to side B. The tap is armed when LAST STEP goes down with A and/or B
+ * held and runs when it comes up; any other press in between cancels it, so A/B + LAST STEP +
+ * pad keeps its stock (last step) and poly (instrument length) meaning. Panel task only. */
+static uint8_t expand_armed;     /* panel: 1 = A, 2 = B, 3 = A + B held at the LAST STEP press */
+static uint32_t sbuf[56], dbuf[56];
+
+#define TXT_FULL 0x4C4C5546u     /* "FULL" */
+
+/* Bar `bar` of cur_pat in the layout of a pattern slot: the working copy if the bar is in it (it
+ * may hold edits that are not stored yet), else its log entry, else the pattern slot. */
+static void bar_src(int bar, uint32_t *o)
+{
+    const volatile uint32_t *src = area_slot(TR8_AREA_PATTERN, cur_pat + 1);
+    int k = cur_pat * NBARS + bar;
+    uint8_t t = tab[k];
+    int i;
+
+    if (bar == (int)wc_bar) {
+        src = area_slot(TR8_AREA_PATTERN, 0);
+    } else if (t) {
+        F_READ(ent_off(t - 1), ENTB, ebuf);
+        if (eok(ebuf, k)) {
+            for (i = 0; i < ROWS; i++) {
+                o[4 + 2 * i] = ebuf[4 + i] & 0xFFFF;
+                o[5 + 2 * i] = ebuf[4 + i] >> 16;
+            }
+            o[0] = 0;
+            o[1] = ebuf[30] & 3;
+            o[2] = ebuf[2] & 0xFF;
+            o[3] = (ebuf[2] >> 8) & 0xFF;
+            return;
+        }
+    }
+    for (i = 0; i < 56; i++)
+        o[i] = src[i];
+}
+
+/* Store `o` as bar `bar` of cur_pat. A bar with no entry whose content is the pattern's own
+ * already plays that content: nothing to write. 1 = stored or nothing to do. */
+static int bar_store(int bar, const uint32_t *o)
+{
+    const volatile uint32_t *def = area_slot(TR8_AREA_PATTERN, cur_pat + 1);
+    int i;
+
+    if (!tab[cur_pat * NBARS + bar]) {
+        for (i = 1; i < 56 && o[i] == def[i]; i++)
+            ;
+        if (i == 56)
+            return 1;
+    }
+    return bar_put(cur_pat, bar, o);
+}
+
+/* The working copy is bar `bar` of cur_pat again after bars lo..hi-1 were rewritten in the log.
+ * The pattern's VARI (A, B or A+B) stays as it is: slot_load writes the side there. */
+static void reload(int lo, int hi)
+{
+    volatile uint32_t *wc = area_slot(TR8_AREA_PATTERN, 0);
+    uint32_t vari = wc[0];
+
+    if ((int)cur_bar >= lo && (int)cur_bar < hi) {
+        slot_load(cur_pat, cur_bar, cur_side);
+        wc[0] = vari;
+    }
+}
+
+/* Make bar 1 the working copy, so that the firmware's own setter edits it (the pattern itself
+ * when no side has a sequence). 0 = the bar being left could not be stored. */
+static int wc_bar1(void)
+{
+    volatile uint32_t *wc = area_slot(TR8_AREA_PATTERN, 0);
+    uint32_t vari;
+
+    if (wc_bar == 0)
+        return 1;
+    if (!save_dirty())
+        return 0;
+    vari = wc[0];
+    cur_bar = 0;
+    slot_load(cur_pat, 0, cur_side);
+    wc[0] = vari;
+    return 1;
+}
+
+/* Side `side` takes n bars; the other side's length is kept. */
+static void set_len(int side, int n)
+{
+    uint32_t w = TR8_PTN2_CUR[CHAIN_COUNTS] & 0xFF;
+
+    w = (w & ~(0xFu << (4 * side))) | ((uint32_t)n << (4 * side));
+    TR8_PTN2_SET(0, CHAIN_COUNTS, (int)w);
+}
+
+/* "A 16" / "B  8": the side and its new number of steps. */
+static void show_steps(int side, int n)
+{
+    show4((uint32_t)('A' + side) | (0x20u << 8) | ((uint32_t)(n >= 10 ? '1' : ' ') << 16) |
+          ((uint32_t)('0' + n % 10) << 24));
+}
+
+/* Double the steps of bar 1 of side s (only while s has at most one bar). 0 = it is already 16
+ * steps long: the caller doubles the bars instead. The firmware's setter writes the working copy
+ * and marks the pattern changed, so the normal save stores it (chain_commit, with a sequence). */
+static int expand_steps(int s)
+{
+    volatile uint32_t *wc = area_slot(TR8_AREA_PATTERN, 0);
+    int L, c, i;
+    uint32_t lo, m, nm;
+
+    if (!wc_bar1()) {
+        show_fail();
+        return 1;
+    }
+    L = (int)(wc[2 + s] & 0xFF) + 1;
+    if (L >= 16)
+        return 0;
+    c = 16 - L < L ? 16 - L : L;
+    lo = (1u << c) - 1;
+    for (i = 0; i < ROWS; i++) {
+        m = wc[4 + 2 * i + s] & 0xFFFF;
+        nm = (m & ~(lo << L)) | ((m & lo) << L);
+        if (nm != m)
+            TR8_HMI_SET(TR8_HMI_PTN, 4 + 2 * i + s, (int)nm, 0);
+    }
+    TR8_HMI_SET(TR8_HMI_PTN, 2 + s, L + c - 1, 0);
+    show_steps(s, L + c);
+    return 1;
+}
+
+/* Copy the side-s half (its steps and LAST) of bars 1..c into bars n+1..n+c, then make side s
+ * n + c bars long. The length moves only when every bar is stored (DEVELOPING.md section 7). */
+static void expand_bars(int s)
+{
+    int n = clen(s), c, k, i;
+
+    if (n < 1)
+        n = 1;
+    c = NBARS - n < n ? NBARS - n : n;
+    if (c <= 0) {
+        show4(TXT_FULL);
+        return;
+    }
+    for (k = 0; k < c; k++) {
+        bar_src(k, sbuf);
+        bar_src(n + k, dbuf);
+        dbuf[2 + s] = sbuf[2 + s];
+        for (i = 0; i < ROWS; i++)
+            dbuf[4 + 2 * i + s] = sbuf[4 + 2 * i + s];
+        if (!bar_store(n + k, dbuf)) {
+            reload(n, n + k);
+            show_fail();
+            return;
+        }
+    }
+    reload(n, n + c);
+    set_len(s, n + c);
+    show4((uint32_t)('A' + s) | (0x20u << 8) | ((uint32_t)'b' << 16) |
+          ((uint32_t)('0' + n + c) << 24));    /* "A b4" */
+}
+
+/* noinline keeps the gesture code out of chain_release's frame. */
+__attribute__((noinline)) static void chain_expand(int s)
+{
+    if (clen(s) <= 1 && expand_steps(s))
+        return;
+    expand_bars(s);
+}
+
+/* Side B becomes a copy of side A: in each of A's bars the B steps and LAST_B take the A ones,
+ * and B gets A's length. With no sequence on either side this is the pattern itself, through the
+ * firmware's setter. B halves past A's length stay in the log, hidden, as after a shrink. */
+__attribute__((noinline)) static void chain_copy_ab(void)
+{
+    volatile uint32_t *wc = area_slot(TR8_AREA_PATTERN, 0);
+    int na = clen(0), n = na ? na : 1, k, i;
+
+    if (!na && !clen(1)) {
+        for (i = 0; i < ROWS; i++)
+            TR8_HMI_SET(TR8_HMI_PTN, 5 + 2 * i, (int)(wc[4 + 2 * i] & 0xFFFF), 0);
+        TR8_HMI_SET(TR8_HMI_PTN, 3, (int)(wc[2] & 0xFF), 0);
+        show_ab(1);
+        return;
+    }
+    for (k = 0; k < n; k++) {
+        bar_src(k, dbuf);
+        dbuf[3] = dbuf[2];
+        for (i = 0; i < ROWS; i++)
+            dbuf[5 + 2 * i] = dbuf[4 + 2 * i];
+        if (!bar_store(k, dbuf)) {
+            reload(0, k);
+            show_fail();
+            return;
+        }
+    }
+    reload(0, n);
+    set_len(1, n);
+    show_ab(n);
+}
+
 /* Replaces "bl FUN_60013B34" at 0x60013842: button press, id in r0, held bit already set.
  * Runs before the screen, so this is the first code that can take the pad. */
 int chain_press(int id)
 {
     sync();                            /* every press: the panel may have switched pattern */
+    /* LAST STEP with A and/or B held arms the expand; any other press cancels it. */
+    expand_armed = id != TR8_BTN_LAST_STEP ? 0
+                 : (uint8_t)((TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) |
+                             ((TR8_BTN_HELD(TR8_BTN_VARI_B) == 1) << 1));
     if ((unsigned)id < 16) {
         int a, b;
 
@@ -858,6 +1083,17 @@ int chain_release(int id)
         return 0;                              /* the press was taken: swallow the release too */
     }
     r = TR8_FN_BTN_RELEASE(id);
+    if (id == TR8_BTN_LAST_STEP && expand_armed) {
+        int g = expand_armed;
+
+        expand_armed = 0;
+        if (g == 3)
+            chain_copy_ab();
+        else
+            chain_expand(g - 1);
+        *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
+        return r;
+    }
     /* The bar number on the display is only the confirmation of the pad press. Releasing the
      * variation button asks the panel to repaint its own view, so the default text comes back;
      * this is the firmware's own helper (0x44: step pads and numeric text), so the patch never

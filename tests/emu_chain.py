@@ -168,7 +168,7 @@ STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E
          0x60051E20: "repaint_panel", 0x60016386: "stepview",
          0x600522E4: "range", 0x600521E8: "f", 0x6000FC78: "commit",
          0x600108AA: "fl_begin", 0x600108BA: "fl_end",
-         0x6004BB4C: "led_set",
+         0x6004BB4C: "led_set", 0x600186FA: "hmi_set",
          0x60003E54: "fl_prog", 0x60003EDA: "fl_erase", 0x60003EA2: "fl_read"}
 def hook(uc, addr, size, _):
     if addr in STUBS:
@@ -218,6 +218,12 @@ def hook(uc, addr, size, _):
             sp = uc.reg_read(UC_ARM_REG_SP)
             log.append(("led", r0, r1, r2, uc.reg_read(UC_ARM_REG_R3) & 0xFFFFFFFF,
                         struct.unpack("<I", uc.mem_read(sp, 4))[0]))
+        elif name == "hmi_set":
+            # FUN_600186FA(database, index, value, _): the firmware's parameter setter. On the Ptn
+            # database (0x6007ED24) index n is word n of the working copy (area 4 slot 0).
+            log.append(("hmi_set", r0, r1, r2))
+            if r0 == 0x6007ED24:
+                w32(A4 + 4 * r1, r2)
         elif name == "fl_read":
             READS["n"] += 1
             fl_read(r0, r1, r2)
@@ -1453,5 +1459,180 @@ log.clear()
 call(S["chain_view"], 0x70002000)
 expect("stale bar: stock playback does not follow an old chain_row", slot_rows(0)[0][0], 0xBBBB)
 w32(RUN, 0)
+
+# --- expand (A/B + a tap of LAST STEP) and copy A->B (A + B + a tap) --------------------
+# A side of one bar shorter than 16 steps doubles its steps (through the firmware's setter, so the
+# normal save stores it); after that the bars double. The length moves only when every bar it
+# adds is in the flash.
+def fresh(last_a=15, last_b=15, counts=(0, 0)):
+    seed_ram()
+    cold_boot()
+    FL[:] = b"\xff" * len(FL)
+    for slot in (0, 1):
+        w32(slot_addr(slot) + 8, last_a)
+        w32(slot_addr(slot) + 12, last_b)
+    set_counts(*counts)
+    sync_panel()
+
+def tap_last(*buttons):
+    """LAST STEP goes down and up while `buttons` are held; returns the log of both."""
+    held.clear(); held.update(buttons); held.add(LAST); log.clear()
+    call(S["chain_press"], LAST)
+    held.discard(LAST)
+    call(S["chain_release"], LAST)
+    held.clear()
+    return list(log)
+
+def half(bar, s):
+    """(LAST, 26 masks) of side s of bar `bar` of pattern 0, as playback would read it."""
+    e = bar_entry(0, bar)
+    if e:
+        return ((e["last"] >> (8 * s)) & 0xFF, [r[s] for r in e["rows"]])
+    b = slot_addr(1)
+    return (r32(b + 8 + 4 * s), [r32(b + 4 * (4 + 2 * i + s)) & 0xFFFF for i in range(26)])
+
+def counts():
+    return (pget(CNT) & 0xF, (pget(CNT) >> 4) & 0xF)
+
+def flash_writes():
+    return WRITES["prog"] + WRITES["erase"]
+
+fresh()
+PAT_A = half(0, 0)[1]
+PAT_B = half(0, 1)[1]
+w0 = flash_writes()
+expect("expand: a 16-step pattern with no sequence becomes two bars", texts(tap_last(A)), ["A b2"])
+expect("expand: ... A has two bars, B none", counts(), (2, 0))
+expect("expand: ... bar 2 is the pattern itself: nothing is written", flash_writes() - w0, 0)
+w32(slot_addr(0) + 4 * 4, 0x1234)                      # an edit of bar 1 that is not saved yet
+expect("expand: 2 -> 4 bars", texts(tap_last(A)), ["A b4"])
+expect("expand: ... bar 3 is bar 1 with its unsaved edit", half(2, 0)[1][0], 0x1234)
+expect("expand: ... bar 3 keeps the B half and the scale of its own",
+       (half(2, 1)[1], bar_entry(0, 2)["scale"]), (PAT_B, 1))
+expect("expand: ... bar 4 is bar 2, still the pattern: no entry", bar_entry(0, 3), None)
+expect("expand: ... the working copy is still bar 1, edit kept", slot_rows(0)[0][0], 0x1234)
+expect("expand: 4 -> 8 bars", (texts(tap_last(A)), counts()), (["A b8"], (8, 0)))
+expect("expand: ... bars 5-8 are bars 1-4 (bar 1 is the unsaved working copy)",
+       [half(b, 0)[1][0] for b in range(1, 8)], [PAT_A[0], 0x1234, PAT_A[0], 0x1234, PAT_A[0], 0x1234, PAT_A[0]])
+w0 = flash_writes()
+expect("expand: a side of 8 bars is full", (texts(tap_last(A)), counts()), (["FULL"], (8, 0)))
+expect("expand: ... and nothing is written", flash_writes() - w0, 0)
+w32(slot_addr(0) + 4 * 5, 0x7777)                      # B half of bar 1
+expect("expand: B + LAST STEP doubles B only", (texts(tap_last(B)), counts()), (["B b2"], (8, 2)))
+expect("expand: ... bar 2 takes bar 1's B half and keeps its own A half",
+       bar_entry(0, 1)["rows"][0], (PAT_A[0], 0x7777))
+
+# 3 -> 6 and 5 -> 8: bars 1..c are appended after the last one.
+fresh(counts=(3, 0))
+for k in range(3):
+    put_entry(k, 10 + k, 0, k, 0x0A00 + k, 0x0B00 + k)
+cold_boot()
+sync_panel()
+expect("expand: 3 -> 6 bars", (texts(tap_last(A)), counts()), (["A b6"], (6, 0)))
+expect("expand: ... bars 4-6 are bars 1-3 (A half)", [half(b, 0)[1][0] for b in range(6)],
+       [0x0A00, 0x0A01, 0x0A02] * 2)
+expect("expand: ... and keep their own B half", [half(b, 1)[1][0] for b in range(3, 6)],
+       [PAT_B[0]] * 3)
+set_counts(5, 0)
+expect("expand: 5 -> 8 bars copies bars 1-3", (texts(tap_last(A)), counts()), (["A b8"], (8, 0)))
+expect("expand: ... bars 6-8", [half(b, 0)[1][0] for b in range(5, 8)], [0x0A00, 0x0A01, 0x0A02])
+
+# Steps: 4 -> 8 -> 16, then bars. Every row doubles, accents and flams too (they are rows).
+fresh(last_a=3)
+for i in range(26):
+    w32(slot_addr(0) + 4 * (4 + 2 * i), 0xF0 | (i & 0xF))   # steps 5-8 set: they get cleared
+B0 = slot_rows(0)
+w0 = flash_writes()
+lg = tap_last(A)
+expect("expand steps: 4 -> 8", (texts(lg), slot_scalars(0)[0]), (["A  8"], 7))
+expect("expand steps: ... steps 1-4 are copied to 5-8, the rest is kept",
+       [r[0] for r in slot_rows(0)], [(i & 0xF) * 0x11 for i in range(26)])
+expect("expand steps: ... B is untouched", [r[1] for r in slot_rows(0)], [r[1] for r in B0])
+expect("expand steps: ... through the Ptn setter only, on A words",
+       sorted({(e[1], e[2] % 2) for e in lg if e[0] == "hmi_set"}), [(0x6007ED24, 0)])
+expect("expand steps: ... no flash write and no length change", (flash_writes() - w0, counts()),
+       (0, (0, 0)))
+expect("expand steps: 8 -> 16", (texts(tap_last(A)), slot_scalars(0)[0]), (["A 16"], 15))
+expect("expand steps: ... row 3", slot_rows(0)[3][0], 0x3333)
+w0 = flash_writes()
+expect("expand steps: a 16-step bar doubles the bars", (texts(tap_last(A)), counts()),
+       (["A b2"], (2, 0)))
+expect("expand steps: ... bar 2 holds the doubled steps", half(1, 0), (15, [r[0] for r in slot_rows(0)]))
+fresh(last_a=3, counts=(0, 2))
+w32(slot_addr(0) + 4 * 4, 0x0005)
+expect("expand steps: A with no sequence while B has one", texts(tap_last(A)), ["A  8"])
+expect("expand steps: ... the save goes to the log as bar 1 (A+B side lengths kept)",
+       (save_p0(), bar_entry(0, 0)["rows"][0][0], bar_entry(0, 0)["last"] & 0xFF, counts()),
+       (False, 0x0055, 7, (0, 2)))
+fresh(last_b=11)
+w32(slot_addr(0) + 4 * 5, 0x0ABC)
+expect("expand steps: B 12 -> 16 copies steps 1-4 to 13-16",
+       (texts(tap_last(B)), slot_rows(0)[0][1], slot_scalars(0)), (["B 16"], 0xCABC, (15, 15)))
+
+# Copy A -> B.
+fresh(last_a=7, last_b=15)
+w0 = flash_writes()
+lg = tap_last(A, B)
+expect("copy A->B: no sequence: the pattern's B steps and LAST_B take A's",
+       (texts(lg), [r[1] for r in slot_rows(0)], slot_scalars(0)),
+       (["AB 1"], PAT_A, (7, 7)))
+expect("copy A->B: ... through the setter, no flash write, no length",
+       (all(e[1] == 0x6007ED24 for e in lg if e[0] == "hmi_set"), flash_writes() - w0, counts()),
+       (True, 0, (0, 0)))
+fresh(counts=(3, 5))
+for k in range(3):
+    put_entry(k, 10 + k, 0, k, 0x0A00 + k, 0x0B00 + k)
+put_entry(3, 13, 0, 4, 0x0A04, 0x0B04)
+cold_boot()
+sync_panel()
+expect("copy A->B: with a sequence, B takes A's length", (texts(tap_last(A, B)), counts()),
+       (["AB 3"], (3, 3)))
+expect("copy A->B: ... each of A's bars has B = A", [bar_entry(0, k)["rows"][0] for k in range(3)],
+       [(0x0A00 + k, 0x0A00 + k) for k in range(3)])
+expect("copy A->B: ... B's hidden bar 5 is kept", bar_entry(0, 4)["rows"][0], (0x0A04, 0x0B04))
+expect("copy A->B: ... the working copy (bar 1) shows the copy", slot_rows(0)[0], (0x0A00, 0x0A00))
+
+# The tap is cancelled by any other press; LAST STEP alone does nothing new.
+fresh()
+held.clear(); held.update((A, LAST)); log.clear()
+call(S["chain_press"], LAST)
+call(S["chain_press"], 4)
+lg = list(log)
+held.discard(LAST); log.clear()
+call(S["chain_release"], 4)
+call(S["chain_release"], LAST)
+held.clear()
+expect("expand: A + LAST STEP + pad keeps its stock meaning (the pad goes to the firmware)",
+       ("press", 4) in lg, True)
+expect("expand: ... and the tap is cancelled", (texts(log), counts()), ([], (0, 0)))
+expect("expand: LAST STEP without A or B does nothing new", (texts(tap_last()), counts()),
+       ([], (0, 0)))
+
+# A bar the chip does not take: FAIL, and the length does not move (DEVELOPING.md 7, rule 2).
+fresh(counts=(2, 0))
+w32(slot_addr(0) + 4 * 4, 0x1234)
+drop_next_program()
+expect("expand: a dropped write shows FAIL and keeps the length", (texts(tap_last(A)), counts()),
+       (["FAIL"], (2, 0)))
+expect("expand: ... no entry for bar 3", bar_entry(0, 2), None)
+expect("expand: ... the retry works", (texts(tap_last(A)), counts()), (["A b4"], (4, 0)))
+fresh(counts=(2, 0))
+w32(slot_addr(0) + 4 * 4, 0x1234)
+cut_after(0)
+tap_last(A)
+cut_after(None)
+cold_boot()
+sync_panel()
+expect("expand: a power cut after the first write keeps the old length", counts(), (2, 0))
+# The reboot lost the unsaved edit; bar 3, written before the cut, stayed hidden until now.
+expect("expand: ... the retry overwrites the hidden bar 3", (texts(tap_last(A)), counts(), half(2, 0)[1][0]),
+       (["A b4"], (4, 0), PAT_A[0]))
+
+# Playback follows the new length on the next wrap.
+fresh(counts=(1, 0))
+w32(slot_addr(0) + 4 * 4, 0x1234)
+expect("expand: one bar of 16 steps -> two bars", (texts(tap_last(A)), counts()), (["A b2"], (2, 0)))
+expect("expand: playback starts on bar 1", start(vari=0), (0, 0, 0))
+expect("expand: playback plays the new bar 2 on the next wrap", (wrap()[2], wrap()[2]), (1, 0))
 
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)

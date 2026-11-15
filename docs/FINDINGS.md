@@ -281,6 +281,13 @@ Area 4 (Ptn) slot word order is the descriptor order: word 0 = `VARI` (id `0xC3`
 VARIATION A/B press changes `VARI` through the Ptn database object `0x6007ED24`:
 `FUN_600186FA(0x6007ED24, 0, 0 or 1, 0)` (index 0 = `VARI`), so writing slot 0 word 0 has the same
 effect as the button.
+The same object takes every word of the working copy: Ptn index *n* is word *n* of area 4
+slot 0, so index 2 + *v* is the LAST of variation *v* (`FUN_6001B8D6` sets it that way) and
+index 4 + 2*i* + *v* is the step mask of row *i* (the row table at `0x6007EC54` holds 4, 6, 8, ...).
+The button handler `FUN_600193E0` (CLEAR + instrument) calls `FUN_600186FA` on it several times in a
+row from the panel task [code]. The bar chain's expand writes steps and LAST through this setter,
+so the pattern is marked changed and saved by the normal path ([CHAIN.md](CHAIN.md), "Expand and
+copy A to B"); that use from the button dispatch is [code], not yet seen on the unit.
 
 HMI parameter databases (names at `0x6007EC0C`): System, Setup, Efx, Patch, Ptn, Patch2, Ptn2,
 Testmode, TMP. Each has a getter `get(db, index, default)` that maps a local index to a global id:
@@ -617,15 +624,15 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   the image (`0x601309E0`) would be erased, because the bss zero-fill covers
   `0x601264EC`-`0x60280987`. Instead:
   1. extend the decompressed size so that the image reaches the new code. The bytes between
-     `0x601309E0` and the code are zeros and compress well: reaching `0x602827FC` costs about
-     164 KB of compressed application (0xA5CF7 -> 0xCEE40), and the module still ends at file
-     offset 0xFEE80, far below `appB` at 0x280000. `tr8patch.py` and the web flasher extend the
+     `0x601309E0` and the code are zeros and compress well: reaching `0x60282E54` costs about
+     165 KB of compressed application (0xA5CF7 -> 0xCF278), and the module still ends at file
+     offset 0xFF2B8, far below `appB` at 0x280000. `tr8patch.py` and the web flasher extend the
      application array themselves when a payload lies beyond the current end.
   2. put the new code and data at `0x60281200` (above the bss, so it is not zeroed). Not
      `0x60280988`: `motion-poly`'s patch RAM occupies `0x60280A00`-`0x60281183`, and the 64 KB
      below the moved pool is that reservation. The chain's `.text` is
-     `0x60281200`-`0x60281ECB` (3276 bytes) and its `.bss` (including the 2 KB playback cache)
-     runs to `0x602827FC`; the patcher reserves 8 KB, `0x60281200`-`0x60283200`.
+     `0x60281200`-`0x60282367` (4456 bytes) and its `.bss` (including the 2 KB playback cache)
+     runs to `0x60282E54`; the patcher reserves 8 KB, `0x60281200`-`0x60283200`.
   3. move the RTOS pool start by N: the literal `0x60280988` at `0x600104A8`
      (`FUN_60010430`) becomes `0x60290988`, the same move `motion-poly` makes. The other copy at
      `0x6012A2FC` is the startup stack top, not the pool (see the next item). The bss zero-fill

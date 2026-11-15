@@ -19,8 +19,9 @@ build moves the code and the bar index out of the developer-dump region and into
 image, so the chain **combines with `motion` and `poly`** and appears in the web flasher next to
 them; it also carries the review fixes described in the test history (twelfth build). The image
 build **works on a real TR-8** too: `motion-poly-chain` booted and the chain worked with motion
-and poly on the unit (see "Hardware check for the image build"). Like the other patches it is
-built from your own copy of Roland's v1.61 file.
+and poly on the unit (see "Hardware check for the image build"). The expand and copy A to B
+gestures (fourteenth build) pass in emulation and are not yet tested on the unit. Like the other
+patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
 
@@ -52,6 +53,9 @@ poly, and the web flasher offers every combination. The `--patch` names are the 
 | Press **A** (no pad) | Play the A sequence: bars 1..Na, A steps |
 | Press **B** (no pad) | Play the B sequence: bars 1..Nb, B steps |
 | Press **A + B** (no pad) | Play the A sequence and then the B sequence, wrapping |
+| Hold **A**, tap **LAST STEP** | **Expand** side A: a one-bar side shorter than 16 steps doubles its steps (display `A  8`, `A 16`); otherwise the bars double (`A b2`, `A b4`, `A b8`). See "Expand and copy A to B" |
+| Hold **B**, tap **LAST STEP** | The same for side B (`B 16`, `B b4`, ...) |
+| Hold **A + B**, tap **LAST STEP** | **Copy A to B**: in each of A's bars the B steps and LAST_B become a copy of the A ones, and B gets A's length. The display shows `AB 1`..`AB 8` |
 
 A side's length is the highest bar selected on it, so `A + pad 3` gives A three bars and `B + pad 2`
 gives B two. Selecting a lower bar again does not shrink that side; use `A + CLEAR + pad n` (or
@@ -82,6 +86,44 @@ boundary costs nothing (see Storage).
 
 The pads only ever choose a bar 1..8; pads 9..16 stay ordinary step pads and LAST STEP + pad
 still sets the pattern length (the poly gesture), because LAST STEP wins over A/B in the patch.
+
+### Expand and copy A to B
+
+**Expand** is "copy and append": the side's content is copied after its end, so the side doubles.
+
+- A side of **one bar** (or no sequence) whose LAST is below 16 **doubles its steps** in bar 1:
+  with *L* steps, steps 1..*c* are copied to *L*+1..*L*+*c*, *c* = min(*L*, 16 - *L*), and LAST
+  becomes *L* + *c*. So 4 -> 8 -> 16, and 12 -> 16 copies steps 1-4 to 13-16. Every row doubles,
+  accents and flams included (they are step rows). The other side and the weak accent (a Ptn2
+  parameter) are not touched. The display shows the new number of steps (`A  8`, `A 16`).
+- Otherwise the **bars double**: with *n* bars, bars 1..*c* are copied to *n*+1..*n*+*c*, *c* =
+  min(*n*, 8 - *n*), and the side becomes *n* + *c* bars long. So 1 -> 2 -> 4 -> 8, 3 -> 6, and 5
+  -> 8 copies bars 1-3. Only the side's half of each bar is copied (its steps and its LAST); the
+  other side's half and the scale of the destination bar are kept. The display shows `A b4`.
+- A side of 8 bars is full: the display shows `FULL` and nothing is written.
+- The copy takes the bar as it plays now, unsaved edits of the bar in the working copy included.
+  Hidden bars past the old length (from an earlier shrink) are overwritten, as on other machines.
+
+**Copy A to B** (A + B + tap LAST STEP): with no sequence on either side, the pattern's B steps and
+LAST_B become a copy of the A ones (`AB 1`). With a sequence, each bar 1..Na gets B = A (a pattern
+with no A sequence counts as one bar), and B gets A's length (`AB n`). B bars past Na stay in the
+log, hidden, as after a shrink.
+
+**The gesture.** LAST STEP pressed while A and/or B is held arms it; it runs when LAST STEP is
+released. Any other press in between cancels it, so **A/B + LAST STEP + pad keeps its meaning**
+(the pattern's last step, or with an instrument held the poly length). The press of LAST STEP
+still reaches the firmware, so the LAST STEP view shows as usual. Holding A, B or A+B also selects
+that variation, as it does for every A/B gesture.
+
+**Saving.** A step doubling and a copy with no sequence go through the firmware's own setter
+(`FUN_600186FA` on the Ptn database `0x6007ED24`, [FINDINGS.md](FINDINGS.md) section 6), so the
+pattern is marked changed and saved by the normal path: the stock commit with no sequence, the log
+(as bar 1) with one. Bar 1 is loaded into the working copy first if another bar was selected. A
+bar doubling and a copy with a sequence write each changed bar to the log first and change the
+length only when every write was read back. A bar whose new content is the pattern's own (no
+entry, nothing to change) is not written. If the chip refuses a write the display shows `FAIL`
+and the length stays as it was; the bars already written are hidden past the length and are
+overwritten by the retry.
 
 ## A typical session
 
@@ -195,7 +237,9 @@ their state apart:
 
 The sequencer task writes `chain_pos`, `chain_side`, `chain_row` and `chain_wrapping` only. The
 panel task writes `cur_pat`, `cur_bar`, `cur_side`, `wc_bar`, `chain_sel`, `chain_swallow`, `chain_jump`,
-the log index and the playback cache. Each hand-off between them is one byte written last, after
+`expand_armed`, the log index and the playback cache. The expand and the copy A to B run in
+`chain_release` (panel task): their log writes, their Ptn setter calls and the side length all
+happen there, like the bar save of `chain_edit`. Each hand-off between them is one byte written last, after
 the data it describes: `chain_jump` (the bar the panel just selected) and the per-bar
 `cache_idx` (flipped after the bar copy) and `wc_bar` (written after the working copy is
 loaded). No buffer is written by both tasks.
@@ -371,7 +415,7 @@ dropped program before the erase leaves both copies and takes the same path.
 `sync()`, which scans on its first pass (or when the pattern changed) and then fills the playback
 cache; the sequencer never calls it. The index is 128 bytes (16 patterns x 8 bars), which
 no longer fits the developer-dump region, so it lives with the code **in the application image**
-above the firmware bss (`0x60281ED0` onward, `.bss`); the image grows to cover it and the RTOS
+above the firmware bss (`0x6028236C` onward, `.bss`); the image grows to cover it and the RTOS
 pool start moves by 64 KB (see "Code space"). The image is decompressed from flash at every boot,
 so the index is in place and zeroed before `store_init` runs — there is no patch RAM and no boot
 hook for the chain.
@@ -438,6 +482,7 @@ the pattern's own steps.
 | Event | Bars in the log (`0x3DB000`-`0x3DFFFF`; the scratch block at `0x3DA000` holds their copies during a compaction) | Pattern slots (user area) | Side lengths (Ptn2 `0x138`) |
 |---|---|---|---|
 | Power cut while saving a bar | The newest save only, and only if its program was torn. Every older bar survives; a cut during compaction is finished from the scratch block on the next boot. | Unchanged | Unchanged |
+| Power cut or dropped write during an expand or a copy A to B | The bars written before it stay in the log, hidden past the old length; the next expand overwrites them | Unchanged | Unchanged: the length is set only after every bar was written |
 | A program the chip drops | The bar being saved is retried by the next save. If it fails during a compaction, the compaction stops before anything is lost, the scratch block keeps the rest, saves are refused until the next boot, and that boot recovers them from it. | Unchanged | Unchanged |
 | Flash another build made by this patcher or the web flasher | **Kept**: its update ends at block `0x3D9` and never touches `0x3DA000`-`0x3DFFFF` [code; first unit check: hardware test below]. A build that has no chain ignores the log and keeps it for the next chain build. | Unchanged | Unchanged |
 | Flash stock firmware | **Lost**: Roland's file rewrites flash `0x30000`-`0x3DFFFF`. | Pattern edits made while that pattern had a chain lived only in the log, so they revert to the last stock save; patterns with no chain were saved normally. Kits are untouched. | Kept in flash but ignored by stock firmware; they become usable again if this build is flashed back with the same data intact |
@@ -460,17 +505,17 @@ space"):
 
 | What | Where | Size |
 |---|---|---|
-| Code, `.data` | `0x60281200`-`0x60281ECD` in the application image | 3276 + 2 bytes |
-| Bar index, playback cache and other state | `0x60281ED0`-`0x602827FB` (`.bss`, in the image) | 2348 bytes |
+| Code, `.data` | `0x60281200`-`0x60282369` in the application image | 4456 + 2 bytes |
+| Bar index, playback cache, expand buffers and other state | `0x6028236C`-`0x60282E53` (`.bss`, in the image) | 2792 bytes |
 
 The cache alone is 2048 bytes (`bar_ram[2][8][32]`), so the patcher reserves 8 KB for the payload
-region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x602827FC`.
+region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x60282E54`.
 
 The firmware's bss ends at `0x60280987` (the startup code zeroes it) and the RTOS pool starts at
 `0x60280988`. The zero-fill bounds are their own startup literals (`0x601264EC` at `0x6000015C`,
 size `0x15A49C` at `0x60000160`), so the pool move does not extend the zeroing over the chain. The
 patcher writes the payload at `0x60281200` and **extends the decompressed image
-to `0x602827FC`** with zeros; the boot loader decompresses that size to `0x60000000` without a
+to `0x60282E54`** with zeros; the boot loader decompresses that size to `0x60000000` without a
 fixed cap (it is bounded only by `destination + decompressed size`, verified in `FUN_01000B3C` /
 `0x01000C76`). The startup zero-fill still stops at `0x60280987`, so the code and its state
 survive. The patcher then moves the RTOS pool start literal (`0x600104A8`) from `0x60280988` to
@@ -484,9 +529,9 @@ their sites plus these sites ([`tools/merge_payloads.py`](../tools/merge_payload
 build is the exception: it is still the old cave build (`probe.c`, `probe.ld`, 568 + 14 bytes,
 stock pool start), because it only exists to show the gesture on a unit.
 
-The image growth costs about 164 KB of compressed application (0xA5CF7 -> 0xCEDDD bytes, from
-0x1309E0 to 0x282794 decompressed): the zeros between the old image end and the new code compress
-well, and the module still ends at file offset 0xFEE1D, far below `appB` at 0x280000. The update
+The image growth costs about 165 KB of compressed application (0xA5CF7 -> 0xCF278 bytes, from
+0x1309E0 to 0x282E54 decompressed): the zeros between the old image end and the new code compress
+well, and the module still ends at file offset 0xFF2B8, far below `appB` at 0x280000. The update
 file keeps its fixed 4 MB size. The patched application is recompressed by `tr8fw.pack` / the web
 flasher's compressor, and both produce the same bytes.
 
@@ -547,6 +592,20 @@ writes a side length, a bar or the pattern:
 4. Optional: flash the `poly` build (no chain), then a chain build again: the bars must still be
    there.
 
+## Hardware test: expand and copy A to B (not done yet)
+
+1. Pattern 16, no sequence, A side, LAST STEP 4: record a beat in steps 1-4 (with an accent). Hold
+   A and tap LAST STEP: `A  8`, steps 5-8 repeat 1-4. Again: `A 16`. Again: `A b2`, then `A b4`,
+   `A b8`, `FULL`. Play A: eight bars of the same beat.
+2. Hold A, select bar 2 and change a step. Hold A + CLEAR + pad 2 (A two bars). Hold A, tap LAST
+   STEP: `A b4`, bars 3 and 4 are bars 1 and 2 (bar 4 has the change).
+3. Hold B, tap LAST STEP on the same pattern: only B changes; A plays as before.
+4. Hold A + B, tap LAST STEP: `AB 4`; B plays the same four bars as A.
+5. Hold A, press LAST STEP, press pad 8, release: the pattern's last step is 8, as in stock (no
+   expand). With poly: LAST STEP + instrument + pad still sets the instrument length.
+6. While playing: hold A, tap LAST STEP; the new bars play from the next pass.
+7. Power off and on: the lengths and the bars are kept.
+
 ## Open points (to do)
 
 None of these has been seen as a fault on the unit. Each one is a review rule 1 or rule 2 question
@@ -579,7 +638,7 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 249 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 310 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..8` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, `A/B + CLEAR + pad n` sets one side to exactly *n* in both directions without touching the
@@ -713,13 +772,20 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   inside the compacted block, `seqn` across 0x8000, a pattern change with VARI = 2, an A+B start
   after selecting a B bar while stopped, and checks that the sequencer issues no flash read or
   write. Hardware: passed (`motion-poly-chain`, see below).
-- Thirteenth build (this one): **steps entered while playing are heard**. On the unit, steps
+- Thirteenth build: **steps entered while playing are heard**. On the unit, steps
   entered in TR-REC during playback of a chained pattern stayed silent until stop/start: each
   pass refilled the player struct from the bar cache, which is refreshed only when the bar is
   stored. The bar in the working copy now plays from the working copy (`wc_bar`, see "Storage").
   Emulation: 262 chain checks, including a one-bar sequence edited while it plays (fails on
   the twelfth build). Hardware: passed (2026-11-13, `motion-poly-chain`): a step entered in
   TR-REC while a one-bar or two-bar sequence plays is heard at the bar's next pass.
+- Fourteenth build (this one): **expand and copy A to B** (A/B + tap LAST STEP, A + B + tap
+  LAST STEP; a request on Reddit, after "copy and append" on other drum machines). The bar save
+  becomes `bar_put`, shared by the save and the expand. Emulation: 310 chain checks, including
+  steps 4 -> 8 -> 16 -> two bars, 12 -> 16, bars 1 -> 2 -> 4 -> 8 -> `FULL`, 3 -> 6, 5 -> 8, B
+  only, copy A to B with and without a sequence, the tap cancelled by a pad, a dropped write
+  (`FAIL`, length kept), a power cut after the first write, and playback of the new bar.
+  Hardware: not done yet (test above).
 
 ## Hardware test (2026-11-13): the tenth build passed
 

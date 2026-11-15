@@ -210,6 +210,11 @@ typedef void (*tr8_repaint_fn)(void);
 /* Generic HMI setter: clamps to the range and writes only on change. */
 typedef void (*tr8_set_fn)(void *db, int idx, int value, int sub);
 #define TR8_HMI_SET ((tr8_set_fn)0x600186FB)                    /* [code] FUN_600186FA          */
+/* Ptn database (area 4, the working copy of the pattern). Index n is word n of area 4 slot 0:
+ * 0 VARI, 1 scale, 2 + v LAST of variation v, 4 + 2i + v the step mask of row i. The firmware
+ * writes steps (FUN_600192BA), rows (FUN_600193E0, several calls in a row from the button
+ * handler) and LAST (FUN_6001B8D6) with TR8_HMI_SET on it, which marks the pattern changed. */
+#define TR8_HMI_PTN ((void *)0x6007ED24)                        /* [code] DAT_60019588          */
 
 /* Ptn2 database (area 6, global ids 0x127..0x14E, FINDINGS section 6): weak accent, flams,
  * and 16 unnamed ids that no code reads (0x127, 0x128, 0x12B..0x138; 0 in all factory
