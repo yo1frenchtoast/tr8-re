@@ -15,9 +15,9 @@ pads and LAST STEP edit it. Tested here:
     scale and the 26 A/B mask rows), appended through the firmware's raw flash primitives
     (run on the flash model of tests/periph.py); the pattern save is redirected, so area 4
     slot n+1 keeps the pattern's own steps; compaction, the ring and the 16-bit sequence wrap
-    keep the newest entry per bar, and the 128 keys (16 patterns x 8 bars) fit the 160-slot log. The bar index and the code live in
-    the application image above the firmware bss, so the image grows and the RTOS pool start
-    moves by 64 KB.
+    keep the newest entry per bar, and the 128 keys (16 patterns x 8 bars) fit the 160-slot
+    log. The bar index and the code live in the application image above the firmware bss, so
+    the image grows and the RTOS pool start moves by 64 KB.
   - playback: chain_var fills the player struct 0x6012FA64 from the bar's log entry (or from the
     pattern slot when the bar was never recorded); A plays bars 1..Na with A steps, B plays
     1..Nb with B steps, A+B plays the A sequence then the B one.
