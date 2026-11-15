@@ -818,7 +818,8 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   pass, written by the panel task (`chain_view`) from a pass counter that `chain_var` publishes.
   The idea came from the diagnostic build, which wrote it from the sequencer. Emulation: 325
   chain checks (once per pass, a one-bar side shown again at every pass, not while A is held, a
-  `FAIL` kept until a press, nothing when stopped or with no sequence). Hardware: not done yet.
+  `FAIL` kept until a press, nothing when stopped or with no sequence). Hardware: passed
+  (2026-11-15, `motion-poly-chain`): the display follows the bars and comes back after the tempo.
 
 ## Hardware test (2026-11-13): the tenth build passed
 
