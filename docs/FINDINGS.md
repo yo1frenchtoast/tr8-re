@@ -488,7 +488,7 @@ handler is `FUN_6001961E(ctx, id)`:
 | 0x00-0x0F | Step buttons 1-16. In step mode they call `FUN_6001B8D6` (write through the Ptn database) | code |
 | 0x11 | **TR-REC**. Sets Setup[0] = 0 | **unit** |
 | 0x12-0x16 | Mode buttons: Setup[0] = 1..5 (0x13 gives 8 while 0x11 is held) | code |
-| 0x17, 0x18 | Write `VARI` = 0/1/2 (variation A, B, A+B) | hyp |
+| 0x17, 0x18 | Write `VARI` = 0/1/2 (variation A, B, A+B): in `FUN_6001961E`, A pressed while B is held (or B while A is held) writes 2. In A+B the A/B button of the side that plays is lit and the other one blinks [unit] | code |
 | 0x19 | Cycles `SCALE` 0..3 | code |
 | 0x1B | **START/STOP**: toggles Setup[0x15] (playing) and sends MIDI Start `0xFA` / Stop `0xFC` (`FUN_60006A94`). While playing with TAP (`0x2E`) held, it restarts the pattern from step 1 without stopping (`FUN_600099B6`, from the panel task, section 5) | code; **unit** (TAP + START/STOP restarts, SCATTER ON + START/STOP stops) |
 | 0x1A | **LAST STEP** (modifier). A step pad with it held calls `FUN_6001B8D6(obj, pad)` (`0x60019A10`), which sets `LAST_A`/`LAST_B` (Ptn index 2 + variation) | **unit** (POLY.md test 2) |
