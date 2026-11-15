@@ -561,6 +561,13 @@ static void show_bar(int n, int is_b)
     show4(0x2020u | ((uint32_t)('A' + is_b) << 16) | ((uint32_t)('0' + n) << 24));
 }
 
+/* "A1-4": the bar that plays (side, bar) and the side's length, during playback. */
+static void show_play(int n, int is_b, int len)
+{
+    show4((uint32_t)('A' + is_b) | ((uint32_t)('0' + n) << 8) | ((uint32_t)'-' << 16) |
+          ((uint32_t)('0' + len) << 24));
+}
+
 /* "AB 3", or "AB--" for stock. */
 static void show_ab(int n)
 {
@@ -762,14 +769,14 @@ void chain_view(void *obj)
             slot_load(cur_pat, bar, side);
             wc[0] = vari;
         }
-        /* The bar that plays on the display ("  A1"), once per pass, so it comes back after the
+        /* The bar that plays and the side's length on the display ("A1-4"), once per pass, so it comes back after the
          * firmware showed something else (the tempo). Not while A or B is held (their gestures
          * show their own text) and not over a FAIL. */
         if (TR8_SEQ_RUNNING && (clen(0) || clen(1)) && pass != shown_pass) {
             shown_pass = pass;
             if (!text_hold && TR8_BTN_HELD(TR8_BTN_VARI_A) != 1 &&
                 TR8_BTN_HELD(TR8_BTN_VARI_B) != 1)
-                show_bar(bar + 1, side);
+                show_play(bar + 1, side, clen(side));
         }
     }
     TR8_FN_STEPVIEW(obj);

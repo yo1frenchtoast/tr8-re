@@ -194,8 +194,8 @@ overwritten by the retry.
   button gives the pads back to whatever the screen was showing (A+B keeps the length gesture and
   leaves the pads stock). A save the flash chip refused shows **`FAIL`** instead of the bar
   number (see Storage).
-- **While a pattern with a sequence plays, the display shows the bar that plays** (`  A1`,
-  `  B2`), once per pass. When the firmware shows something else (the tempo while it is changed,
+- **While a pattern with a sequence plays, the display shows the bar that plays and the length of
+  its side** (`A1-4` = bar 1 of the four A bars, `B2-2`), once per pass. When the firmware shows something else (the tempo while it is changed,
   a knob value), the next pass brings the bar back. It is not written while A or B is held (the
   gestures show their own text), and a `FAIL` stays until the next button press. A pattern with
   no sequence keeps the stock display.
@@ -424,7 +424,7 @@ dropped program before the erase leaves both copies and takes the same path.
 `sync()`, which scans on its first pass (or when the pattern changed) and then fills the playback
 cache; the sequencer never calls it. The index is 128 bytes (16 patterns x 8 bars), which
 no longer fits the developer-dump region, so it lives with the code **in the application image**
-above the firmware bss (`0x602823D4` onward, `.bss`); the image grows to cover it and the RTOS
+above the firmware bss (`0x602823F8` onward, `.bss`); the image grows to cover it and the RTOS
 pool start moves by 64 KB (see "Code space"). The image is decompressed from flash at every boot,
 so the index is in place and zeroed before `store_init` runs — there is no patch RAM and no boot
 hook for the chain.
@@ -514,17 +514,17 @@ space"):
 
 | What | Where | Size |
 |---|---|---|
-| Code, `.data` | `0x60281200`-`0x602823D1` in the application image | 4560 + 2 bytes |
-| Bar index, playback cache, expand buffers and other state | `0x602823D4`-`0x60282EBF` (`.bss`, in the image) | 2796 bytes |
+| Code, `.data` | `0x60281200`-`0x602823F7` in the application image | 4598 + 2 bytes |
+| Bar index, playback cache, expand buffers and other state | `0x602823F8`-`0x60282EE3` (`.bss`, in the image) | 2796 bytes |
 
 The cache alone is 2048 bytes (`bar_ram[2][8][32]`), so the patcher reserves 8 KB for the payload
-region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x60282EC0`.
+region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x60282EE4`.
 
 The firmware's bss ends at `0x60280987` (the startup code zeroes it) and the RTOS pool starts at
 `0x60280988`. The zero-fill bounds are their own startup literals (`0x601264EC` at `0x6000015C`,
 size `0x15A49C` at `0x60000160`), so the pool move does not extend the zeroing over the chain. The
 patcher writes the payload at `0x60281200` and **extends the decompressed image
-to `0x60282EC0`** with zeros; the boot loader decompresses that size to `0x60000000` without a
+to `0x60282EE4`** with zeros; the boot loader decompresses that size to `0x60000000` without a
 fixed cap (it is bounded only by `destination + decompressed size`, verified in `FUN_01000B3C` /
 `0x01000C76`). The startup zero-fill still stops at `0x60280987`, so the code and its state
 survive. The patcher then moves the RTOS pool start literal (`0x600104A8`) from `0x60280988` to
@@ -538,9 +538,9 @@ their sites plus these sites ([`tools/merge_payloads.py`](../tools/merge_payload
 build is the exception: it is still the old cave build (`probe.c`, `probe.ld`, 568 + 14 bytes,
 stock pool start), because it only exists to show the gesture on a unit.
 
-The image growth costs about 165 KB of compressed application (0xA5CF7 -> 0xCF2DB bytes, from
-0x1309E0 to 0x282EC0 decompressed): the zeros between the old image end and the new code compress
-well, and the module still ends at file offset 0xFF31B, far below `appB` at 0x280000. The update
+The image growth costs about 165 KB of compressed application (0xA5CF7 -> 0xCF305 bytes, from
+0x1309E0 to 0x282EE4 decompressed): the zeros between the old image end and the new code compress
+well, and the module still ends at file offset 0xFF345, far below `appB` at 0x280000. The update
 file keeps its fixed 4 MB size. The patched application is recompressed by `tr8fw.pack` / the web
 flasher's compressor, and both produce the same bytes.
 
@@ -814,12 +814,15 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   A+B, with distinct A and B content. A diagnostic build (`#define CHAIN_DEBUG`, see "If the
   gesture does nothing") showed `2A12 2A22 2B12 2B22`. In TR-REC the A/B LEDs stay on the side
   being edited, as in stock; in INST PLAY they follow the side that plays.
-- Sixteenth build (this one): **the bar that plays is on the display** (`  A1`, `  B2`), once per
+- Sixteenth build: **the bar that plays is on the display** (`  A1`, `  B2`), once per
   pass, written by the panel task (`chain_view`) from a pass counter that `chain_var` publishes.
   The idea came from the diagnostic build, which wrote it from the sequencer. Emulation: 325
   chain checks (once per pass, a one-bar side shown again at every pass, not while A is held, a
   `FAIL` kept until a press, nothing when stopped or with no sequence). Hardware: passed
   (2026-11-15, `motion-poly-chain`): the display follows the bars and comes back after the tempo.
+- Seventeenth build (this one): the display also shows the side's length: `A1-4` instead of
+  `  A1` (a request after the unit test). The gesture confirmations keep `  A1`. Emulation: 325
+  chain checks. Hardware: not done yet.
 
 ## Hardware test (2026-11-13): the tenth build passed
 
