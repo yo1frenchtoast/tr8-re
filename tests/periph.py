@@ -90,9 +90,17 @@ class SerialFlash:
 
     Test controls:
       busy_polls   status reads that still show 'write in progress' after a program or erase
-      cut_at = k   operation k (0 = the next one) loses power halfway: an erase leaves the first
-                   half of its sector erased, a program stores its first half, then PowerCut
-      ops          log of (opcode, address, length, done) for every chip operation
+      cut_at = k   erase or program k (0 = the next one) loses power halfway: an erase leaves
+                   the first half of its sector erased, a program stores its first half, then
+                   PowerCut. Status writes are not counted.
+      ops          log of (opcode, address, length, result) for every chip command
+      on_command   called with (opcode, address, length) for every command the chip receives
+      drop         called with the same arguments for an erase or a program that would run;
+                   True makes the chip drop it (a failed write: the old bytes stay)
+      after_op     called with the same arguments after a completed erase or program (a test
+                   can raise PowerCut there: the power goes after the operation)
+      power_cycle() the power comes back: the controller and the chip restart, the array and the
+                   status register (non-volatile) keep their content
     """
     BASE, WINDOW, SIZE = 0x40005000, 0x03000000, 0x400000
     WIP, WEL, BP = 0x01, 0x02, 0x3C
@@ -104,6 +112,7 @@ class SerialFlash:
         self.fifo = bytearray()
         self.sr, self.busy, self.busy_polls = 0, 0, busy_polls
         self.cut_at, self.ops, self.window_reads = None, [], 0
+        self.on_command = self.drop = self.after_op = None
         uc.mmio_map(self.BASE, 0x1000, self._rd, None, self._wr, None)
         uc.mmio_map(self.WINDOW, self.SIZE, self._win_rd, None, self._win_wr, None)
         rom.on(0xCC, self._wren)
@@ -111,6 +120,12 @@ class SerialFlash:
         rom.on(0xC8, self._rdsr)
 
     mode = property(lambda self: (self.ctrl >> 29) & 3)
+
+    def power_cycle(self):
+        self.ctrl, self.len, self.addr, self.opc = 0xE0001000, 0, 0, None
+        self.fifo.clear()
+        self.sr &= ~(self.WEL | self.WIP)
+        self.busy = 0
 
     def protect_all(self):
         """Set the status register as a powered-up unit has it (the firmware protects the array
@@ -171,36 +186,45 @@ class SerialFlash:
         n = self.len & 0x1FFFFFFF
         if self.opc is None or len(self.fifo) < n:
             return
-        op, data, self.opc = self.opc, bytes(self.fifo[:n]), None
+        op, a0, data, self.opc = self.opc, self.addr, bytes(self.fifo[:n]), None
         self.fifo.clear()
         if op not in (0x01, 0x02, 0x20):
             raise ModelError(f"opcode {op:#x} not modelled")
+        if self.on_command:
+            self.on_command(op, a0, n)
         if not self.sr & self.WEL:
-            self.ops.append((op, self.addr, n, "no write enable"))
+            self.ops.append((op, a0, n, "no write enable"))
             return
         self.sr &= ~self.WEL
+        if op == 0x01:
+            self.sr = (self.sr & 0x03) | (data[0] & 0xBC)
+            self.ops.append((op, a0, n, "done"))
+            self.busy = self.busy_polls
+            return
+        if self._protected():
+            self.ops.append((op, a0, n, "protected"))
+            return
+        if self.drop and self.drop(op, a0, n):
+            self.ops.append((op, a0, n, "dropped"))
+            return
         cut = self.cut_at == 0
         if self.cut_at is not None:
             self.cut_at -= 1
-        if op == 0x01:
-            if not cut:
-                self.sr = (self.sr & 0x03) | (data[0] & 0xBC)
-        elif self._protected():
-            self.ops.append((op, self.addr, n, "protected"))
-            return
-        elif op == 0x20:
-            a = self.addr & ~0xFFF & (self.SIZE - 1)
+        if op == 0x20:
+            a = a0 & ~0xFFF & (self.SIZE - 1)
             k = 0x800 if cut else 0x1000
             self.mem[a:a + k] = b"\xff" * k
         else:
-            page, a = self.addr & ~0xFF & (self.SIZE - 1), self.addr & 0xFF
+            page, a = a0 & ~0xFF & (self.SIZE - 1), a0 & 0xFF
             for b in data[:n // 2 if cut else n]:
                 self.mem[page + a] &= b
                 a = (a + 1) & 0xFF
-        self.ops.append((op, self.addr, n, "cut" if cut else "done"))
+        self.ops.append((op, a0, n, "cut" if cut else "done"))
         self.busy = self.busy_polls
         if cut:
             raise PowerCut
+        if self.after_op:
+            self.after_op(op, a0, n)
 
     # --- memory-mapped window
     def _win_rd(self, uc, off, size, _):

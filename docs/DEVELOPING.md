@@ -244,6 +244,9 @@ them into Unicorn and runs the **firmware's own drivers** on them instead of stu
 drivers. `tests/emu_periph.py` does this for the flash read, erase and program functions, the
 write session (`FUN_600108AA` ... `FUN_600108BA`), and the MIDI receive and transmit interrupts.
 The flash model can cut the power halfway through an erase or a program (`cut_at`).
+`tests/emu_chain.py` uses the flash model too: the bar chain's storage runs on the firmware's
+drivers, with the protection, the dropped write and both kinds of power cut. A new patch that
+stores data should do the same rather than stub `FUN_60003E54` and its neighbours.
 
 The models follow our reading of the drivers. What the drivers do not show (the ROM routines,
 the chip's protection and page behaviour) is marked [hyp] in `periph.py`. So a pass shows that the

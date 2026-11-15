@@ -13,8 +13,8 @@ pads and LAST STEP edit it. Tested here:
     LAST STEP branch of FUN_6001961E.
   - the store: one 128-byte log entry per saved bar (magic, sequence, pattern, bar, LAST_A/B,
     scale and the 26 A/B mask rows), appended through the firmware's raw flash primitives
-    (simulated here); the pattern save is redirected, so area 4 slot n+1 keeps the pattern's own
-    steps; compaction, the ring and the 16-bit sequence wrap keep the newest entry per bar, and
+    (run on the flash model of tests/periph.py); the pattern save is redirected, so area 4
+    slot n+1 keeps the pattern's own steps; compaction, the ring and the 16-bit sequence wrap keep the newest entry per bar, and
     the 128 keys (16 patterns x 8 bars) fit the 160-slot log. The bar index and the code live in
     the application image above the firmware bss, so the image grows and the RTOS pool start
     moves by 64 KB.
@@ -77,50 +77,32 @@ def crc(e):
             h = ((h ^ (w & 0xFFFFFFFF)) * 0x01000193) & 0xFFFFFFFF
     return h
 
-FL = bytearray(b"\xff" * 0x400000)     # simulated raw flash, offsets from 0x03000000
+# The flash is the register model of tests/periph.py: the payload's flash calls (FUN_60003E54
+# program, FUN_60003EDA erase, FUN_60003EA2 read, FUN_600108AA / FUN_600108BA write session) run
+# the firmware's own drivers on it. The chip drops a program or an erase while its status register
+# protects the array: the third build hit this on the unit (docs/CHAIN.md, History). Only
+# FUN_600108AA (write status 0) ... FUN_600108BA (write status 0x3C) opens a write window, which is
+# what the stock store does around its own erase/program sequence. The test's own setup edits FL
+# (the chip's array) directly.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from periph import RomApi, SerialFlash, PowerCut
+rom = RomApi(uc)
+flash = SerialFlash(uc, rom)
+flash.protect_all()                    # the state the firmware leaves the chip in
+FL = flash.mem                         # offsets from 0x03000000
+PROTECT = {"left_open": 0}
 
-# The chip's block protection, the unit-only failure that the first build hit. FUN_60003E54
-# (program) and FUN_60003EDA (erase) are raw commands: while the status register protects the
-# array they are silently dropped. Only FUN_600108AA (write status 0, indirect mode) ... 
-# FUN_600108BA (memory-mapped mode, write status 0x3C) opens a write window, which is what the
-# stock store does around its own erase/program sequence. The log must do the same, so the
-# emulated chip refuses a write outside a session exactly like the real one.
-# `through_chip` is set for calls made by the payload; the test's own calls edit FL directly.
-PROTECT = {"on": True, "refused": 0, "left_open": 0}
-
-def fl_erase(off, through_chip=False):
-    if through_chip and PROTECT["on"]:
-        PROTECT["refused"] += 1
-        return
+def fl_erase(off):
     FL[off:off + 0x1000] = b"\xff" * 0x1000
-    if through_chip:
-        CUT["ops"] += 1
-        _cut_now()
 
-def fl_prog(off, n, src, through_chip=False):
-    if through_chip and PROTECT["on"]:
-        PROTECT["refused"] += 1
-        return
-    if through_chip and DROP["after"] is not None:
-        if DROP["after"] == 0:
-            DROP["after"] = None
-            return                     # the chip drops it: the read-back sees the old bytes
-        DROP["after"] -= 1
-    for i, b in enumerate(uc.mem_read(src, n)):
-        FL[off + i] &= b               # programming can only clear bits
-    if through_chip:
-        CUT["ops"] += 1
-        _cut_now()
-
-def fl_read(off, n, dst):              # reads work in either mode
-    uc.mem_write(dst, bytes(FL[off:off + n]))
+def refused():
+    """Erases and programs the chip dropped because the array was protected."""
+    return sum(st == "protected" for *_, st in flash.ops)
 
 # Fault injection for the storage contract (docs/DEVELOPING.md section 7). CUT["after"] = k runs
-# k flash operations and then unwinds the payload as if the power went away; DROP["after"] = k
-# drops program k of this save (the chip does not take it, so the read-back shows the old bytes).
-class PowerCut(Exception):
-    pass
-
+# k flash operations (erase or program) and then unwinds the payload as if the power went away;
+# DROP["after"] = k drops program k of this save (the chip does not take it, so the read-back
+# shows the old bytes). flash.cut_at = k cuts the power halfway through operation k instead.
 CUT = {"after": None, "hit": False, "ops": 0}
 DROP = {"after": None}
 
@@ -133,12 +115,30 @@ def drop_next_program():
 def drop_program(k):
     DROP["after"] = k
 
-def _cut_now():
+def _after_op(op, addr, n):
+    CUT["ops"] += 1
     if CUT["after"] is not None:
         if CUT["after"] == 0:
             CUT["hit"] = True
             raise PowerCut
         CUT["after"] -= 1
+
+def _drop(op, addr, n):
+    if op != 0x02 or DROP["after"] is None:
+        return False
+    if DROP["after"] == 0:
+        DROP["after"] = None
+        return True
+    DROP["after"] -= 1
+    return False
+
+def _command(op, addr, n):
+    if op == 0x02:
+        WRITES["prog"] += 1
+    elif op == 0x20:
+        WRITES["erase"] += 1
+
+flash.after_op, flash.drop, flash.on_command = _after_op, _drop, _command
 
 def entry(i):
     o = ent_off(i)
@@ -167,9 +167,7 @@ STUBS = {0x60013168: "held", 0x60015980: "text", 0x6001B8D6: "set_last", 0x6000E
          0x60050F70: "f", 0x60010148: "notify", 0x60053F38: "f", 0x60053B40: "f",
          0x60051E20: "repaint_panel", 0x60016386: "stepview",
          0x600522E4: "range", 0x600521E8: "f", 0x6000FC78: "commit",
-         0x600108AA: "fl_begin", 0x600108BA: "fl_end",
-         0x6004BB4C: "led_set", 0x600186FA: "hmi_set",
-         0x60003E54: "fl_prog", 0x60003EDA: "fl_erase", 0x60003EA2: "fl_read"}
+         0x6004BB4C: "led_set", 0x600186FA: "hmi_set"}
 def hook(uc, addr, size, _):
     if addr in STUBS:
         name = STUBS[addr]
@@ -204,16 +202,6 @@ def hook(uc, addr, size, _):
             log.append(("restart", r8(S["chain_wrapping"])))
         elif name == "commit":
             log.append(("commit", r1, r2))          # FUN_6000FC78(_, area, slot, _)
-        elif name == "fl_prog":
-            WRITES["prog"] += 1
-            fl_prog(r0, r1, r2, through_chip=True)
-        elif name == "fl_erase":
-            WRITES["erase"] += 1
-            fl_erase(r0, through_chip=True)
-        elif name == "fl_begin":
-            PROTECT["on"] = False
-        elif name == "fl_end":
-            PROTECT["on"] = True
         elif name == "led_set":
             sp = uc.reg_read(UC_ARM_REG_SP)
             log.append(("led", r0, r1, r2, uc.reg_read(UC_ARM_REG_R3) & 0xFFFFFFFF,
@@ -224,23 +212,25 @@ def hook(uc, addr, size, _):
             log.append(("hmi_set", r0, r1, r2))
             if r0 == 0x6007ED24:
                 w32(A4 + 4 * r1, r2)
-        elif name == "fl_read":
-            READS["n"] += 1
-            fl_read(r0, r1, r2)
         uc.reg_write(UC_ARM_REG_R0, ret)
         uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR) | 1)
 uc.hook_add(UC_HOOK_CODE, hook)
+def count_read(uc, addr, size, _):     # FUN_60003EA2 runs; this only counts the calls
+    READS["n"] += 1
+uc.hook_add(UC_HOOK_CODE, count_read, begin=0x60003EA2, end=0x60003EA2)
 
 def call(fn, *args):
     for reg, v in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3), args):
         uc.reg_write(reg, v & 0xFFFFFFFF)
     uc.reg_write(UC_ARM_REG_SP, 0x7000E000)
     uc.reg_write(UC_ARM_REG_LR, RET | 1)
+    closed = flash.sr & flash.BP == flash.BP
     try:
-        uc.emu_start(fn | 1, RET, count=400000)
+        uc.emu_start(fn | 1, RET, count=2000000)
     except PowerCut:
-        PROTECT["on"] = True           # the power is gone: the chip is not left writable
-    if not PROTECT["on"]:
+        flash.power_cycle()            # the status register keeps what it had (non-volatile)
+        return uc.reg_read(UC_ARM_REG_R0)
+    if closed and flash.sr & flash.BP != flash.BP:
         PROTECT["left_open"] += 1      # the payload returned with the chip still writable
     return uc.reg_read(UC_ARM_REG_R0)
 
@@ -1107,7 +1097,7 @@ for p in range(16):
             bad.append(((p, b), slot_rows(0)[0], want))
 expect("log: every bar reads back its newest entry after wrap and compaction", bad, [])
 expect("log: the log still fits in its five blocks", len(entries()) <= NENT, True)
-expect("flash: no program or erase was issued while the chip was protected", PROTECT["refused"], 0)
+expect("flash: no program or erase was issued while the chip was protected", refused(), 0)
 expect("flash: every write session was closed again before returning", PROTECT["left_open"], 0)
 
 # --- the sequence number wraps at 2^16, and a save just after the wrap must be the newest ----
@@ -1364,6 +1354,43 @@ cut_save(None)
 expect("power cut: the completed save stores the new bar",
        (bar_entry(15, 0) or {}).get("rows")[0][0], 0x3000)
 
+# --- 7.1b the power goes halfway through an erase or a program -----------------------
+# A cut between two operations leaves whole sectors and whole entries. A cut inside one leaves a
+# half-erased sector or a half-programmed entry (tests/periph.py, cut_at), and the boot scan must
+# still find every stored bar.
+def torn_save(k):
+    FL[:] = snapshot
+    flash.protect_all()
+    cold_boot()
+    w32(SETUP + 8, 15)
+    w32(SETUP + 0x3C, 15)
+    set_counts(1, 0)
+    sync_panel()
+    w32(slot_addr(0) + 4 * 4, 0x3000)
+    flash.ops.clear()
+    flash.cut_at = k
+    log.clear()
+    call(S["chain_commit"], 0, 4, 16, 0)
+    hit = any(st == "cut" for *_, st in flash.ops)
+    flash.cut_at = None
+    cold_boot()
+    sync_panel()
+    return hit
+
+lost = []
+for k in range(OPS):
+    if not torn_save(k):
+        lost.append((k, "no cut"))
+        continue
+    bad = stored_bad()
+    if bad:
+        lost.append((k, bad[:4]))
+    e = bar_entry(15, 0)
+    if e is not None and e["rows"][0][0] != 0x3000:
+        lost.append((k, "new bar torn"))
+expect("torn: every stored bar survives a cut halfway through each erase and program", lost, [])
+flash.protect_all()
+
 # --- 7.2b a flash that drops one program during a compaction ------------------------
 # Both copies are read back: a dropped copy stops the compaction before the source is gone (the
 # copy-to-scratch phase) or keeps the scratch block as the only copy of the entries that were not
@@ -1415,13 +1442,14 @@ expect("wrap: the restart runs with the wrap mark set, then the mark is cleared"
 # that never opens a write session, which is exactly what happened before.
 uc.mem_write(0x7000E800, b"\0\0\0\0")
 fl_erase(0x3D8000)
-PROTECT["on"] = True
-fl_prog(0x3D8000, 4, 0x7000E800, through_chip=True)
-dropped = FL[0x3D8000:0x3D8004]
-PROTECT["on"] = False
-fl_prog(0x3D8000, 4, 0x7000E800, through_chip=True)
+flash.protect_all()
+call(0x60003E54, 0x3D8000, 4, 0x7000E800)
+dropped = bytes(FL[0x3D8000:0x3D8004])
+call(0x600108AA)
+call(0x60003E54, 0x3D8000, 4, 0x7000E800)
+call(0x600108BA)
 expect("flash model: a protected chip drops a program, an open session accepts it",
-       (dropped, FL[0x3D8000:0x3D8004]), (b"\xff" * 4, b"\0\0\0\0"))
+       (dropped, bytes(FL[0x3D8000:0x3D8004])), (b"\xff" * 4, b"\0\0\0\0"))
 
 # --- a bar left in the log must not overwrite a pattern that has no sequence any more ------
 # A bar recorded while the pattern had a sequence stays in the log after A+B+CLEAR. The stock

@@ -388,7 +388,9 @@ do one operation and close it, and `fl_put` reads the entry's magic back. A save
 shows **`FAIL`** on the numeric display instead of the bar number. (The first hardware build
 called the primitives without the session, so every program was dropped: edits vanished and a
 revisited bar played the pattern's own steps. Emulation could not see that, because the simulated
-flash accepted every write; `tests/emu_chain.py` now models the protect latch.)
+flash accepted every write; `tests/emu_chain.py` now models the protect latch. Since then the
+test runs the firmware's own flash drivers on the register model of `tests/periph.py`, so the
+session, the polling and the mode switches are the firmware's code, not stubs.)
 
 **A bar is only written when it changed.** `store_save` hashes the working copy before appending:
 FNV-1a over words 1..55 of area 4 slot 0 (word 0 is the VARI and is left out, so a side does not
@@ -680,9 +682,12 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   each bar read back through the payload's index);
   the sequence number wrapping from 0xFFFF to 0 (an entry written after the wrap still wins); the
   stock commit for a pattern the patch has not loaded; `chain_wrap` marks the restart. The
-  simulated flash models the chip's block protection: program/erase outside a write session are
-  dropped, as on the unit, and the run checks that every operation happened inside a session and
-  every session was closed. The step view follows the playing bar: the first paint of the bar
+  payload's flash calls run the firmware's drivers on the flash model of `tests/periph.py`, which
+  has the chip's block protection: program/erase outside a write session are dropped, as on the
+  unit, and the run checks that every operation happened inside a session and every session was
+  closed. A power cut is tested after each of the 19 operations of a save with compaction and
+  also halfway through each of them (a half-erased sector, a half-programmed entry): every stored
+  bar survives. The step view follows the playing bar: the first paint of the bar
   already in the working copy does not reload it, a bar change does and writes nothing when the
   bar was not edited, an edit made while playing is stored exactly once at the next boundary, the
   same bar on the other side is reloaded, a pattern change is noticed before the follow (so the
