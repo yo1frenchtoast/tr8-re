@@ -635,6 +635,9 @@ void chain_var(void *obj)
     if (!inited || (int)(area_slot(TR8_AREA_SETUP, 0)[TR8_SETUP_PATTERN] & 0xF) != (int)cur_pat) {
         *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
         TR8_FN_VARIATION(obj);
+#ifdef CHAIN_DEBUG
+        show4(0x2D2D2D49u);                     /* "I---": the panel has not seen the pattern */
+#endif
         return;
     }
     v = (int)TR8_SEQ_VARI;
@@ -642,6 +645,10 @@ void chain_var(void *obj)
     nb = clen(1);
     if ((!na && !nb) || (v == 0 && !na) || (v == 1 && !nb)) {
         TR8_FN_VARIATION(obj);                  /* side was never selected: stock */
+#ifdef CHAIN_DEBUG
+        show4('S' | ((uint32_t)('0' + (v & 7)) << 8) | ((uint32_t)('0' + na) << 16) |
+              ((uint32_t)('0' + nb) << 24));    /* "S" VARI Na Nb */
+#endif
         return;
     }
     /* A wrap advances one bar; a fresh start begins at the bar last selected with A/B + pad
@@ -692,6 +699,12 @@ void chain_var(void *obj)
     chain_row[side] = (uint8_t)bar;
     chain_side = (uint8_t)side;
     *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
+#ifdef CHAIN_DEBUG
+    /* VARI as the sequencer read it, side, bar, VARI in the working copy: "2A12" */
+    show4((uint32_t)('0' + (v & 7)) | ((uint32_t)('A' + side) << 8) |
+          ((uint32_t)('1' + bar) << 16) |
+          ((uint32_t)('0' + (area_slot(TR8_AREA_PATTERN, 0)[0] & 7)) << 24));
+#endif
 }
 
 /* Replaces "bl FUN_600095F0" at 0x600098CA (pattern wrap). */

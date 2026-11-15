@@ -548,6 +548,13 @@ all 16 patterns.
 
 ## If the gesture does nothing
 
+A diagnostic build: add `#define CHAIN_DEBUG 1` at the top of `chain.c` and run `build.sh`. At
+every pass the display then shows what `chain_var` chose: `2A12` = `VARI` as the sequencer read
+it, side, bar, `VARI` in the working copy; `S020` = stock pass (`VARI`, Na, Nb); `I---` = the
+panel has not seen the pattern yet. Remove the line and rebuild before committing the payloads.
+In A+B the A/B LEDs are not a sign of the playing side in TR-REC: there they show the side being
+edited ([FINDINGS.md](FINDINGS.md) section 9).
+
 1. **Variation buttons first, pad second.** Hold A (or B, or A+B) and *then* press the pad; the
    press of the pad is what the patch sees. Pressing the pad first and adding A afterwards does
    nothing.
@@ -640,7 +647,7 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 312 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 313 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..8` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, `A/B + CLEAR + pad n` sets one side to exactly *n* in both directions without touching the
@@ -794,8 +801,12 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   only). `chain_view` loaded each playing bar with `slot_load`, which writes the side into word 0
   of the working copy; that word is the panel's `VARI`, and the firmware copies it to the player
   at every restart, so A+B became B at the first B bar. `chain_view` now keeps word 0. Emulation:
-  312 chain checks, including A+B through A1 A2 B1 B2 A1 A2 with the panel following (fails on
-  the fourteenth build). Hardware: not done yet.
+  313 chain checks, including A+B through A1 A2 B1 B2 A1 A2 with the panel following, and A+B
+  chosen while A plays (fails on
+  the fourteenth build). Hardware: passed (2026-11-15, `motion-poly-chain`): A1 A2 B1 B2 loops in
+  A+B, with distinct A and B content. A diagnostic build (`#define CHAIN_DEBUG`, see "If the
+  gesture does nothing") showed `2A12 2A22 2B12 2B22`. In TR-REC the A/B LEDs stay on the side
+  being edited, as in stock; in INST PLAY they follow the side that plays.
 
 ## Hardware test (2026-11-13): the tenth build passed
 

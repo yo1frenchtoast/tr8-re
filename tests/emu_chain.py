@@ -1661,4 +1661,26 @@ expect("A+B: the step view follows each bar and A+B keeps going",
        order, ["A1", "A2", "B1", "B2", "A1", "A2"])
 expect("A+B: ... the working copy's VARI is still A+B", r32(slot_addr(0)), 2)
 
+# The unit's gesture: A plays, then A+B is chosen while it plays (B pressed with A held).
+fresh(counts=(2, 2))
+for k in range(2):
+    put_entry(k, 10 + k, 0, k, 0x0A00 + k, 0x0B00 + k)
+cold_boot()
+sync_panel()
+w32(slot_addr(0), 0)
+w32(RUN, 1)
+w32(VARI, 0)
+r = start(vari=0)
+order = []
+for k in range(8):
+    order.append("AB"[r[1]] + str(r[2] + 1))
+    panel()
+    if k == 2:
+        w32(slot_addr(0), 2)         # FUN_600186FA(Ptn, 0, 2): VARI = A+B, during A1
+    w32(VARI, r32(slot_addr(0)))
+    r = wrap()
+w32(RUN, 0)
+expect("A+B: chosen while A plays, B follows the A bars", order,
+       ["A1", "A2", "A1", "A2", "B1", "B2", "A1", "A2"])
+
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)
