@@ -157,7 +157,30 @@ The function of each block is not known. The block pair is perhaps two audio or 
 NXP LPC17xx/18xx, Microchip SAM3/SAM4, Fujitsu FM3, Toshiba TMPM). For example, an STM32 has its
 flash at `0x08000000` and its RCC at `0x40023800`. [hyp]
 
-The second processor (`appB`, section 1) is the same kind of chip [code]:
+The board photos answer the question [unit]. The TR-8 has **two Roland ESC2 chips**, both
+marked `Roland ESC2 / 5100015275 / JAPAN / 1404 Z68 / E1`. They are on the board
+`PWB 5100038970`, with the MIDI jacks, the USB port and the power input. There is no other
+processor on this board or on the main board.
+
+| Board | Part | Function |
+|---|---|---|
+| `PWB 5100038970` | 2 x Roland ESC2 (`5100015275`) | the two processors |
+| `PWB 5100038970` | ISSI `IS42S16160D-7TL` (IC5) | SDRAM, 256 Mbit (32 MB) |
+| `PWB 5100038970` | ISSI `IS42S16400F-7TL` (IC10) | SDRAM, 64 Mbit (8 MB) |
+| main board `5100035503` | ISSI `IS42S16800F-7TL` (IC8) | SDRAM, 128 Mbit (16 MB) |
+| main board | AKM `AK5357VT` (IC16) | audio ADC (external input) [hyp] |
+| main board | 2 x AKM `AK4385ET` (IC9, IC18) | audio DACs (outputs) [hyp] |
+| main board | IC4, SO-8, marking not readable | the 4 MB serial flash [hyp] |
+
+The main board also carries the crossed-out label `SYSTEM-1 MAIN BOARD ASSY`, so Roland made it
+for the System-1 too.
+
+The ESC2 contains the ARMv7-M core described above [code]. Only the 32 MB SDRAM agrees with the
+application's memory pool (section 4, table), so IC5 is probably the main processor's SDRAM
+[hyp]. Which SDRAM each ESC2 uses is not traced on the board.
+
+The second processor (`appB`, section 1) is the same chip [unit: markings]. The code agrees
+[code]:
 
 - its startup code is the same ARMv7-M sequence (`msr basepri`);
 - it also runs at `0x60000000`;
@@ -165,9 +188,8 @@ The second processor (`appB`, section 1) is the same kind of chip [code]:
   `cmni_usb_dev_drv`);
 - it uses the same peripheral blocks (`0x40028000`, `0x4002D000`, `0x40040000`, `0x40100000`).
 
-With the names `ESC91.000` (boot loader) and `BSSESC2` (`appB`), the TR-8 probably has **two
-Roland custom SoCs ("ESC2") with a Cortex-M3 core** [hyp]. No public datasheet or teardown
-confirms it. The markings of the chips on the board would answer the question.
+The names `ESC91.000` (boot loader) and `BSSESC2` (`appB`) agree with the markings. There is
+no public datasheet for the ESC2.
 
 Consequence for emulation: the core and the NVIC are standard, but no emulator has models for
 these peripherals. Each model must come from its driver in the fast code
@@ -722,9 +744,10 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 3. Is the 16-step limit only in the application, or also in the sound engine (fast code, second
    processor)?
 4. What runs on the second processor (`appB`) and over which link? It is probably the same
-   chip as the main processor (section 4, "Processor and peripherals"). [hyp]
-9. Which chip is the main processor? Read the markings on the board (section 4, "Processor and
-   peripherals").
+   It is the same chip as the main processor, a Roland ESC2 (section 4, "Processor and
+   peripherals"). [unit]
+9. ~~Which chip is the main processor?~~ Answered: two Roland ESC2 chips, read on the board
+   (section 4, "Processor and peripherals"). [unit]
 5. LED function arguments; display text lifetime and how to keep a message visible.
 6. Button ids above 0x2B (START/STOP, PATTERN, ...). LAST STEP is 0x1A (section 9).
 7. ~~The "grow the image" method (section 12) on a real unit.~~ Answered: the bar chain's

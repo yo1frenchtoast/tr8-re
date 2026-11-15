@@ -248,7 +248,7 @@ the gaps between the tests and a real TR-8, from the easiest to close to the har
    the real kernel (it is in the fast code), the emulator needs the Cortex-M exception model
    (NVIC, SVC, PendSV). Unicorn does not have it; Renode and QEMU do. The tick comes from a
    vendor timer, not from SysTick, so that timer needs a model too.
-3. **No peripherals.** The processor is probably a Roland custom SoC with no public datasheet
+3. **No peripherals.** The processor is a Roland custom chip (ESC2) with no public datasheet
    ([FINDINGS.md](FINDINGS.md), "Processor and peripherals"). Each model (timers, ADC, buttons,
    display, LEDs, MIDI UART, SPI flash) must come from its driver in the fast code. An SPI flash
    model can cut the power at each step, which tests the contract of section 7.
