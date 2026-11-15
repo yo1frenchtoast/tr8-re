@@ -236,6 +236,19 @@ Two kinds of tests are needed:
 
 `tests/run_all.sh TR8_UPD.BIN` builds every patch variant and runs all tests.
 
+### Peripheral models
+
+`tests/periph.py` has register models of the serial flash controller (with the 4 MB chip and its
+window at `0x03000000`), the MIDI UART and the ROM function table at `0x02003000`. A test maps
+them into Unicorn and runs the **firmware's own drivers** on them instead of stubbing the
+drivers. `tests/emu_periph.py` does this for the flash read, erase and program functions, the
+write session (`FUN_600108AA` ... `FUN_600108BA`), and the MIDI receive and transmit interrupts.
+The flash model can cut the power halfway through an erase or a program (`cut_at`).
+
+The models follow our reading of the drivers. What the drivers do not show (the ROM routines,
+the chip's protection and page behaviour) is marked [hyp] in `periph.py`. So a pass shows that the
+firmware and the model agree, not that the unit behaves so.
+
 ### Limits of the emulation
 
 The tests emulate the CPU only. A passing test does not prove that the unit works. These are
@@ -251,9 +264,8 @@ the gaps between the tests and a real TR-8, from the easiest to close to the har
 3. **No peripherals.** The processor is a Roland custom chip (ESC2) with no public datasheet
    ([FINDINGS.md](FINDINGS.md), "Processor and peripherals"). Each model (timers, ADC, buttons,
    display, LEDs, MIDI UART, SPI flash) must come from its driver in the fast code. The table
-   of blocks in FINDINGS.md gives the known registers: the serial flash controller and the MIDI
-   UART are the best known. An SPI flash model can cut the power at each step, which tests the
-   contract of section 7.
+   of blocks in FINDINGS.md gives the known registers. The serial flash and the MIDI UART have
+   models ("Peripheral models" above); the others do not.
 4. **No second processor and no sound.** What runs on `appB` is not known. The link is
    probably USB (host on the main processor) [hyp]. At best, a model can record the commands
    that the main processor sends to it.
@@ -308,6 +320,10 @@ because the updater needs step [1] held at power-on.
   data the stock save now keeps: the next stock save would write the old data into the slot. Check
   the condition (for example "this pattern has a sequence") on every load path, not only on the
   save.
+- `FUN_60003E54` (flash program) sends 256-byte page programs from the address it gets, not from
+  page boundaries. A write that does not start on a 256-byte boundary and crosses a page end wraps
+  inside the page on a standard SPI flash [hyp: chip not identified]. Keep each write inside one
+  page, or start it on a page boundary. Test: `tests/emu_periph.py`, "page".
 - A comment or a document that describes the code must change in the same commit as the code.
   Addresses, block counts and sizes in FINDINGS.md that no longer match the code mislead the next
   author and the reviewer.

@@ -147,7 +147,7 @@ blocks `0x4014xxxx`-`0x4017xxxx` that the first scan found are such constants, n
 | Block | Role | Evidence | Tag |
 |---|---|---|---|
 | `0x40005000` | **Serial flash controller** (the 4 MB flash) | `FUN_60003D74`-`FUN_60003F8A` write the SPI opcode to +0x18: `0x01` (write status, data `0x3C`), `0x02` (page program), `0x20` (sector erase). +0x1C address, +0x10 length (`0x60000000` + byte count), +0x30 transmit FIFO, +0x08 FIFO level, +0x00 bits 29-30 mode (0 = memory-mapped read, 3 = command). | [code] |
-| `0x40029800` | **MIDI UART** | `midi_drv.cpp` (`FUN_60006438`) sets channel 6 to 31250 baud. The receive interrupt (fast code, load address `0x6012F074`) reads the status at `0x40029804` (error bits `0x3800`), the byte at `0x40029808` and the FIFO level at `0x40029818`. | [code] |
+| `0x40029800` | **MIDI UART** | `midi_drv.cpp` (`FUN_60006438`) sets channel 6 to 31250 baud through the ROM table. The receive interrupt (fast code, load address `0x6012F074`) reads the status at `0x40029804` (error bits `0x3800`; bit 11 is reported as error 3, the others as error 2; writing bit 15 clears them), the byte at `0x40029808` and the receive FIFO level at `0x40029818` bits 8-15. The transmit service (load address `0x6012F0CE`) passes `0x40029808` to `FUN_600069A0`, which writes up to 16 queued packets there, then clears bit 9 of `0x40029814` (transmit interrupt enable) when the queue is empty. | [code] |
 | `0x40029C00` | Second serial channel, same layout as `0x40029800` | The boot loader initialises both with the same code (`0x01001AC6`, `0x01001B5C`). Use not known. | [code] |
 | `0x4002C000` | **ADC** (knobs and faders) | `ad_drv2.c`: `FUN_60001C00` configures it. The interrupt (load address `0x6012B260`) reads 8 results at +0x10-+0x2C for one of 8 multiplexer ports (`ADDRV_CONFIG_NUMOF_MPX`). `FUN_6012B34C` returns the median of 4 samples. | [code] |
 | `0x40025000` | **Timer**, channels 0x20 apart | `ad_drv2.c` (`FUN_60001AD4`): period `0x2616` at +0x00, control `0x46` at +0x08. The same values at +0x20/+0x28 (`FUN_60001DC0`). It paces the ADC scan [hyp]. | [code] |
@@ -157,6 +157,33 @@ blocks `0x4014xxxx`-`0x4017xxxx` that the first scan found are such constants, n
 | `0x40100000`, `0x40101000` | DSP interface [hyp] | Only fast code uses them, from the `esc2_dsp_drv.cpp` paths (`FUN_6012C9EC` and others). `appB` uses them too. | [hyp] |
 | `0x40010000` | System control (clocks, reset) [hyp] | About 30 small read-modify-write functions, from `task_sys.cpp`, `task_dsp.cpp` and the drivers. | [hyp] |
 | `0x40001000`, `0x40002000`, `0x40012000`, `0x40017000`, `0x40023000`, `0x40030000`, `0x40040000` | Not known | Few accesses each. `0x40012000`: `esc2_dsp_drv.cpp` path. `0x40040000`: also used by `appB`. | |
+
+**MIDI transmit queue** [code]. The MIDI context `0x200057E4` (tightly coupled RAM) holds at +4
+a ring of 4-byte USB-MIDI packets (byte 0 = code index number, bytes 1-3 = the MIDI message):
+`{vtable, start, end, read, write}`, vtable `{lock, unlock}`. `FUN_6000758A` adds a packet,
+`FUN_600075C8` takes one. `FUN_60006964` sends a packet's bytes; the byte count comes from a
+table indexed by the code index number (`FUN_60006944`), and `FUN_600068F6` leaves out a status
+byte equal to the last one sent (running status, kept at context +0x160). Checked in emulation:
+two Note On on the same channel go out as `90 24 7F 26 40` (`tests/emu_periph.py`).
+
+**ROM function table** [code]. The firmware calls on-chip ROM routines through a table of
+function pointers at `0x02003000`. The ROM is not in the update file. Entries used: the boot
+loader calls +0x0C, +0x14, +0x18, +0x58; the application calls +0x08, +0x0C, +0x58, +0x70,
++0x7C, +0xC8, +0xCC, +0xE0, +0xF0, +0x134, +0x27C, +0x280, +0x284. The flash driver uses +0xCC
+before each command (write enable [hyp]), +0xF0 until it returns 0 (controller busy [hyp]) and
++0xC8 until bit 0 is clear (read the chip status [hyp]). `midi_drv.cpp` configures the UART with
++0x280(6), +0x27C(6, 0x40) and +0x284(6, 31250, 0).
+
+**Serial flash registers** [code], from `FUN_60003D74`-`FUN_60003F8A`: +0x00 mode in bits 29-30
+(the driver writes `0x80001000` for command mode 0, `0xE0001000` for memory-mapped mode 3);
++0x08 transmit FIFO level in bits 0-4, `0x7F0000` written after each command; +0x10 data length,
+`0x60000000` added when there is an address; +0x18 SPI opcode (the write starts the command);
++0x1C address; +0x30 transmit FIFO, one word per write. A program sends the first word before the
+opcode and the rest after it. `FUN_60003EA2` (read) switches to mode 3 and reads the window at
+`0x03000000`; the erase and program functions switch to mode 0. Each function puts the caller's
+mode back. `FUN_60003E54` splits a program into 256-byte commands from the address it gets, so a
+write that crosses a page end must start on a page boundary ([DEVELOPING.md](DEVELOPING.md),
+"Pitfalls found in review").
 
 The second processor runs a USB **device** driver (`cmni\cmni_usb_dev_drv.cpp` in `appB`). With the
 USB host on the main processor, the link between the two ESC2 is probably USB [hyp]. Which chip

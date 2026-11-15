@@ -35,6 +35,9 @@ run poly-chain patched_poly_chain emu_chain.py
 printf '%-14s ' "  + poly";    $PY tests/emu_poly.py work/patched_poly_chain/appA.bin | tail -1
 run motion-poly-chain patched_mpc emu_chain.py
 printf '%-14s ' "  + combo";   $PY tests/emu_combo.py work/patched_mpc/appA.bin --payload patches/chain/payload_motion_poly.json | tail -1
+# The firmware's flash and MIDI drivers on the register models (tests/periph.py), stock and grown image
+printf '%-14s ' "periph";      $PY tests/emu_periph.py work/patched/appA.bin | tail -1
+printf '%-14s ' "  + mpc";     $PY tests/emu_periph.py work/patched_mpc/appA.bin | tail -1
 # Web flasher: same output as tr8patch.py (needs Node 18+; skipped without it)
 if command -v node > /dev/null; then
     $PY -I tools/build_site.py > /dev/null
