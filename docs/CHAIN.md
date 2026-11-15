@@ -194,6 +194,11 @@ overwritten by the retry.
   button gives the pads back to whatever the screen was showing (A+B keeps the length gesture and
   leaves the pads stock). A save the flash chip refused shows **`FAIL`** instead of the bar
   number (see Storage).
+- **While a pattern with a sequence plays, the display shows the bar that plays** (`  A1`,
+  `  B2`), once per pass. When the firmware shows something else (the tempo while it is changed,
+  a knob value), the next pass brings the bar back. It is not written while A or B is held (the
+  gestures show their own text), and a `FAIL` stays until the next button press. A pattern with
+  no sequence keeps the stock display.
 - The bar number (`  A1`) is only the confirmation of the pad press. Releasing VARIATION A or B
   calls the firmware's own repaint helper `FUN_60051E20` (`0x44` on the panel object
   `0x60149B8C`), so the panel redraws its pads and its own numeric text on the next pass and the
@@ -235,9 +240,11 @@ their state apart:
 | `chain_commit` | `0x6001B7F4`, inside `FUN_6001B7D8` (pattern save) | panel | [code] |
 | `chain_pad` (probe only) | `0x600199F6`, inside `FUN_6001961E` (global button handler) | panel | [code] |
 
-The sequencer task writes `chain_pos`, `chain_side`, `chain_row` and `chain_wrapping` only. The
+The sequencer task writes `chain_pos`, `chain_side`, `chain_row`, `chain_wrapping` and
+`chain_pass` only (`chain_pass` last, after the row; the panel reads it first and shows the bar on
+the display from `chain_view`, so the display is written by the panel task only). The
 panel task writes `cur_pat`, `cur_bar`, `cur_side`, `wc_bar`, `chain_sel`, `chain_swallow`, `chain_jump`,
-`expand_armed`, the log index and the playback cache. The expand and the copy A to B run in
+`expand_armed`, `shown_pass`, `text_hold`, the log index and the playback cache. The expand and the copy A to B run in
 `chain_release` (panel task): their log writes, their Ptn setter calls and the side length all
 happen there, like the bar save of `chain_edit`. Each hand-off between them is one byte written last, after
 the data it describes: `chain_jump` (the bar the panel just selected) and the per-bar
@@ -417,7 +424,7 @@ dropped program before the erase leaves both copies and takes the same path.
 `sync()`, which scans on its first pass (or when the pattern changed) and then fills the playback
 cache; the sequencer never calls it. The index is 128 bytes (16 patterns x 8 bars), which
 no longer fits the developer-dump region, so it lives with the code **in the application image**
-above the firmware bss (`0x60282378` onward, `.bss`); the image grows to cover it and the RTOS
+above the firmware bss (`0x602823D4` onward, `.bss`); the image grows to cover it and the RTOS
 pool start moves by 64 KB (see "Code space"). The image is decompressed from flash at every boot,
 so the index is in place and zeroed before `store_init` runs — there is no patch RAM and no boot
 hook for the chain.
@@ -507,17 +514,17 @@ space"):
 
 | What | Where | Size |
 |---|---|---|
-| Code, `.data` | `0x60281200`-`0x60282375` in the application image | 4468 + 2 bytes |
-| Bar index, playback cache, expand buffers and other state | `0x60282378`-`0x60282E5F` (`.bss`, in the image) | 2792 bytes |
+| Code, `.data` | `0x60281200`-`0x602823D1` in the application image | 4560 + 2 bytes |
+| Bar index, playback cache, expand buffers and other state | `0x602823D4`-`0x60282EBF` (`.bss`, in the image) | 2796 bytes |
 
 The cache alone is 2048 bytes (`bar_ram[2][8][32]`), so the patcher reserves 8 KB for the payload
-region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x60282E60`.
+region (`0x60281200`-`0x60283200`); the code, data and bss end at `0x60282EC0`.
 
 The firmware's bss ends at `0x60280987` (the startup code zeroes it) and the RTOS pool starts at
 `0x60280988`. The zero-fill bounds are their own startup literals (`0x601264EC` at `0x6000015C`,
 size `0x15A49C` at `0x60000160`), so the pool move does not extend the zeroing over the chain. The
 patcher writes the payload at `0x60281200` and **extends the decompressed image
-to `0x60282E60`** with zeros; the boot loader decompresses that size to `0x60000000` without a
+to `0x60282EC0`** with zeros; the boot loader decompresses that size to `0x60000000` without a
 fixed cap (it is bounded only by `destination + decompressed size`, verified in `FUN_01000B3C` /
 `0x01000C76`). The startup zero-fill still stops at `0x60280987`, so the code and its state
 survive. The patcher then moves the RTOS pool start literal (`0x600104A8`) from `0x60280988` to
@@ -531,9 +538,9 @@ their sites plus these sites ([`tools/merge_payloads.py`](../tools/merge_payload
 build is the exception: it is still the old cave build (`probe.c`, `probe.ld`, 568 + 14 bytes,
 stock pool start), because it only exists to show the gesture on a unit.
 
-The image growth costs about 165 KB of compressed application (0xA5CF7 -> 0xCF28A bytes, from
-0x1309E0 to 0x282E60 decompressed): the zeros between the old image end and the new code compress
-well, and the module still ends at file offset 0xFF2CA, far below `appB` at 0x280000. The update
+The image growth costs about 165 KB of compressed application (0xA5CF7 -> 0xCF2DB bytes, from
+0x1309E0 to 0x282EC0 decompressed): the zeros between the old image end and the new code compress
+well, and the module still ends at file offset 0xFF31B, far below `appB` at 0x280000. The update
 file keeps its fixed 4 MB size. The patched application is recompressed by `tr8fw.pack` / the web
 flasher's compressor, and both produce the same bytes.
 
@@ -647,7 +654,7 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
 
 ## Test history
 
-- Emulation (`tests/emu_chain.py`, 313 checks): all hook sites of the real build branch into the
+- Emulation (`tests/emu_chain.py`, 325 checks): all hook sites of the real build branch into the
   payload (the probe also has `chain_pad`); the gesture through the press dispatch (`A/B + pad
   1..8` sets the bar and that side's length, `A+B + pad n` sets both, `A+B+CLEAR + pad` resets
   both, `A/B + CLEAR + pad n` sets one side to exactly *n* in both directions without touching the
@@ -796,7 +803,7 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   (`FAIL`, length kept), a power cut after the first write, and playback of the new bar.
   Hardware: passed (2026-11-15, `motion-poly-chain`, with the reflash test): every step of
   "Hardware test: expand and copy A to B" behaved as described.
-- Fifteenth build (this one): **A+B plays both sequences again**. On the unit, A+B with two bars
+- Fifteenth build: **A+B plays both sequences again**. On the unit, A+B with two bars
   on each side played the A bars, then the B bars, and then stayed on B (the A/B lights showed B
   only). `chain_view` loaded each playing bar with `slot_load`, which writes the side into word 0
   of the working copy; that word is the panel's `VARI`, and the firmware copies it to the player
@@ -807,6 +814,11 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   A+B, with distinct A and B content. A diagnostic build (`#define CHAIN_DEBUG`, see "If the
   gesture does nothing") showed `2A12 2A22 2B12 2B22`. In TR-REC the A/B LEDs stay on the side
   being edited, as in stock; in INST PLAY they follow the side that plays.
+- Sixteenth build (this one): **the bar that plays is on the display** (`  A1`, `  B2`), once per
+  pass, written by the panel task (`chain_view`) from a pass counter that `chain_var` publishes.
+  The idea came from the diagnostic build, which wrote it from the sequencer. Emulation: 325
+  chain checks (once per pass, a one-bar side shown again at every pass, not while A is held, a
+  `FAIL` kept until a press, nothing when stopped or with no sequence). Hardware: not done yet.
 
 ## Hardware test (2026-11-13): the tenth build passed
 

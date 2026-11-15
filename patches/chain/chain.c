@@ -62,8 +62,9 @@
  * chain_view, chain_press, chain_release (with the expand and copy A->B it runs), chain_edit,
  * chain_led4, chain_commit and the log/store code run in the panel task. The sequencer never touches the flash: it reads a RAM copy of the bars that
  * the panel task fills (bar_ram). State has one writer: the sequencer writes chain_pos,
- * chain_side, chain_row and chain_wrapping; the panel writes cur_pat, cur_bar, cur_side, wc_bar,
- * chain_sel, chain_jump, chain_swallow, expand_armed and the log index.
+ * chain_side, chain_row, chain_wrapping and chain_pass; the panel writes cur_pat, cur_bar,
+ * cur_side, wc_bar, chain_sel, chain_jump, chain_swallow, expand_armed, shown_pass, text_hold
+ * and the log index. Only the panel writes the display.
  */
 #include "tr8_v161.h"
 
@@ -145,6 +146,9 @@ static volatile uint32_t bar_ram[2][NBARS][ENTW];
 
 static uint8_t jump_seen;        /* sequencer: last chain_jump value it acted on */
 static uint8_t view_hold;        /* panel: sync() just changed pattern, skip one follow */
+static volatile uint8_t chain_pass; /* sequencer: +1 at every pass the chain plays */
+static uint8_t shown_pass;       /* panel: chain_pass whose bar is on the display */
+static uint8_t text_hold;        /* panel: a FAIL is on the display, keep it until a press */
 
 static uint32_t ebuf[ENTW];
 
@@ -567,6 +571,7 @@ static void show_ab(int n)
 static void show_fail(void)
 {
     show4(0x4C494146u);                   /* "FAIL" */
+    text_hold = 1;                        /* the playing bar must not hide it */
 }
 
 /* Fill the playback cache for pattern `pat`. Panel task only: it is the only flash reader. */
@@ -698,6 +703,7 @@ void chain_var(void *obj)
      * alone. */
     chain_row[side] = (uint8_t)bar;
     chain_side = (uint8_t)side;
+    chain_pass = (uint8_t)(chain_pass + 1);  /* last: the panel shows this pass's bar */
     *TR8_HMI_PANEL |= TR8_HMI_REPAINT_PADS;
 #ifdef CHAIN_DEBUG
     /* VARI as the sequencer read it, side, bar, VARI in the working copy: "2A12" */
@@ -729,11 +735,13 @@ void chain_wrap(void *obj)
 void chain_view(void *obj)
 {
     int side, bar;
+    uint8_t pass;
 
     sync();                        /* the panel may have switched pattern: not our bar's copy */
     if (view_hold) {               /* sync() just loaded bar 1 of the new pattern */
         view_hold = 0;
     } else {
+        pass = chain_pass;         /* before the row: chain_var writes it after the row */
         side = (int)chain_side;
         bar = (int)chain_row[side];
         /* Follow only while the pattern has a side sequence: in stock playback chain_row is
@@ -753,6 +761,15 @@ void chain_view(void *obj)
             vari = wc[0];
             slot_load(cur_pat, bar, side);
             wc[0] = vari;
+        }
+        /* The bar that plays on the display ("  A1"), once per pass, so it comes back after the
+         * firmware showed something else (the tempo). Not while A or B is held (their gestures
+         * show their own text) and not over a FAIL. */
+        if (TR8_SEQ_RUNNING && (clen(0) || clen(1)) && pass != shown_pass) {
+            shown_pass = pass;
+            if (!text_hold && TR8_BTN_HELD(TR8_BTN_VARI_A) != 1 &&
+                TR8_BTN_HELD(TR8_BTN_VARI_B) != 1)
+                show_bar(bar + 1, side);
         }
     }
     TR8_FN_STEPVIEW(obj);
@@ -1073,6 +1090,7 @@ __attribute__((noinline)) static void chain_copy_ab(void)
 int chain_press(int id)
 {
     sync();                            /* every press: the panel may have switched pattern */
+    text_hold = 0;                     /* a press: the FAIL was seen */
     /* LAST STEP with A and/or B held arms the expand; any other press cancels it. */
     expand_armed = id != TR8_BTN_LAST_STEP ? 0
                  : (uint8_t)((TR8_BTN_HELD(TR8_BTN_VARI_A) == 1) |

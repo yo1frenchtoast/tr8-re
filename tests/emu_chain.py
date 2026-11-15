@@ -900,12 +900,15 @@ seed_ram()
 cold_boot()
 FL[:] = b"\xff" * len(FL)
 
+SHOWN = []                           # display text written by the last panel() call
 def panel(obj=0x60149B8C):
-    """What the panel dispatcher does with bit 0x04: call the payload, then paint the pads."""
+    """What the panel dispatcher does with bit 0x04: call the payload, then paint the pads.
+    The bar shown on the display goes to SHOWN, the rest of the log is returned."""
     log.clear()
     WRITES["prog"] = WRITES["erase"] = 0
     call(S["chain_view"], obj)
-    return (list(log), WRITES["prog"], WRITES["erase"])
+    SHOWN[:] = texts(log)
+    return ([e for e in log if e[0] != "text"], WRITES["prog"], WRITES["erase"])
 
 SETVIEW = [("stepview", 0x60149B8C)]
 
@@ -1682,5 +1685,46 @@ for k in range(8):
 w32(RUN, 0)
 expect("A+B: chosen while A plays, B follows the A bars", order,
        ["A1", "A2", "A1", "A2", "B1", "B2", "A1", "A2"])
+
+# --- the bar that plays is on the display, once per pass (panel task) ------------------------
+fresh(counts=(2, 1))
+w32(RUN, 1)
+start(vari=2)
+panel()                              # the first paint after the pattern change is skipped
+panel()
+expect("display: the first pass shows A bar 1", SHOWN, ["  A1"])
+panel()
+expect("display: ... once per pass (a second paint writes nothing)", SHOWN, [])
+wrap(); panel()
+expect("display: the next pass shows A bar 2", SHOWN, ["  A2"])
+wrap(); panel()
+expect("display: A+B goes on with B bar 1", SHOWN, ["  B1"])
+wrap(); panel()
+expect("display: a one-bar side is shown again at every pass (it comes back after the tempo)",
+       SHOWN, ["  A1"])
+wrap()
+held.clear(); held.add(A)
+panel()
+held.clear()
+expect("display: not while A is held (the gesture has its own text)", SHOWN, [])
+wrap(); panel()
+expect("display: ... and back at the next pass", SHOWN, ["  B1"])
+drop_next_program()
+w32(slot_addr(0) + 4 * 4, 0x4321)
+wrap(); panel()                      # leaving the edited bar: the chip drops the save
+expect("display: a refused save shows FAIL", SHOWN, ["FAIL"])
+wrap(); panel()
+expect("display: ... and the next pass keeps it", SHOWN, [])
+sync_panel()                         # any button press
+wrap(); panel()
+expect("display: after a press the bar is shown again", SHOWN[-1:], ["  B1"])
+w32(RUN, 0)
+wrap(); panel()
+expect("display: stopped, nothing is shown", SHOWN, [])
+fresh()
+w32(RUN, 1)
+start(vari=0); panel()
+expect("display: a pattern with no sequence keeps the stock display", SHOWN, [])
+w32(RUN, 0)
 
 print("FAILED" if fails else "ALL PASS"); sys.exit(1 if fails else 0)
