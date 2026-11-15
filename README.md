@@ -7,7 +7,8 @@ number of steps, for polyrhythms) and the **bar chain** (each pattern plays up t
 with its own A and B step set).
 
 **Web flasher: <https://yo1frenchtoast.github.io/tr8-re/>**. Tick one or more mods, drop Roland's
-official update, download the patched `TR8_UPD.BIN`. Everything runs in the browser.
+official update, download the patched `TR8_UPD.BIN`. Everything runs in the browser. What changed
+in each release: [CHANGELOG.md](CHANGELOG.md).
 
 This repository contains **no Roland code**. You download the official update from Roland; the
 patcher checks that it is exactly v1.61 and writes a modified copy that the TR-8's own updater

@@ -86,7 +86,7 @@ SHOWN["motion-poly-chain"] = dict(_chain("Bar chain + motion + polyrhythm",
 
 def main():
     out = {"app_sha256": tr8patch.APPA_SHA256, "app_name": "TR-8:Appli      18-0926_11:19:43",
-           "version": "1.61", "patches": {}}
+           "version": "1.61", "release": tr8patch.RELEASE, "patches": {}}
     for name, meta in SHOWN.items():
         spec = tr8patch.PATCHES[name]
         pay = json.load(open(os.path.join(ROOT, spec["payload"])))

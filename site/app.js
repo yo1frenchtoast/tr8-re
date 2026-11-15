@@ -41,6 +41,8 @@ const FR = {
   "foot.affil": "Projet non officiel, sans lien avec Roland Corporation ni approuvé par elle. TR-8 est une marque de Roland Corporation.",
   "foot.license": "Licence MIT. Aucun code Roland n'est inclus : la page modifie le fichier que vous fournissez.",
   "foot.docs": "Documentation et source",
+  "foot.version": "Version",
+  "foot.changes": "Nouveautés",
 };
 const MSG = {
   en: { tested: "Tested on a TR-8", experimental: "Experimental", doc: "How it works", loaded: "loaded", building: "Building…",
@@ -320,5 +322,6 @@ document.querySelectorAll("[data-lang]").forEach((b) => b.addEventListener("clic
 
 // GitHub Pages sends max-age=600: revalidate so a new status or payload shows at once.
 manifest = await (await fetch("patches.json", { cache: "no-cache" })).json();
+$("release").textContent = manifest.release ? `v${manifest.release}` : "";
 setLang(lang);
 refresh();

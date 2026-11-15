@@ -302,6 +302,13 @@ Two kinds of tests are needed:
    update it when the gestures change. Pushing `site/` to `main` publishes it
    (`.github/workflows/pages.yml`).
 
+**Releases.** A release is made only when a set of changes passed on the unit. Write its entry at
+the top of [CHANGELOG.md](../CHANGELOG.md) (new features, fixes, what was checked on the unit),
+set `RELEASE` in `tools/tr8patch.py`, run `python3 -I tools/build_site.py` (the web flasher shows
+the number from `site/patches.json`), run `tests/run_all.sh`, commit, then tag and publish:
+`gh release create vX.Y --title "vX.Y" --notes-file <the CHANGELOG entry>`. Never attach a
+`TR8_UPD.BIN` or any other file derived from Roland's: the release holds the sources only.
+
 ## 7. Patches that store data: the contract
 
 A patch that keeps data across a power cycle (unused pattern parameters, or its own flash area)

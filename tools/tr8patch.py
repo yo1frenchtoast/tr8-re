@@ -20,6 +20,8 @@ import tr8fw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = 0x60000000
+# Release of this project (CHANGELOG.md). The web flasher shows it (site/patches.json "release").
+RELEASE = "1.0"
 APPA_SHA256 = "3685edab8bbeaef8752df9ef08a73a9fd2a2e69ba8210016132f6d141f6b452e"  # v1.61, decompressed
 
 def thumb_bl(src, dst, link=True):
@@ -242,6 +244,7 @@ def main():
     ap.add_argument("--patch", action="append", choices=sorted(PATCHES), help="default: motion")
     ap.add_argument("--check", action="store_true", help="only verify the input file")
     ap.add_argument("--list", action="store_true", help="list the available patches")
+    ap.add_argument("--version", action="version", version=f"tr8-re {RELEASE} (TR-8 system v1.61)")
     a = ap.parse_args()
     if a.list:
         for name, spec in PATCHES.items():
