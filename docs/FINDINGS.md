@@ -287,7 +287,7 @@ index 4 + 2*i* + *v* is the step mask of row *i* (the row table at `0x6007EC54` 
 The button handler `FUN_600193E0` (CLEAR + instrument) calls `FUN_600186FA` on it several times in a
 row from the panel task [code]. The bar chain's expand writes steps and LAST through this setter,
 so the pattern is marked changed and saved by the normal path ([CHAIN.md](CHAIN.md), "Expand and
-copy A to B"); that use from the button dispatch is [code], not yet seen on the unit.
+copy A to B"); that use from the button dispatch works on the unit [unit].
 
 HMI parameter databases (names at `0x6007EC0C`): System, Setup, Efx, Patch, Ptn, Patch2, Ptn2,
 Testmode, TMP. Each has a getter `get(db, index, default)` that maps a local index to a global id:

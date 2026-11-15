@@ -20,7 +20,7 @@ image, so the chain **combines with `motion` and `poly`** and appears in the web
 them; it also carries the review fixes described in the test history (twelfth build). The image
 build **works on a real TR-8** too: `motion-poly-chain` booted and the chain worked with motion
 and poly on the unit (see "Hardware check for the image build"). The expand and copy A to B
-gestures (fourteenth build) pass in emulation and are not yet tested on the unit. Like the other
+gestures (fourteenth build) **work on a real TR-8** too (2026-11-15). Like the other
 patches it is built from your own copy of Roland's v1.61 file.
 
 ## Use
@@ -484,7 +484,7 @@ the pattern's own steps.
 | Power cut while saving a bar | The newest save only, and only if its program was torn. Every older bar survives; a cut during compaction is finished from the scratch block on the next boot. | Unchanged | Unchanged |
 | Power cut or dropped write during an expand or a copy A to B | The bars written before it stay in the log, hidden past the old length; the next expand overwrites them | Unchanged | Unchanged: the length is set only after every bar was written |
 | A program the chip drops | The bar being saved is retried by the next save. If it fails during a compaction, the compaction stops before anything is lost, the scratch block keeps the rest, saves are refused until the next boot, and that boot recovers them from it. | Unchanged | Unchanged |
-| Flash another build made by this patcher or the web flasher | **Kept**: its update ends at block `0x3D9` and never touches `0x3DA000`-`0x3DFFFF` [code; first unit check: hardware test below]. A build that has no chain ignores the log and keeps it for the next chain build. | Unchanged | Unchanged |
+| Flash another build made by this patcher or the web flasher | **Kept**: its update ends at block `0x3D9` and never touches `0x3DA000`-`0x3DFFFF` [code; unit: hardware test below, passed]. A build that has no chain ignores the log and keeps it for the next chain build. | Unchanged | Unchanged |
 | Flash stock firmware | **Lost**: Roland's file rewrites flash `0x30000`-`0x3DFFFF`. | Pattern edits made while that pattern had a chain lived only in the log, so they revert to the last stock save; patterns with no chain were saved normally. Kits are untouched. | Kept in flash but ignored by stock firmware; they become usable again if this build is flashed back with the same data intact |
 | Flash a file from another tool | Same as stock firmware if its trailer still ends at block `0x3DF`; any patch that claims `0x3DA000`-`0x3DFFFF` collides with the log. | As above | As above |
 | Firmware update (Roland) | **Lost**, same rewrite. | Patterns and kits survive (they are above the rewritten blocks); bar edits revert as above | Kept in the user area, ignored by stock firmware |
@@ -583,7 +583,7 @@ writes a side length, a bar or the pattern:
 | pads 5-16 dark while A is held | the bar row: the probe has no side lengths and still lights its four-bar row (all four yellow); the real build shows pads 1..8 of that side only, the bars green with the head blinking yellow, the rest off |
 | nothing at all | the payload is not running: the build is not the patched one |
 
-## Hardware test: bars kept across a reflash (not done yet)
+## Hardware test: bars kept across a reflash (passed 2026-11-15)
 
 1. Flash a build made after this change. Set a 3-bar A sequence on pattern 16, record a different
    step in bars 2 and 3, play it and check the three bars.
@@ -592,7 +592,7 @@ writes a side length, a bar or the pattern:
 4. Optional: flash the `poly` build (no chain), then a chain build again: the bars must still be
    there.
 
-## Hardware test: expand and copy A to B (not done yet)
+## Hardware test: expand and copy A to B (passed 2026-11-15)
 
 1. Pattern 16, no sequence, A side, LAST STEP 4: record a beat in steps 1-4 (with an accent). Hold
    A and tap LAST STEP: `A  8`, steps 5-8 repeat 1-4. Again: `A 16`. Again: `A b2`, then `A b4`,
@@ -785,7 +785,8 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   steps 4 -> 8 -> 16 -> two bars, 12 -> 16, bars 1 -> 2 -> 4 -> 8 -> `FULL`, 3 -> 6, 5 -> 8, B
   only, copy A to B with and without a sequence, the tap cancelled by a pad, a dropped write
   (`FAIL`, length kept), a power cut after the first write, and playback of the new bar.
-  Hardware: not done yet (test above).
+  Hardware: passed (2026-11-15, `motion-poly-chain`, with the reflash test): every step of
+  "Hardware test: expand and copy A to B" behaved as described.
 
 ## Hardware test (2026-11-13): the tenth build passed
 
