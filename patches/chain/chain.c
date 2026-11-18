@@ -806,14 +806,18 @@ void chain_led4(void *obj, int led, int a, int b, int c)
         int n = clen(hb);                  /* holding B shows the B side's bars */
         int cur;
 
-        if (!n)
-            n = 1;                         /* nothing selected: the pattern itself */
-        cur = (int)(TR8_SEQ_RUNNING ? chain_row[hb] : chain_sel[hb]);
-        if ((unsigned)cur >= (unsigned)n)
-            cur = n - 1;                   /* the side shrank: blink its last bar */
-        a = p < n;                         /* pads past the last bar: off */
-        b = p == cur ? 0 : a ? 9 : 0;      /* 0 = blink (the play flag), 9 = steady */
-        c = p == cur ? 6 : 2;              /* head: yellow, other bars: green, off: 2 */
+        if (!n) {                          /* no sequence on this side: the pattern itself, */
+            a = p == 0;                    /* pad 1 steady green, so that it does not look */
+            b = a ? 9 : 0;                 /* like a one-bar sequence (yellow head) */
+            c = 2;
+        } else {
+            cur = (int)(TR8_SEQ_RUNNING ? chain_row[hb] : chain_sel[hb]);
+            if ((unsigned)cur >= (unsigned)n)
+                cur = n - 1;               /* the side shrank: blink its last bar */
+            a = p < n;                     /* pads past the last bar: off */
+            b = p == cur ? 0 : a ? 9 : 0;  /* 0 = blink (the play flag), 9 = steady */
+            c = p == cur ? 6 : 2;          /* head: yellow, other bars: green, off: 2 */
+        }
     }
     TR8_FN_LED_SET(obj, led, a, b, c);
 }

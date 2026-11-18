@@ -187,9 +187,12 @@ overwritten by the retry.
   it once at the next boundary. A fresh patch state and a pattern change start at bar 1, and a
   bar the side does not have clamps to its first bar.
 - The display confirms each gesture. While VARIATION A or B is **held**, the pads become that
-  side's bar row: the bars the side has are green, the bar at that side's head blinks yellow (it
+  side's bar row: the bars the side has are green, the bar at that side's head is yellow (it
   is the bar being played, or, stopped, the bar last selected on that side), and the remaining
-  pads are off, so only that side's bars are lit. This works in
+  pads are off, so only that side's bars are lit. A side with no sequence shows pad 1 steady
+  green (the pattern itself) and nothing else, so it does not look like a one-bar sequence,
+  whose pad 1 is the yellow head: on the unit both used to show pad 1 steady yellow, stopped and
+  playing (issue #2). This works in
   every screen (sequencer, PTN SELECT, TR-REC, ...) and after a pattern change. Releasing the
   button gives the pads back to whatever the screen was showing (A+B keeps the length gesture and
   leaves the pads stock). A save the flash chip refused shows **`FAIL`** instead of the bar
@@ -309,16 +312,19 @@ triple, so it does not care whether the caller used raw levels or a palette colo
 
 - pads 1..N of the side whose button is held (`led` `0x1D` onward): `(1, 9, 2)` = palette
   `0x2A`, the pattern-length green; the bar at that side's head gets `(1, 0, 6)`, which is the
-  play colour's blink flag (`b` = 0) on the yellow colour (`c` = 6), so the head blinks yellow.
-  Stopped, the selected bar of that side is the head and blinks,
+  play colour's blink flag (`b` = 0) on the yellow colour (`c` = 6). On the unit the head is
+  steady yellow, stopped and playing, with one bar or three [unit, 2026-11-18]: the flag does
+  not make this pad blink. Stopped, the selected bar of that side is the head,
 - every other pad in the same state, including pads N+1..16: `(0, 0, 2)` = palette `0x2D`, off,
   so only the bars that side has are lit,
+- a side with no sequence (`clen` = 0): pad 1 `(1, 9, 2)`, steady green, every other pad off.
+  The yellow head is for a side that has bars [unit, 2026-11-18].
 - everything else (any other LED, or neither/both buttons held) is forwarded unchanged.
 
 Because the hook is in the setters, the row appears in every screen (sequencer, PTN SELECT,
 TR-REC, LAST STEP, ...) and keeps working after a pattern change, which is when the screen
 switches to another renderer. Each side has its own head, so holding A while the B side plays
-shows the A row's own head blinking. A+B is excluded on purpose: it is the both-sides gesture,
+shows the A row's own head (yellow). A+B is excluded on purpose: it is the both-sides gesture,
 not bar selection.
 
 ### Editing a bar
@@ -598,7 +604,7 @@ writes a side length, a bar or the pattern:
 | ` 3--` (plain pad 3) | hook runs on every press and sees no modifier; the text is written after the firmware handled the pad |
 | ` 8-L` (LAST STEP + pad 8) | LAST STEP is held, so the press goes to the firmware first (pattern length) and the text is written after it |
 | ` 3CL` (A+B + LAST STEP + pad 3) | the same with both variation buttons held: LAST STEP wins, no bar selection |
-| pads 5-16 dark while A is held | the bar row: the probe has no side lengths and still lights its four-bar row (all four yellow); the real build shows pads 1..8 of that side only, the bars green with the head blinking yellow, the rest off |
+| pads 5-16 dark while A is held | the bar row: the probe has no side lengths and still lights its four-bar row (all four yellow); the real build shows pads 1..8 of that side only, the bars green with the head yellow, the rest off |
 | nothing at all | the payload is not running: the build is not the patched one |
 
 ## Hardware test: bars kept across a reflash (passed 2026-11-15)
@@ -828,6 +834,12 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
 - Seventeenth build (this one): the display also shows the side's length: `A1-4` instead of
   `  A1` (a request after the unit test). The gesture confirmations keep `  A1`. Emulation: 325
   chain checks. Hardware: passed (2026-11-15, `motion-poly-chain`): `A1-2 A2-2 B1-2 B2-2` in A+B.
+- Eighteenth build (2026-11-18): holding A or B on a side with no sequence shows pad 1 steady
+  green instead of the yellow head, which a one-bar sequence also shows (the unit showed both
+  the same, issue #2). Emulation: unset side stopped and running, one-bar side. Hardware:
+  passed (2026-11-18, `motion-poly-chain`): green pad 1 with no sequence, yellow head with one
+  and three bars, back to green after `A+B+CLEAR`. The head does not blink while playing; the
+  documents said it did and now say yellow.
 
 ## Hardware test (2026-11-13): the tenth build passed
 

@@ -504,10 +504,19 @@ else:
     expect("LED: pad 9 is off past the eighth bar",
            led_call(0x6001773A, PAD(9), 1, 7, 7, held=(A,)), L(PAD(9), *OFF))
 
-    # A side never selected: one default bar is shown; B keeps its own two.
+    # A side never selected: pad 1 steady green (the pattern itself), not the yellow head of a
+    # one-bar sequence, which looked the same on the unit (issue #2); B keeps its own two.
     set_counts(0, 2)
-    expect("LED: A side unset -> one default bar",
+    expect("LED: A side unset -> pad 1 steady green, the rest off",
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, OFF, OFF, OFF]))
+    w32(RUN, 1)
+    expect("LED: A side unset, running -> the same",
+           row(0x6001773A, (1, 7, 7), (A,)), want_row([GREEN, OFF, OFF, OFF]))
+    w32(RUN, 0)
+    set_counts(1, 2)
+    expect("LED: one-bar A sequence -> pad 1 is the yellow head",
            row(0x6001773A, (1, 7, 7), (A,)), want_row([BLINK, OFF, OFF, OFF]))
+    set_counts(0, 2)
     expect("LED: B side still two bars",
            row(0x6001773A, (1, 7, 7), (B,)), want_row([BLINK, GREEN, OFF, OFF]))
 

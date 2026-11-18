@@ -117,7 +117,7 @@ export const TUTORIALS = {
         "Select a bar with [[A]] + its pad, then record its steps as usual (step pads or [[TR-REC]]). Each bar keeps its own steps.",
         "Hold [[B]] and press pads [[1]] [[2]]: side B is 2 bars long. Record its steps the same way.",
         "Press [[A]] to play the A bars in order, [[B]] for the B bars. Hold [[A]] and press [[B]] (or the reverse) for A+B. In [[INST PLAY]] the side that plays is lit and the other one blinks; in [[TR-REC]] the lit side is the side you edit (hold [[B]] and press [[A]] to edit A, the reverse to edit B). With bars, A+B plays all the A bars and then all the B bars; without bars it alternates A and B at each pass, as in stock. A side with no bars is skipped: with only an A sequence, A+B plays only the A bars.",
-        "While it plays, the display shows the bar you hear and the number of bars of its side ({{A1-4}}: bar 1 of 4) and the step pads show its steps. Hold [[A]] or [[B]] to see that side's bars: the bar that plays blinks yellow.",
+        "While it plays, the display shows the bar you hear and the number of bars of its side ({{A1-4}}: bar 1 of 4) and the step pads show its steps. Hold [[A]] or [[B]] to see that side's bars: the bar that plays is yellow. A side with no bars shows pad 1 in green.",
         "Change pattern: each pattern has its own bars and lengths.",
       ],
       gestures: [
@@ -147,7 +147,7 @@ export const TUTORIALS = {
         "Choisissez une mesure avec [[A]] + son pad, puis enregistrez ses pas comme d'habitude (pads de pas ou [[TR-REC]]). Chaque mesure garde ses propres pas.",
         "Maintenez [[B]] et appuyez sur les pads [[1]] [[2]] : le côté B fait 2 mesures. Enregistrez ses pas de la même façon.",
         "Appuyez sur [[A]] pour jouer les mesures A dans l'ordre, sur [[B]] pour les mesures B. Maintenez [[A]] et appuyez sur [[B]] (ou l'inverse) pour A+B. En [[INST PLAY]], le côté qui joue est allumé et l'autre clignote ; en [[TR-REC]], le côté allumé est celui que vous éditez (maintenez [[B]] et appuyez sur [[A]] pour éditer A, l'inverse pour éditer B). Avec des mesures, A+B joue toutes les mesures A puis toutes les mesures B ; sans mesures, il alterne A et B à chaque tour, comme d'origine. Un côté sans mesures est sauté : avec seulement une séquence A, A+B ne joue que les mesures A.",
-        "Pendant la lecture, l'écran affiche la mesure entendue et le nombre de mesures de son côté ({{A1-4}} : mesure 1 sur 4) et les pads de pas montrent ses pas. Maintenez [[A]] ou [[B]] pour voir les mesures de ce côté : la mesure jouée clignote en jaune.",
+        "Pendant la lecture, l'écran affiche la mesure entendue et le nombre de mesures de son côté ({{A1-4}} : mesure 1 sur 4) et les pads de pas montrent ses pas. Maintenez [[A]] ou [[B]] pour voir les mesures de ce côté : la mesure jouée est en jaune. Un côté sans mesures affiche le pad 1 en vert.",
         "Changez de pattern : chaque pattern a ses propres mesures et longueurs.",
       ],
       gestures: [
