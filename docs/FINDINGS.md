@@ -578,7 +578,20 @@ entry at `0x6007EF98`) calls `FUN_6002765C(P, mask)`, which keeps the held steps
 (`FUN_600275B4` inserts or removes one step; mask 0 sets the index to -1). Only the pad press and
 release handlers `FUN_6004F570` / `FUN_6004F4EC` of one screen (vtable `0x6007C778`, factory
 `FUN_600157A8`) write that mask; a mode button (0x11-0x16) or LAST STEP (0x1A) clears it [code].
-Which screen this is, is not known. The scatter callbacks (section 8, "Scatter") do not write it,
+That screen is **screen 17**: entry 17 of the screen table at `0x6006022C` (16-byte entries, word 0
+= pointer to the factory pointer) points to `FUN_600157A8`, and `FUN_6001961E` requests screen
+`0x11` (`FUN_60013972`) when button 0x13 is pressed with TR-REC (0x11) held, which also sets
+Setup[0] = 8 [code]. Button 0x13 is INST PLAY [code: section 9, "Panel mode"]. So
+**TR-REC + INST PLAY** opens a step-loop mode: while the pattern plays, holding pads makes the
+sequencer loop over the held steps, in step order [unit: TR-REC + INST PLAY, hold pads 1 and 5,
+only steps 1 and 5 play; the latch rule below is code only]. Rules in
+`FUN_6004F570` (press) and `FUN_6004F4EC` (release):
+- one pad held alone: the mask is that step only;
+- a pad pressed while other pads are held adds its step;
+- a released pad removes its step, unless a row button (0x1D-0x2A: AC RV EC SC and the
+  instruments, `FUN_6004F6B4`) was held at the press: then the steps stay (latch);
+- a mode button (0x11-0x16) or LAST STEP sets the mask to 0 (index -1: normal play).
+The scatter callbacks (section 8, "Scatter") do not write it,
 so +0x1DA is not a scatter field (`TR8_PL_HELD_IDX` in `tr8_v161.h`; an earlier name was
 `TR8_PL_SCATTER`). The poly patch only needs "-1 = the firmware does not pick the step from the
 list" ([POLY.md](POLY.md)).
@@ -728,7 +741,7 @@ handler is `FUN_6001961E(ctx, id)`:
 |---|---|---|
 | 0x00-0x0F | Step buttons 1-16. In step mode they call `FUN_6001B8D6` (write through the Ptn database) | code |
 | 0x11 | **TR-REC**. Sets Setup[0] = 0 | **unit** |
-| 0x12-0x16 | Mode buttons: Setup[0] = 1..5 (0x13 gives 8 while 0x11 is held) | code |
+| 0x12-0x16 | Mode buttons: Setup[0] = 1..5 (section 9, "Panel mode"). 0x13 with TR-REC (0x11) held gives Setup[0] = 8 and the step-loop screen 17 (section 7, "Step trigger") | code |
 | 0x17, 0x18 | Write `VARI` = 0/1/2 (variation A, B, A+B): in `FUN_6001961E`, A pressed while B is held (or B while A is held) writes 2. A/B LEDs in A+B (`FUN_600169A4`): in TR-REC (Setup[0] = 0, with Setup[8] = 1) they show the side being edited (lit) and the other one blinking, which only a press changes (B held + A selects A); while playing in another mode they follow the variation that the sequencer passes to the step callback (`FUN_60012C22` stores it at Setup object +8), so the side that plays is lit [code; unit: INST PLAY follows the playing side, TR-REC stays on the edit side] | code |
 | 0x19 | Cycles `SCALE` 0..3 | code |
 | 0x1B | **START/STOP**: toggles Setup[0x15] (playing) and sends MIDI Start `0xFA` / Stop `0xFC` (`FUN_60006A94`). While playing with TAP (`0x2E`) held, it restarts the pattern from step 1 without stopping (`FUN_600099B6`, from the panel task, section 5) | code; **unit** (TAP + START/STOP restarts, SCATTER ON + START/STOP stops) |
@@ -771,8 +784,15 @@ read with `FUN_6001B12E(0x60149F38, 0, 0)`.
 - `FUN_600192BA` (clear a step bit) works only in modes 0 and 3.
 - `FUN_60004D8C` (incoming note) writes it into the pattern (`FUN_6001912C`) only in mode 3.
 - 0 = TR-REC (step edit) [unit: 0x11 = TR-REC sets 0], 3 = INST REC (real-time record).
-  Modes 1, 2, 4, 5 and 8 are not identified; `FUN_6004D21C`, `FUN_6004D7C0` and `FUN_6004D814`
-  seem to set 6 and 7.
+- Each mode button also requests a screen (`FUN_60013972`): 0x11 -> screen 5, 0x12 -> 6,
+  0x13 -> 7, 0x14 -> 8, 0x15 -> 9, 0x16 -> 10; TR-REC + 0x13 -> screen 17 (mode 8, step loop).
+- The step LED code `FUN_60016386` (switch on the mode) paints modes 2 and 3 the same way:
+  pads 1-11 = instruments, 12-15 = the roll bits (Setup[0xE]), 16 = MUTE (Setup[0xD]). So
+  2 = INST PLAY (button 0x13) [code; unit: TR-REC + INST PLAY opens the step loop]. Mode 5 shows the effect type on pads 1-8 for the RV, EC
+  and SC rows (section 6, "Effects"), as the manual says for DRUM SELECT INST: 5 = INST
+  (button 0x16) [code]. 1 = PTN SELECT (0x12) and 4 = KIT (0x15) [hyp: the remaining buttons;
+  mode 1 shows pattern values Setup[2], [3]].
+- `FUN_6004D21C`, `FUN_6004D7C0` and `FUN_6004D814` seem to set 6 and 7.
 
 Do not confuse it with the boot mode at `0x6007E574` (section 5).
 
@@ -900,7 +920,7 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 
 ## 13. Open questions
 
-1. Panel mode values 1, 2, 4, 5, 6, 7, 8.
+1. Panel mode values 6 and 7; confirm 1 = PTN SELECT and 4 = KIT.
 2. Where the step callback (+0x14) is installed.
 3. Is the 16-step limit only in the application, or also in the sound engine (fast code, second
    processor)?
@@ -916,4 +936,4 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 8. MIDI: the receive path (`midi\task_midi_rx.cpp`) and whether external CCs take the same path
    as `FUN_60015906`.
 10. Effects (section 6, "Effects"): what the value -1 means; whether the setup-mode KIT button writes System id `0x16`. Scatter: what
-    the 0x124-byte type records hold, and which screen writes the held-step mask (Setup 0x19).
+    the 0x124-byte type records hold.

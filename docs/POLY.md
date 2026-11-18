@@ -39,9 +39,10 @@ saves pattern edits automatically). A pattern that was never given a length play
   the weak accent follow the pattern.
 - The heads go back to step 1 when the sequencer starts or stops.
 - The lengths are per pattern: variations A and B share them.
-- While the firmware plays a held-step list (player +0x1DA != -1, Setup 0x19:
-  [FINDINGS.md](FINDINGS.md) section 7, "Step trigger"), the instruments play as written (no
-  length): the firmware picks the step from the list, so poly cannot predict it. The scatter does
+- While the firmware plays a held-step list (the step loop: TR-REC + INST PLAY, then hold pads;
+  player +0x1DA != -1, Setup 0x19: [FINDINGS.md](FINDINGS.md) section 7, "Step trigger"), the
+  instruments play as written (no length): the firmware picks the step from the list, so poly
+  cannot predict it. The scatter does
   not write that list [code], so the lengths stay on under scatter [hyp: hardware test 7].
 
 ## How it works
@@ -222,7 +223,7 @@ steps 1, 5, 9, 13.
 | 5 | Change CH to 4 while playing (LAST STEP + CH + pad 4) | CH continues with 4 steps |
 | 6 | Flam on CH's step 1, play | The flam follows CH's head |
 
-## Hardware test 7 (scatter on top of the lengths): to do
+## Hardware test 7 (scatter and step loop): to do
 
 Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5, 9, 13).
 
@@ -231,6 +232,8 @@ Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5
 | 1 | Play, SCATTER ON, dial on type 1, depth low | No crash; the scatter effect is heard | - |
 | 2 | Same, turn the dial through types 1-10 | CH keeps its 3-step cycle against BD under every type (the effect may slice or reverse the sound) | Note the types where CH plays as written: the scatter then reorders the sequencer steps by another path |
 | 3 | SCATTER off | CH and RS still aligned with their cycles | - |
+| 4 | Hold TR-REC, press INST PLAY, then hold pads 1 and 5 | The sequencer loops steps 1 and 5; CH and RS play as written (CH on step 1, RS on 1) | Note what plays |
+| 5 | Release the pads, then press a mode button | Normal play; CH and RS back on their cycles | - |
 
 ## Limitations and next steps
 
