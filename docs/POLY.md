@@ -22,7 +22,7 @@ Flash as described in [UPDATE.md](UPDATE.md) (back up first).
 | The same gesture with the same pad again | Back to the pattern length. The display shows `LOFF` |
 | Hold LAST STEP + several instrument buttons, press a pad | All of them get that length |
 | Hold LAST STEP, press a pad (no instrument button) | Normal: sets the pattern length |
-| Hold LAST STEP + an instrument that has a length | The step LEDs show that instrument like the pattern-length view: steps inside its length green, its play position blinking while playing, the other steps off |
+| Hold LAST STEP + an instrument that has a length | The step LEDs show that instrument like the pattern-length view: steps inside its length green, the other steps off. While playing the LEDs do not follow the play position, as in the stock LAST STEP view [unit] |
 | In TR-REC, select an instrument that has a length | The LAST STEP button blinks |
 | Change pattern | The lengths of that pattern apply |
 | Power off and on | The lengths are kept |
@@ -92,8 +92,10 @@ inside a call, so the atomic increment itself is checked by reading the listing
 call; else it sets the lengths and shows the result with `FUN_60015980`.
 
 `poly_led` replaces the colour of each step when an instrument with a length is held: 0 = play
-position (blinks), 0x2A = inside the length (green, the pattern-length colour), 0x2D = off. The firmware redraws the step LEDs
-when an instrument button or a pad is pressed (flag bit 0x4).
+position, 0x2A = inside the length (green, the pattern-length colour), 0x2D = off. The firmware redraws the step LEDs
+when an instrument button or a pad is pressed (flag bit 0x4), not at each step, so the LAST STEP
+view shows no moving position, stock or poly [unit, 2026-11-18]. The play-position colour is set
+at the redraw but was not seen on the unit then: steps 1-3 of CH stayed steady green while playing.
 
 `poly_lsled` replaces the last call of the panel repaint `FUN_600169A4`. That call is a tail call
 (`pop.w` then `b.w`), so the hook is a `b.w` too: `poly_lsled` returns straight to the repaint's
@@ -174,7 +176,7 @@ Set CH to 3 steps (LAST STEP + CH + pad 3).
 | # | Action | Expected |
 |---|---|---|
 | 1 | Hold LAST STEP + CH, stopped | Steps 1-3 green, 4-16 off |
-| 2 | Same while playing | The CH play position moves over steps 1-3 |
+| 2 | Same while playing | The CH play position moves over steps 1-3 (2026-11-18 retest: steps 1-3 steady green, no position; accepted, as the stock view) |
 | 3 | Hold LAST STEP + BD (no length) | The normal pattern-length view |
 | 4 | Hold LAST STEP + CH, press pad 6 | CH length 6: steps 1-6 green |
 | 5 | Release CH, keep LAST STEP | Back to the pattern view (at the next redraw) [hyp] |
@@ -273,3 +275,8 @@ Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5
   (same day, CH written on 3, 7, 11, 15): with pads 1 and 5 held, only steps 1 (BD) and 5 (RS)
   play and CH is silent, so poly leaves the step loop alone and the instruments play as written.
   Check 5: normal play resumes as soon as the pads are released (stock behaviour).
+- Full retest (2026-11-18, `motion-poly-chain`): LAST STEP + CH while playing shows steps 1-3
+  steady green with no play position. The stock LAST STEP view shows no moving position either
+  (the view is redrawn only on a press), so this is kept as is and the documents no longer
+  promise a blinking position (issue #2). Pattern edits lost on pattern change during the same
+  retest were the stock pattern lock, not poly (FINDINGS.md "Pattern lock").

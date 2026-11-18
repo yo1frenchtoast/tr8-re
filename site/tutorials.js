@@ -62,7 +62,7 @@ export const TUTORIALS = {
         "On a 16-step pattern, put the closed hi-hat [[CH]] on step 1 only.",
         "Hold [[LAST STEP]] and [[CH]], then press pad [[3]]. The display shows {{L  3}}.",
         "Start the pattern: [[CH]] plays on every third step, 3 against 16.",
-        "Hold [[LAST STEP]] + [[CH]] to see its length: the steps inside it are green and its position blinks.",
+        "Hold [[LAST STEP]] + [[CH]] to see its length: the steps inside it are green.",
         "To go back to the pattern length, do the same gesture with the same pad again. The display shows {{LOFF}}.",
       ],
       gestures: [
@@ -87,7 +87,7 @@ export const TUTORIALS = {
         "Sur un pattern de 16 pas, placez le charleston fermé [[CH]] sur le pas 1 seulement.",
         "Maintenez [[LAST STEP]] et [[CH]], puis appuyez sur le pad [[3]]. L'écran affiche {{L  3}}.",
         "Lancez le pattern : [[CH]] joue tous les trois pas, 3 contre 16.",
-        "Maintenez [[LAST STEP]] + [[CH]] pour voir sa longueur : les pas compris sont verts et sa position clignote.",
+        "Maintenez [[LAST STEP]] + [[CH]] pour voir sa longueur : les pas compris sont verts.",
         "Pour revenir à la longueur du pattern, refaites le même geste avec le même pad. L'écran affiche {{LOFF}}.",
       ],
       gestures: [

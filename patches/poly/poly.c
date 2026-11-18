@@ -5,8 +5,9 @@
  * over n steps. The same gesture with the same pad again -> back to the pattern length.
  * LAST STEP + pad without an instrument button keeps its normal meaning (pattern length).
  * While LAST STEP + an instrument with a length are held, the step LEDs show that instrument:
- * steps inside its length lit (green, like the pattern length view), its play position, the
- * rest off.
+ * steps inside its length lit (green, like the pattern length view), its play position at the
+ * time of the redraw, the rest off. The firmware redraws this view only on a press, so the
+ * position does not follow playback (as in the stock view; docs/POLY.md).
  *
  * Each instrument with a length L != 0 has its own play head that advances once per step and
  * wraps after L steps, independent of the pattern's last step. Instruments with L = 0 follow
