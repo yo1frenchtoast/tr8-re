@@ -372,7 +372,8 @@ RAM only.
 (`FUN_6001B432(db, 0x27, 0)`) and saves nothing (no area 4, no area 6) when it is not 0 [code].
 `FUN_6004CC9C` sets it through `FUN_6001BCC2`: with PTN SELECT (button `0x12`) held, a knob turn
 writes 1 to the right and 0 to the left (`0 < delta`); its first event only shows the current value
-[code]. The texts are `Lock` and ` OFF` (`0x60015DFC`), and the PTN SELECT screen picks `Lock`
+[code]. The knob is TEMPO [unit], and the airainfo.org TR-8 cheatsheet lists it as "Pattern Lock:
+hold PTN SELECT, turn TEMPO to `LcK`". The texts are `Lock` and ` OFF` (`0x60015DFC`), and the PTN SELECT screen picks `Lock`
 when the value is 1 [code]. On the unit, every step edit was lost on a pattern change with every
 build, poly alone included; holding PTN SELECT and turning TEMPO to the left made saving work
 again [unit, 2026-11-18, issue #2]. The PTN SELECT screen did not show `Lock` then, so the
