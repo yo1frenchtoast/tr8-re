@@ -201,7 +201,10 @@ overwritten by the retry.
   its side** (`A1-4` = bar 1 of the four A bars, `B2-2`), once per pass. When the firmware shows something else (the tempo while it is changed,
   a knob value), the next pass brings the bar back. It is not written while A or B is held (the
   gestures show their own text), and a `FAIL` stays until the next button press. A pattern with
-  no sequence keeps the stock display.
+  no sequence keeps the stock display. When the bar no longer applies (a change to a pattern with
+  no sequence, or a stop), `chain_view` sets the screen's text bit `0x40` once, so the display
+  returns to its normal value instead of keeping the last bar (issue #2: `B1-2` stayed after a
+  change from a chained pattern to an empty one; fixed, [unit]).
 - The bar number (`  A1`) is only the confirmation of the pad press. Releasing VARIATION A or B
   calls the firmware's own repaint helper `FUN_60051E20` (`0x44` on the panel object
   `0x60149B8C`), so the panel redraws its pads and its own numeric text on the next pass and the
@@ -831,7 +834,7 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   chain checks (once per pass, a one-bar side shown again at every pass, not while A is held, a
   `FAIL` kept until a press, nothing when stopped or with no sequence). Hardware: passed
   (2026-11-15, `motion-poly-chain`): the display follows the bars and comes back after the tempo.
-- Seventeenth build (this one): the display also shows the side's length: `A1-4` instead of
+- Seventeenth build: the display also shows the side's length: `A1-4` instead of
   `  A1` (a request after the unit test). The gesture confirmations keep `  A1`. Emulation: 325
   chain checks. Hardware: passed (2026-11-15, `motion-poly-chain`): `A1-2 A2-2 B1-2 B2-2` in A+B.
 - Eighteenth build (2026-11-18): holding A or B on a side with no sequence shows pad 1 steady
@@ -840,6 +843,11 @@ None of these has been seen as a fault on the unit. Each one is a review rule 1 
   passed (2026-11-18, `motion-poly-chain`): green pad 1 with no sequence, yellow head with one
   and three bars, back to green after `A+B+CLEAR`. The head does not blink while playing; the
   documents said it did and now say yellow.
+- Nineteenth build (2026-11-18): the playing bar's text is given back to the screen (bit `0x40`)
+  after a change to a pattern with no sequence or a stop; before, `B1-2` stayed on the display
+  (issue #2). Emulation: stop, pattern change to a pattern with no sequence, one request only.
+  Hardware: passed (2026-11-18, `motion-poly-chain`): the normal display comes back after a change
+  to a pattern with no sequence and after a stop; the bar is shown again on the chained pattern.
 
 ## Hardware test (2026-11-13): the tenth build passed
 

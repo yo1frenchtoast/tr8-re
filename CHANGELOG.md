@@ -10,7 +10,7 @@ v1.61 file with the [web flasher](https://yo1frenchtoast.github.io/tr8-re/) or
 
 ## v1.1 (2026-11-18)
 
-Two display changes, both checked on the unit, and corrected documents after a full poly retest.
+Three display changes, all checked on the unit, and corrected documents after a full poly retest.
 
 ### Per-instrument length, "poly" ([docs/POLY.md](docs/POLY.md))
 
@@ -29,6 +29,8 @@ Two display changes, both checked on the unit, and corrected documents after a f
 - **Changed:** holding A or B on a side with no bar sequence lights pad 1 green. Before, it lit
   pad 1 yellow, the same as a one-bar sequence, which saves its steps in the chain's log instead
   of the pattern. Unit: passed.
+- **Fixed:** after a change from a chained pattern to a pattern with no bars, or a stop, the
+  display kept the last bar (`B1-2`). It now returns to its normal value. Unit: passed.
 - Documents corrected: the bar that plays is steady yellow, it does not blink.
 
 ### Firmware notes ([docs/FINDINGS.md](docs/FINDINGS.md))

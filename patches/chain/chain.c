@@ -63,8 +63,8 @@
  * chain_led4, chain_commit and the log/store code run in the panel task. The sequencer never touches the flash: it reads a RAM copy of the bars that
  * the panel task fills (bar_ram). State has one writer: the sequencer writes chain_pos,
  * chain_side, chain_row, chain_wrapping and chain_pass; the panel writes cur_pat, cur_bar,
- * cur_side, wc_bar, chain_sel, chain_jump, chain_swallow, expand_armed, shown_pass, text_hold
- * and the log index. Only the panel writes the display.
+ * cur_side, wc_bar, chain_sel, chain_jump, chain_swallow, expand_armed, shown_pass, text_hold,
+ * play_text and the log index. Only the panel writes the display.
  */
 #include "tr8_v161.h"
 
@@ -149,6 +149,7 @@ static uint8_t view_hold;        /* panel: sync() just changed pattern, skip one
 static volatile uint8_t chain_pass; /* sequencer: +1 at every pass the chain plays */
 static uint8_t shown_pass;       /* panel: chain_pass whose bar is on the display */
 static uint8_t text_hold;        /* panel: a FAIL is on the display, keep it until a press */
+static uint8_t play_text;        /* panel: "A1-4" is on the display, give it back when it no longer applies */
 
 static uint32_t ebuf[ENTW];
 
@@ -564,6 +565,7 @@ static void show_bar(int n, int is_b)
 /* "A1-4": the bar that plays (side, bar) and the side's length, during playback. */
 static void show_play(int n, int is_b, int len)
 {
+    play_text = 1;
     show4((uint32_t)('A' + is_b) | ((uint32_t)('0' + n) << 8) | ((uint32_t)'-' << 16) |
           ((uint32_t)('0' + len) << 24));
 }
@@ -778,6 +780,15 @@ void chain_view(void *obj)
                 TR8_BTN_HELD(TR8_BTN_VARI_B) != 1)
                 show_play(bar + 1, side, clen(side));
         }
+    }
+    /* "A1-4" names a bar of a chained pattern that plays. After a change to a pattern with no
+     * sequence, or a stop, nothing writes the display again, so the screen kept the last bar
+     * (issue #2): ask it for its own text. Bit 0x40 set here is served later in this same
+     * dispatcher pass (the dispatcher clears only the 0x04 it is serving). */
+    if (play_text && !(TR8_SEQ_RUNNING && (clen(0) || clen(1)))) {
+        play_text = 0;
+        if (!text_hold)
+            *TR8_HMI_PANEL |= TR8_HMI_REPAINT;
     }
     TR8_FN_STEPVIEW(obj);
 }
