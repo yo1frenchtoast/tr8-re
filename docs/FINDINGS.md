@@ -854,6 +854,11 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
   builds `8941d9e` and `bd5fcdc` froze that way). [unit]
   Do not call the slot-0 notification `FUN_60010148` from inside the button dispatch either: the
   chain build that did froze the unit when a bar was changed. [unit]
+- **Step cursor.** The step pad painter `FUN_60016386` reads the cursor step once, Setup `0x1A`
+  (`bl FUN_6001B12E` at `0x600163CA`, only while Setup `0x15` = 1, playing), and paints that pad
+  with colour 0 in every view (TR-REC row view, AC/RV/... rows, LAST STEP view). The step callback
+  `FUN_60012C22` calls the painter at each step, so the cursor follows playback. The poly patch
+  hooks that read (docs/POLY.md). [code; unit: the TR-REC cursor runs over the pattern steps]
 - **LEDs:** `FUN_6001A7EC(id, a, b, c)` calls the fast-code function `0x01000536` with the LED
   object `0x601488D0`. Seen: `FUN_6001A7EC(0x2A, 1, 0, 0x10)`, instrument LEDs 0x1D-0x25. The
   argument meaning is not decoded. [hyp]

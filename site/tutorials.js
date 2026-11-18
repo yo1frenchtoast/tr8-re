@@ -77,7 +77,7 @@ export const TUTORIALS = {
         "The global accent (AC) and the weak accent follow the pattern, not the instrument.",
         "Each instrument goes back to its step 1 when you start or stop.",
         "Scatter works on top of the lengths: each instrument keeps its own loop.",
-        "In TR-REC, [[LAST STEP]] blinks while the selected instrument has its own length.",
+        "In TR-REC, [[LAST STEP]] blinks while the selected instrument has its own length, and the step cursor loops over its steps 1 to L.",
       ],
     },
     fr: {
@@ -102,7 +102,7 @@ export const TUTORIALS = {
         "L'accent global (AC) et l'accent faible suivent le pattern, pas l'instrument.",
         "Chaque instrument revient à son pas 1 au départ et à l'arrêt.",
         "Le scatter s'applique par-dessus les longueurs : chaque instrument garde sa boucle.",
-        "En TR-REC, [[LAST STEP]] clignote quand l'instrument sélectionné a sa propre longueur.",
+        "En TR-REC, [[LAST STEP]] clignote quand l'instrument sélectionné a sa propre longueur, et le curseur des pas boucle sur ses pas 1 à L.",
       ],
     },
   },

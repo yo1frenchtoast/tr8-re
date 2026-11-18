@@ -36,7 +36,8 @@
  *   poly_run  replaces "bl FUN_60026894" at 0x6000966E (start) and 0x600096AE (stop);
  *   poly_last replaces "bl FUN_6001B8D6" at 0x60019A10 (step pad pressed with LAST STEP held);
  *   poly_led  replaces "bl FUN_6001774E" at 0x60016438 (step LED loop of the LAST STEP view);
- *   poly_lsled replaces the tail call "b.w FUN_60017722" at 0x60016B56 (LAST STEP button LED).
+ *   poly_lsled replaces the tail call "b.w FUN_60017722" at 0x60016B56 (LAST STEP button LED);
+ *   poly_cursor replaces "bl FUN_6001B12E" at 0x600163CA (cursor step of the step pads).
  *
  * Storage: the length of instrument i is the Ptn2 parameter of index TR8_PTN2_SPARE + i
  * (global id 0x12B + i), one of the unnamed pattern parameters that the firmware stores
@@ -127,6 +128,17 @@ void poly_led(int led, unsigned colour)
     TR8_FN_STEP_LED(led, colour);
 }
 
+/* In TR-REC, the instrument of the selected row if it has its own length, else -1. */
+static int rec_inst(void)
+{
+    if (TR8_SETUP_GET(TR8_HMI_SETUP, TR8_SETUP_MODE, 0) != 0)
+        return -1;
+    int t = TR8_SETUP_GET(TR8_HMI_SETUP, TR8_SETUP_ROW, 0) - 4;       /* button order */
+    if (t == 5 || t == 6)
+        t ^= 3;                                   /* RS/HC swapped: 5 <-> 6 */
+    return t >= 0 && t < NI && len(t) ? t : -1;
+}
+
 /* Replaces the tail call "b.w FUN_60017722" at 0x60016B56 at the end of the panel repaint
  * FUN_600169A4 (bit 0x02). With LAST STEP released it sets LED 9 (lit if the pattern is shorter
  * than 16 steps); with LAST STEP held the same call sets LED 7. In TR-REC, when the selected row
@@ -134,15 +146,22 @@ void poly_led(int led, unsigned colour)
  * requests this repaint (FUN_6001961E ORs 0x16 into the panel bits). */
 void poly_lsled(int id, int a, int b)
 {
-    if (id == TR8_LED_LASTSTEP &&
-        TR8_SETUP_GET(TR8_HMI_SETUP, TR8_SETUP_MODE, 0) == 0) {
-        int t = TR8_SETUP_GET(TR8_HMI_SETUP, TR8_SETUP_ROW, 0) - 4;   /* button order */
-        if (t >= 0 && t < NI && len(t == 5 ? 6 : t == 6 ? 5 : t)) {  /* RS/HC swapped */
-            a = 1;
-            b = 0;                                /* blink flag */
-        }
+    if (id == TR8_LED_LASTSTEP && rec_inst() >= 0) {
+        a = 1;
+        b = 0;                                    /* blink flag */
     }
     TR8_FN_LED3(id, a, b);
+}
+
+/* Replaces "bl FUN_6001B12E" at 0x600163CA in the step pad painter FUN_60016386: the read of
+ * Setup 0x1A, the step that gets the cursor (colour 0) while playing. In TR-REC, when the
+ * selected row is an instrument with its own length, the cursor is that instrument's head, so
+ * it loops over the instrument's steps like its sound. Only reads (poly_n is one word). */
+int poly_cursor(void *db, int idx, int def)
+{
+    int v = TR8_SETUP_GET(db, idx, def);
+    int i = rec_inst();
+    return i >= 0 ? head(i, poly_n) : v;
 }
 
 void poly_run(void *p, int a, int run)

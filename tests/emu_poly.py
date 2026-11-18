@@ -178,6 +178,30 @@ expect("LAST STEP held: LED 9 is the firmware's own (a = 1 with Setup[3] = -1), 
        held_leds, [(9, 1, 9), (7, 1, 9)])
 expect("LAST STEP held: no blink", BLINK in held_leds, False)
 
+# TR-REC cursor, through the firmware's own step pad painter FUN_60016386. While playing
+# (Setup 0x15 = 1) it reads the cursor step, Setup 0x1A, at 0x600163CA (now poly_cursor) and
+# paints that step with colour 0. In TR-REC with an instrument row that has a length, the cursor
+# is that instrument's head; any other row or mode keeps the pattern position.
+def cursor(row, mode=0, step=9, n=5):
+    SETUP.update({0: mode, 7: row, 8: 1, 0x15: 1, 0x1A: step})
+    held.clear(); log.clear()
+    w32(0x60149F38 + 0x20, 0)
+    w32(S["poly_n"], n)
+    rowfn = (0x60018F8A, 0x6001900A, 0x60019516)   # step state of the row: stubbed, 0 = off
+    STUBS.update({a: "f" for a in rowfn})
+    call(0x60016386, 0x70003000)
+    for a in rowfn:
+        del STUBS[a]
+    for k in (0, 7, 8, 0x15, 0x1A):
+        SETUP.pop(k, None)
+    return [u for u, c in log if isinstance(u, int) and c == PLAY]
+expect("TR-REC cursor: CH (length 3) after 5 advances is on its step 2", cursor(ROW(CH)), [1])
+expect("TR-REC cursor: CH after 3 advances is on its step 3", cursor(ROW(CH), n=3), [2])
+expect("TR-REC cursor: RS (length 5, button 0x27) after 7 advances", cursor(ROW(RS), n=7), [1])
+expect("TR-REC cursor: HC (no length, button 0x26) is the pattern position", cursor(ROW(HC)), [9])
+expect("TR-REC cursor: BD (no length) is the pattern position", cursor(ROW(BD)), [9])
+expect("TR-REC cursor: AC row is the pattern position", cursor(0), [9])
+expect("cursor in another mode (3, INST REC) with CH: pattern position", cursor(ROW(CH), 3), [9])
 setup()
 pw(POS, 15)                                    # as after a stop: the next advance plays step 0
 m = play(40)

@@ -23,7 +23,7 @@ Flash as described in [UPDATE.md](UPDATE.md) (back up first).
 | Hold LAST STEP + several instrument buttons, press a pad | All of them get that length |
 | Hold LAST STEP, press a pad (no instrument button) | Normal: sets the pattern length |
 | Hold LAST STEP + an instrument that has a length | The step LEDs show that instrument like the pattern-length view: steps inside its length green, the other steps off. While playing the LEDs do not follow the play position, as in the stock LAST STEP view [unit] |
-| In TR-REC, select an instrument that has a length | The LAST STEP button blinks |
+| In TR-REC, select an instrument that has a length | The LAST STEP button blinks. While playing, the step cursor loops over that instrument's steps 1..L, in time with its sound |
 | Change pattern | The lengths of that pattern apply |
 | Power off and on | The lengths are kept |
 
@@ -39,6 +39,8 @@ saves pattern edits automatically). A pattern that was never given a length play
   the weak accent follow the pattern.
 - The heads go back to step 1 when the sequencer starts or stops.
 - The lengths are per pattern: variations A and B share them.
+- In TR-REC, the step cursor (the step that plays) of an instrument with a length is its head;
+  any other row, and every other mode, shows the pattern position as before [unit: hardware test 8].
 - While the firmware plays a held-step list (the step loop: TR-REC + INST PLAY, then hold pads;
   player +0x1DA != -1, Setup 0x19: [FINDINGS.md](FINDINGS.md) section 7, "Step trigger"), the
   instruments play as written (no length): the firmware picks the step from the list, so poly
@@ -66,6 +68,7 @@ A mask that changed during the call (a panel edit) is not overwritten.
 | `0x60019A10` in `FUN_6001961E` (button handler: pad with LAST STEP `0x1A` held) | `bl FUN_6001B8D6` (set LAST_A/B) | `bl poly_last` | panel |
 | `0x60016438` in `FUN_60016386` (step LED loop, LAST STEP view only) | `bl FUN_6001774E(led, colour)` | `bl poly_led` | panel |
 | `0x60016B56` in `FUN_600169A4` (panel repaint, bit `0x02`) | `b.w FUN_60017722(id, a, b)` (tail call: LED 9, or LED 7 while LAST STEP is held) | `b.w poly_lsled` | panel |
+| `0x600163CA` in `FUN_60016386` (step pad painter, cursor read) | `bl FUN_6001B12E(db, 0x1A, 0)` (Setup 0x1A, cursor step, read only while playing) | `bl poly_cursor` | panel (same function as `poly_led`; reached at each step through the step callback `FUN_60012C22`) |
 | `0x60011E00`, `0x60011E04` | developer dump calls | `nop.w` (frees the region) | - |
 
 The task of each site comes from `tools/callgraph.py up` ([DEVELOPING.md](DEVELOPING.md) section 3).
@@ -97,6 +100,13 @@ when an instrument button or a pad is pressed (flag bit 0x4), not at each step, 
 view shows no moving position, stock or poly [unit, 2026-11-18]. The play-position colour is set
 at the redraw but was not seen on the unit then: steps 1-3 of CH stayed steady green while playing.
 
+`poly_cursor` replaces the read of the cursor step (Setup `0x1A`) at the start of the step pad
+painter `FUN_60016386`. The painter gives colour 0 (the cursor) to that step in every view, and
+the step callback `FUN_60012C22` calls it at each step, so the cursor moves with playback. In
+TR-REC (Setup[0] = 0), when the selected row (Setup[7]) is an instrument with a length, the hook
+returns that instrument's head `(poly_n - 1) % L` instead, the same value `poly_trig` uses for the
+sound. Otherwise it returns the firmware's value. It only reads (`poly_n` is one word).
+
 `poly_lsled` replaces the last call of the panel repaint `FUN_600169A4`. That call is a tail call
 (`pop.w` then `b.w`), so the hook is a `b.w` too: `poly_lsled` returns straight to the repaint's
 caller. With LAST STEP released it sets LED 9 (LAST STEP), lit when the pattern is shorter than 16
@@ -127,8 +137,9 @@ The length of instrument i is id `0x12B + i` (Ptn2 index `4 + i`). Values outsid
   [code].
 
 Code: `patches/poly/poly.c`. The first developer-dump region (`0x60011150`-`0x60011464`) holds
-691 bytes of code and is nearly full, so `poly_lsled` (108 bytes) and the data (5 + 4 bytes) are
-in the second one (`0x60011488`-`0x600114FF`), which the standalone poly build has to itself.
+691 bytes of code and is nearly full, so `poly_lsled`, `poly_cursor` and their shared row check
+(164 bytes) and the data (5 + 4 bytes) are in the second one (from `0x60011488`), which the
+standalone poly build has to itself.
 `motion-poly` links both features into the two regions itself ([COMBO.md](COMBO.md)).
 Emulation test: `tests/emu_poly.py` runs the firmware's own `FUN_600262F2` through the hook,
 the gesture through the firmware's own button handler `FUN_6001961E`, and the write through
@@ -237,11 +248,25 @@ Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5
 | 4 | Hold TR-REC, press INST PLAY, then hold pads 1 and 5 | The sequencer loops steps 1 and 5; CH and RS play as written (CH on step 1, RS on 1) | Note what plays |
 | 5 | Release the pads | Normal play at once (stock: the last release sets the list index to -1); CH and RS back on their cycles, which kept counting during the loop | - |
 
+## Hardware test 8 (TR-REC cursor): passed
+
+CH 3 steps on its steps 1 and 2, RS 5 steps on 1 and 2, BD on 1, 5, 9, 13 (no length).
+
+| # | Action | Expected |
+|---|---|---|
+| 1 | TR-REC, select BD, play | The cursor runs over steps 1-16 (stock) |
+| 2 | Select CH | The cursor loops over steps 1-3, on the steps where CH is heard |
+| 3 | Select RS | The cursor loops over steps 1-5 |
+| 4 | Select HC (no length; RS/HC button swap) | Steps 1-16 |
+| 5 | INST PLAY (CH selected before) | Steps 1-16 |
+| 6 | Back to TR-REC, CH; stop and start, then TAP + START/STOP | The CH cursor restarts on step 1 with BD |
+| 7 | Enter a CH step while the cursor loops | The step is entered as before (the cursor is display only) |
+
 ## Limitations and next steps
 
 1. The USB backup (`TR8_PTN`) does not contain the lengths [code].
-2. In the normal view the step LEDs show the pattern position; the head of an instrument is
-   shown only while LAST STEP + that instrument are held.
+2. Outside TR-REC the step cursor shows the pattern position; in TR-REC it follows the
+   selected instrument's head when it has a length.
 3. Flam timing: the delayed flam hit uses the heads of the last advance, which is right if it
    always lands before the next step [hyp].
 
@@ -280,3 +305,7 @@ Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5
   (the view is redrawn only on a press), so this is kept as is and the documents no longer
   promise a blinking position (issue #2). Pattern edits lost on pattern change during the same
   retest were the stock pattern lock, not poly (FINDINGS.md "Pattern lock").
+- TR-REC cursor (2026-11-18, user request): new hook `poly_cursor` at `0x600163CA`, the cursor
+  read of the step pad painter. In TR-REC the cursor of an instrument with a length loops over
+  its own steps. Emulation tests through the firmware's own `FUN_60016386` pass. Hardware test 8
+  (same day, `motion-poly-chain`): passed, every check as described.

@@ -6,7 +6,7 @@ MEMORY {
   POLY_B (rwx) : ORIGIN = 0x60011488, LENGTH = 0x60011BB6 - 0x60011488
 }
 SECTIONS {
-  .text_b : { *(.text.poly_lsled) } > POLY_B
+  .text_b : { *(.text.poly_lsled) *(.text.rec_inst) *(.text.poly_cursor) } > POLY_B
   .text   : { *(.text*) *(.rodata*) } > POLY
   .data : { *(.data*) } > POLY_B
   .bss  : { *(.bss*) *(COMMON) } > POLY_B

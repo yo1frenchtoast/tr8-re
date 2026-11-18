@@ -83,6 +83,7 @@ PATCHES["poly"] = {
         (0x60019A10, thumb_bl(0x60019A10, 0x6001B8D6), "poly_last"),    # pad with LAST STEP held
         (0x60016438, thumb_bl(0x60016438, 0x6001774E), "poly_led"),     # step LEDs, LAST STEP view
         (0x60016B56, thumb_bl(0x60016B56, 0x60017722, link=False), "b:poly_lsled"),  # LAST STEP LED
+        (0x600163CA, thumb_bl(0x600163CA, 0x6001B12E), "poly_cursor"),  # step pads: cursor step
     ],
 }
 
