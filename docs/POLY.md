@@ -43,7 +43,7 @@ saves pattern edits automatically). A pattern that was never given a length play
   player +0x1DA != -1, Setup 0x19: [FINDINGS.md](FINDINGS.md) section 7, "Step trigger"), the
   instruments play as written (no length): the firmware picks the step from the list, so poly
   cannot predict it. The scatter does
-  not write that list [code], so the lengths stay on under scatter [hyp: hardware test 7].
+  not write that list [code], so the lengths stay on under scatter [unit: hardware test 7].
 
 ## How it works
 
@@ -223,7 +223,7 @@ steps 1, 5, 9, 13.
 | 5 | Change CH to 4 while playing (LAST STEP + CH + pad 4) | CH continues with 4 steps |
 | 6 | Flam on CH's step 1, play | The flam follows CH's head |
 
-## Hardware test 7 (scatter and step loop): to do
+## Hardware test 7 (scatter and step loop): checks 1-3 passed, 4-5 to do
 
 Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5, 9, 13).
 
@@ -268,3 +268,6 @@ Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5
   restart on the fly (TAP + START/STOP, panel task) and the sequencer never write the same
   variables in two steps. Same behaviour; emulation tests pass. Hardware test 6 (2026-11-13,
   `motion-poly-chain`): passed, every check as described, including fast TAP + START/STOP.
+- Hardware test 7, checks 1-3 (2026-11-18): the scatter does not change the poly loops; the
+  heads keep running, also over a chained A1 A2 B1 B2 sequence, step LEDs included. Checks 4-5
+  (poly during the step loop) not done yet.
