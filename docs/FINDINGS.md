@@ -368,6 +368,17 @@ then `FUN_60010E92` store). The firmware calls it on a pattern change, so it is 
 for a patch to persist the pattern being left. Only this one touches flash; the copies above are
 RAM only.
 
+**Pattern lock.** The pattern save `FUN_6001B7D8` first reads System id `0x27`
+(`FUN_6001B432(db, 0x27, 0)`) and saves nothing (no area 4, no area 6) when it is not 0 [code].
+`FUN_6004CC9C` sets it through `FUN_6001BCC2`: with PTN SELECT (button `0x12`) held, a knob turn
+writes 1 to the right and 0 to the left (`0 < delta`); its first event only shows the current value
+[code]. The texts are `Lock` and ` OFF` (`0x60015DFC`), and the PTN SELECT screen picks `Lock`
+when the value is 1 [code]. On the unit, every step edit was lost on a pattern change with every
+build, poly alone included; holding PTN SELECT and turning TEMPO to the left made saving work
+again [unit, 2026-11-18, issue #2]. The PTN SELECT screen did not show `Lock` then, so the
+condition of that display is not understood [unit]. A lock is kept across power off and
+reflashes (System area), so a lost edit is first a reason to check it.
+
 The chain patch redirects the area-4 half of that save (`0x6001B7F4`, inside `FUN_6001B7D8`)
 while the current pattern has a side sequence, and keeps the area-6 half stock: area 4 slot *n+1*
 keeps the pattern's own steps and the edited bar is appended to a 128-byte-entry log in the
