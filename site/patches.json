@@ -2,7 +2,7 @@
  "app_sha256": "3685edab8bbeaef8752df9ef08a73a9fd2a2e69ba8210016132f6d141f6b452e",
  "app_name": "TR-8:Appli      18-0926_11:19:43",
  "version": "1.61",
- "release": "1.0",
+ "release": "1.1",
  "patches": {
   "motion": {
    "group": "cave",

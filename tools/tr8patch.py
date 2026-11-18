@@ -21,7 +21,7 @@ import tr8fw
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = 0x60000000
 # Release of this project (CHANGELOG.md). The web flasher shows it (site/patches.json "release").
-RELEASE = "1.0"
+RELEASE = "1.1"
 APPA_SHA256 = "3685edab8bbeaef8752df9ef08a73a9fd2a2e69ba8210016132f6d141f6b452e"  # v1.61, decompressed
 
 def thumb_bl(src, dst, link=True):

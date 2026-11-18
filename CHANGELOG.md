@@ -8,6 +8,37 @@ v1.61 file with the [web flasher](https://yo1frenchtoast.github.io/tr8-re/) or
 "Unit" means checked on a real TR-8; everything is also checked in emulation
 (`tests/run_all.sh`).
 
+## v1.1 (2026-11-18)
+
+Two display changes, both checked on the unit, and corrected documents after a full poly retest.
+
+### Per-instrument length, "poly" ([docs/POLY.md](docs/POLY.md))
+
+- **New:** in TR-REC, the step cursor of the selected instrument loops over its own length
+  (CH on 3 steps: the cursor runs 1-2-3), in time with its sound. Other instruments and the other
+  modes keep the pattern cursor. Unit: passed (hardware test 8).
+- Checked on the unit: scatter keeps every instrument's loop; in the step loop (TR-REC + INST
+  PLAY, hold pads) the instruments play as written and normal play resumes on release; an
+  instrument's weak notes follow its loop.
+- Documents corrected: holding LAST STEP + an instrument shows its length but no moving play
+  position (as in the stock LAST STEP view); weak notes follow the instrument, only the AC row's
+  weak level follows the pattern.
+
+### Bar chain ([docs/CHAIN.md](docs/CHAIN.md))
+
+- **Changed:** holding A or B on a side with no bar sequence lights pad 1 green. Before, it lit
+  pad 1 yellow, the same as a one-bar sequence, which saves its steps in the chain's log instead
+  of the pattern. Unit: passed.
+- Documents corrected: the bar that plays is steady yellow, it does not blink.
+
+### Firmware notes ([docs/FINDINGS.md](docs/FINDINGS.md))
+
+- **Pattern lock:** the stock TR-8 stops saving every pattern edit while PTN SELECT + TEMPO is
+  set to `LcK`. If your edits are lost when you change pattern, turn TEMPO to the left with PTN
+  SELECT held. This is not caused by the mods.
+- Effects (type ids, per-pattern option, sends), scatter (where type, depth and ON are read),
+  the step loop screen, the processors and peripheral map.
+
 ## v1.0 (2026-11-15)
 
 The first release. Three mods for the TR-8 system program v1.61, in any combination, built from
