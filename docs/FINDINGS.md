@@ -433,8 +433,15 @@ Known Setup indexes: 0 = panel mode (section 9), 6 = master volume, 9-0xC = scat
 code (`FUN_60016386`, case 5) reads Efx index 0, 1, 2 when
 Setup[7] is 1, 2, 3, and lights the pad of the current type. [code]
 
-- The index order is [hyp]: 0 = reverb, 1 = delay, 2 = side chain (External In), the panel order
-  and the order of the pattern rows `RV`, `EC`, `SC`.
+- Index 0 (`0x89`) = reverb, 1 (`0x8A`) = delay, 2 (`0x8B`) = side chain (External In) [code].
+  Each id has a callback in the parameter-change table (`0x6007F250`, `0x6007F25C`,
+  `0x6007F268`: `0x600210C8`, `FUN_600216E2`, `0x60021CD8`). After the type change, each callback
+  re-sends the knob values of its effect from a list at `0x600690DC` (count, then ids):
+  reverb `0x80`, `0x81`, `0x82` (CC 89, 90, 91); delay `0x83`, `0x84`, `0x85` (CC 17, 18, 16)
+  and `0x3C` (tempo); side chain `0x87` (CC 13) and `0x3C`. The CC -> id map is the MIDI receive
+  switch `FUN_60004966`. Only delay and side chain read the tempo, as the EFX Type List says
+  (no reverb type is synced). The LED code agrees: Setup[7] = 1, 2, 3 (row buttons `0x1E`-`0x20`,
+  RV EC SC) selects Efx index 0, 1, 2.
 - The meaning of -1 is not known.
 - Each value is the type 0..7, shown on pads 1..8 [hyp: consistent with the 8 types of each effect].
 
@@ -908,6 +915,5 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
    `motion-poly-chain` build uses it and works on a real TR-8 ([CHAIN.md](CHAIN.md)). [unit]
 8. MIDI: the receive path (`midi\task_midi_rx.cpp`) and whether external CCs take the same path
    as `FUN_60015906`.
-10. Effects (section 6, "Effects"): which Efx index is reverb, delay and side chain; what the
-    value -1 means; whether the setup-mode KIT button writes System id `0x16`. Scatter: what
+10. Effects (section 6, "Effects"): what the value -1 means; whether the setup-mode KIT button writes System id `0x16`. Scatter: what
     the 0x124-byte type records hold, and which screen writes the held-step mask (Setup 0x19).
