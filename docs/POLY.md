@@ -223,7 +223,7 @@ steps 1, 5, 9, 13.
 | 5 | Change CH to 4 while playing (LAST STEP + CH + pad 4) | CH continues with 4 steps |
 | 6 | Flam on CH's step 1, play | The flam follows CH's head |
 
-## Hardware test 7 (scatter and step loop): checks 1-3 passed, 4-5 to do
+## Hardware test 7 (scatter and step loop): passed
 
 Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5, 9, 13).
 
@@ -233,7 +233,7 @@ Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5
 | 2 | Same, turn the dial through types 1-10 | CH keeps its 3-step cycle against BD under every type (the effect may slice or reverse the sound) | Note the types where CH plays as written: the scatter then reorders the sequencer steps by another path |
 | 3 | SCATTER off | CH and RS still aligned with their cycles | - |
 | 4 | Hold TR-REC, press INST PLAY, then hold pads 1 and 5 | The sequencer loops steps 1 and 5; CH and RS play as written (CH on step 1, RS on 1) | Note what plays |
-| 5 | Release the pads, then press a mode button | Normal play; CH and RS back on their cycles | - |
+| 5 | Release the pads | Normal play at once (stock: the last release sets the list index to -1); CH and RS back on their cycles, which kept counting during the loop | - |
 
 ## Limitations and next steps
 
@@ -269,5 +269,7 @@ Same pattern as test 6 (CH 3 steps on its step 1, RS 5 steps on 1 and 2, BD 1, 5
   variables in two steps. Same behaviour; emulation tests pass. Hardware test 6 (2026-11-13,
   `motion-poly-chain`): passed, every check as described, including fast TAP + START/STOP.
 - Hardware test 7, checks 1-3 (2026-11-18): the scatter does not change the poly loops; the
-  heads keep running, also over a chained A1 A2 B1 B2 sequence, step LEDs included. Checks 4-5
-  (poly during the step loop) not done yet.
+  heads keep running, also over a chained A1 A2 B1 B2 sequence, step LEDs included. Check 4
+  (same day, CH written on 3, 7, 11, 15): with pads 1 and 5 held, only steps 1 (BD) and 5 (RS)
+  play and CH is silent, so poly leaves the step loop alone and the instruments play as written.
+  Check 5: normal play resumes as soon as the pads are released (stock behaviour).
