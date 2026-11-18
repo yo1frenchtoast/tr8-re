@@ -74,7 +74,7 @@ export const TUTORIALS = {
       notes: [
         "The lengths are saved with each pattern, like any other edit. Variations A and B share them.",
         "Steps after L are not played, but they are kept.",
-        "The global accent (AC) and the weak accent follow the pattern, not the instrument.",
+        "Weak notes of the instrument follow its loop. The global accent (AC) follows the pattern.",
         "Each instrument goes back to its step 1 when you start or stop.",
         "Scatter works on top of the lengths: each instrument keeps its own loop.",
         "In TR-REC, [[LAST STEP]] blinks while the selected instrument has its own length, and the step cursor loops over its steps 1 to L.",
@@ -99,7 +99,7 @@ export const TUTORIALS = {
       notes: [
         "Les longueurs sont sauvegardées avec chaque pattern, comme toute autre modification. Les variations A et B les partagent.",
         "Les pas après L ne sont pas joués, mais ils sont gardés.",
-        "L'accent global (AC) et l'accent faible suivent le pattern, pas l'instrument.",
+        "Les notes faibles de l'instrument suivent sa boucle. L'accent global (AC) suit le pattern.",
         "Chaque instrument revient à son pas 1 au départ et à l'arrêt.",
         "Le scatter s'applique par-dessus les longueurs : chaque instrument garde sa boucle.",
         "En TR-REC, [[LAST STEP]] clignote quand l'instrument sélectionné a sa propre longueur, et le curseur des pas boucle sur ses pas 1 à L.",

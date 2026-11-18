@@ -574,7 +574,7 @@ written by `FUN_6000E152` and the change handlers (setters `FUN_60026AAE`... ) [
 | P[3] | last step index (`FUN_600268F4`) |
 | P[0x20] | global accent mask; P[0x4D] weak accent |
 | P[0x21 + i] | step mask of instrument i |
-| P[0x42 + i] | accent mask of instrument i |
+| P[0x42 + i] | accent mask of instrument i. The panel's weak note (TR-REC, instrument held + pad, purple step) is in this mask or in the flam mask: a weak note follows the poly head, which swaps both [unit, POLY.md]; which one is open |
 | P[0x66] | **play position** (step 0..last). Stop sets it to last, so the next advance plays 0 |
 | P[0x67 + i] | flam mask of instrument i |
 | byte +0x1D8, s16 +0x1DA, bytes +0x1DC | held-step order: length, index (-1 = off), step list (see below) |

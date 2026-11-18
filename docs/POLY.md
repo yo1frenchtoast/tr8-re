@@ -35,8 +35,14 @@ saves pattern edits automatically). A pattern that was never given a length play
 - Each instrument with a length has a play head. It advances once per step and goes back to
   its step 1 after L steps. The pattern position (step LEDs, last step, A/B) does not change.
 - Only steps 1..L of that instrument are used; its other steps are ignored but kept.
-- Step, accent and flam of the instrument all follow its head. The global accent row (AC) and
-  the weak accent follow the pattern.
+- Step, accent and flam of the instrument all follow its head. So does its weak note (TR-REC:
+  hold the instrument and press the pad, the step shows purple) [unit, 2026-11-18: a weak CH
+  note on step 2 of a 3-step CH plays at every cycle]. Which of the three player masks holds the
+  weak note is not known [code: `FUN_60018F8A` reads the instrument accent row for the step
+  colour, `FUN_6001900A` the `FLAM_<inst>` row]. The global accent row (AC) and its weak level
+  (`WEAK_ACC1/2`, P[0x4D]) follow the pattern [code].
+- Flam: no panel gesture found on a unit without the 7X7 expansion, so the flam part was not
+  tested on the unit [hyp: flams need the 7X7 expansion].
 - The heads go back to step 1 when the sequencer starts or stops.
 - The lengths are per pattern: variations A and B share them.
 - In TR-REC, the step cursor (the step that plays) of an instrument with a length is its head;
@@ -309,3 +315,6 @@ CH 3 steps on its steps 1 and 2, RS 5 steps on 1 and 2, BD on 1, 5, 9, 13 (no le
   read of the step pad painter. In TR-REC the cursor of an instrument with a length loops over
   its own steps. Emulation tests through the firmware's own `FUN_60016386` pass. Hardware test 8
   (same day, `motion-poly-chain`): passed, every check as described.
+- Weak notes (2026-11-18): a weak CH note follows CH's head (unit). The documents said the weak
+  accent follows the pattern; that is only true of the AC row's weak level. Flam test dropped:
+  no gesture to enter a flam without the 7X7 expansion [hyp].
