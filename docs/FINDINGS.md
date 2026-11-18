@@ -295,7 +295,7 @@ Parameter descriptors: 0x1C-byte records at `0x6005EF4E` (148 entries):
 
 | Ids | Kind | Names |
 |---|---|---|
-| 0x8C-0xC2 | 3 | Per instrument (BD SD LT MT HT RS HC CH OH CC RC): `_NUM`, `_PAN`, `_ACC`, `_GR`, `_SE` (kit) |
+| 0x8C-0xC2 | 3 | Per instrument (BD SD LT MT HT RS HC CH OH CC RC): `_NUM`, `_PAN`, `_ACC`, `_GR`, `_SE` (kit; `_GR`/`_SE` = reverb/delay send, section "Effects") |
 | 0xC3-0xFA | 4 | `VARI`, `SCALE`, `LAST_A`, `LAST_B`, then `STEP_<row>1/2` for 26 rows (AC RV EC SC, 11 instruments, 11 `ACC_<inst>`); each is a 16-bit step mask, 1/2 = variation A/B |
 | 0xFB-0x105 | 5 | `<inst>_LEV` (11) |
 | 0x129-0x14E | 6 | `WEAK_ACC1/2`, `FLAM_<inst>1/2` |
@@ -313,7 +313,7 @@ Parameter areas (`prm_mgr`; area table `0x6005EB0C`, 16 bytes each: first id, co
 |---|---|---|---|---|
 | 0 | 0x00-0x29 | | `0x60143C6C`, 2 slots | |
 | 1 | 0x2A-0x88 | Setup / system | `0x60143DBC`, 1 slot | |
-| 2 | 0x89-0x8B | | `0x60143F38`, 17 slots | `0x600556E4` |
+| 2 | 0x89-0x8B | Efx: effect types (section "Effects") | `0x60143F38`, 17 slots | `0x600556E4` |
 | 3 | 0x8C-0xC2 | Kit | `0x60144004`, 17 slots | `0x60055864` |
 | 4 | 0xC3-0xFA | Ptn | `0x60144EA0`, 17 slots | `0x600581A4` |
 | 5 | 0xFB-0x126 | Levels, 0x106-0x11B per-instrument values, 0x11C-0x126 unused (range -1) | `0x60145D80`, 17 slots | `0x60059DA4` |
@@ -411,7 +411,8 @@ Testmode, TMP. Each has a getter `get(db, index, default)` that maps a local ind
 | Database | Getter | Notes |
 |---|---|---|
 | Setup | `FUN_6001B12E` | index n = global `0x2A + n` (`hmi_prm_setup.cpp`). Object `0x60149F38`. |
-| System | `FUN_6001B432` | |
+| System | `FUN_6001B432` | index n = global id n (area 0, `hmi_prm_system.cpp`). Object `0x6007ED20`. |
+| Efx | `FUN_6001BD2E` | index 0, 1, 2 = global `0x89`, `0x8A`, `0x8B` (`FUN_6001BD0A`, `hmi_prm_efx.cpp`). Object `0x6007ED28`. Setter `FUN_6001BD66`. |
 | Ptn | `FUN_6001B736` | index 0 = `VARI`, 1 = `SCALE`, index -> id `0xC3 + index` (`FUN_6001B606`) |
 | Ptn2 | `FUN_6001D3FA` | weak accent, flams |
 | Patch / Patch2 | `FUN_6001A99A` / `FUN_6001AD68` | kit |
@@ -422,6 +423,62 @@ asks the range (vtable +0x1C), clamps, reads the current value (+0x08) and write
 
 Known Setup indexes: 0 = panel mode (section 9), 6 = master volume, 0x13 = tempo fine (-10..+10),
 0x14 = shuffle (0..100), 0x15 = playing, toggled by START/STOP [code: the toggle sends MIDI Start `0xFA` or Stop `0xFC`].
+
+### Effects
+
+**Effect types.** Area 2 (Efx) holds three values, global ids `0x89`, `0x8A`, `0x8B` (Efx index 0,
+1, 2). The range is -1..7, the default is 0 (parameter table `0x6005D3EC`). Factory bank 1
+(`0x600556E4`): slot 0 = (0, 0, 0), slot *n*+1 = (*n* mod 8) for all three values. The pad LED
+code (`FUN_60016386`, case 5) reads Efx index 0, 1, 2 when
+Setup[7] is 1, 2, 3, and lights the pad of the current type. [code]
+
+- The index order is [hyp]: 0 = reverb, 1 = delay, 2 = side chain (External In), the panel order
+  and the order of the pattern rows `RV`, `EC`, `SC`.
+- The meaning of -1 is not known.
+- Each value is the type 0..7, shown on pads 1..8 [hyp: consistent with the 8 types of each effect].
+
+**Effects per pattern.** System id `0x16` (range 0..1, default 0) selects where the types are kept
+[code]:
+
+- 0: area 2 slot 0 is global. A pattern change does not touch it.
+- 1: the pattern select `FUN_60005148` first commits area 2 slot 0 to slot *old*+1 and writes
+  flash (`FUN_6001BDD0` -> `FUN_6000FC78`), then loads slot *new*+1 into slot 0 (`FUN_6001BE22`).
+  `FUN_6001A068` (purpose not traced; it returns early when System id 7 is 0) also commits
+  area 2 to slots 1, 2, 3, ... when System id `0x16` is 1.
+
+Roland documents this option as the KIT button of the setup mode (hold PTN SELECT at power on,
+light KIT, press START/STOP to save; Roland Australia, "The Ultimate Guide to the AIRA TR-8",
+tip 10). That the KIT button writes System id `0x16` is [hyp].
+
+**Sends per instrument.** Kit ids `<inst>_GR` (`0xAD`-`0xB7`) and `<inst>_SE` (`0xB8`-`0xC2`) have
+the range 0..1, default 1 [code]. They are the reverb and delay send of each instrument [hyp:
+from the names (`GRLV` = reverb level, `SELV` = delay level, section 8) and the manual: KIT + hold
+the STEP button of REVERB or DELAY, then the 11 instrument buttons; all are on by default]. They
+are kit data, so they change with the kit, not with the pattern.
+
+**The 8 types of each effect** come from Roland's "TR-8 EFX Type List" (2014/3/11, Ver. 1.02).
+The original URL (`roland.co.jp/.../63080412/TR-8_EfxParameter.pdf`) is gone; copies are in
+L. Duffar's French guide (June 2018, chapter 4) and at `airainfo.org/files/tr-8_fx.pdf`. That
+the pad number is the stored value + 1 is [hyp].
+
+| Pad | Reverb (LEVEL / TIME / GATE) | Delay (LEVEL / TIME / FEEDBACK) | Side chain (LEVEL / DEPTH) |
+|---|---|---|---|
+| 1 | Non Attack | One Head Tape | Sin Curve: hold 16th, sin 8th |
+| 2 | Room | Three Head Tape | Square Curve: hold 12th, sin 16th |
+| 3 | 16 Note Pre Delay (16th at 128 BPM) | Digital Single Delay | Saw Squared Curve: hold 16th, saw² 8th |
+| 4 | Plate and Filter (Manual): TIME = time + feedback, GATE = cutoff | Digital Pan Delay | Square Gate: hold 32nd, sin 32nd, gate |
+| 5 | Plate and Filter (Auto): TIME = time + feedback, GATE = sweep time | Reverse Single Delay | Sin Very Short Curve: hold 128th, sin 64th |
+| 6 | Spring | Reverse Pan Delay | Saw Squared Long Curve: hold 8th, saw² "6 note" |
+| 7 | Non Attack and Metal | Stereo Flanger: LEVEL = dry/wet, TIME = rate, FEEDBACK = resonance | Square Short Gate: hold 64th, sin 64th, gate |
+| 8 | High Pass | Bit Crusher: LEVEL = dry/wet, TIME = sample rate, FEEDBACK = filter cutoff | Up Down Curve: hold 16th, up-down 8th |
+
+Tempo sync, from the same list: no reverb type; delay types 1-7 (TIME is a note value); all side
+chain types. The list gives no value ranges and nothing on the scatter (10 types, 10 depths).
+
+**Setup mode** (hold PTN SELECT at power on), from the manual and user guides, not traced in the
+code [hyp]: TEMPO sets the MIDI channel (display `C10` by default); TAP + TEMPO to `OFF` stops the
+demo; A or B + instrument buttons send an instrument to the ASSIGNABLE OUT A or B; KIT = effects
+per pattern (above); START/STOP saves.
 
 ## 7. Sequencer
 
@@ -790,3 +847,6 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
    `motion-poly-chain` build uses it and works on a real TR-8 ([CHAIN.md](CHAIN.md)). [unit]
 8. MIDI: the receive path (`midi\task_midi_rx.cpp`) and whether external CCs take the same path
    as `FUN_60015906`.
+10. Effects (section 6, "Effects"): which Efx index is reverb, delay and side chain; what the
+    value -1 means; whether the setup-mode KIT button writes System id `0x16`; where the
+    scatter type and depth are read (10 types x 10 depths, CC 68/69/70).
