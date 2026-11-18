@@ -54,7 +54,7 @@ typedef uint64_t (*tr8_step_fn)(void *p, int step);
 #define TR8_PL_ACC     0x42   /* [unit] + i: accent mask of instrument i                     */
 #define TR8_PL_FLAM    0x67   /* [code] + i: flam mask of instrument i                       */
 #define TR8_PL_POS     0x66   /* [unit] current step (0..LAST)                               */
-#define TR8_PL_SCATTER 0x1DA  /* [code] BYTE offset of an s16: -1 = no scatter step order    */
+#define TR8_PL_HELD_IDX 0x1DA /* [code] BYTE offset of an s16: held-step list index, -1 = off */
 
 /* Trigger one step: step -1 = advance and play the next step, else play `step` (flam != 0:
  * delayed flam hit, tests the flam masks). Tests bit (1 << step) of every mask.

@@ -421,7 +421,8 @@ Setters: `FUN_6001B166` (Setup) and the generic `FUN_600186FA(obj, index, value,
 asks the range (vtable +0x1C), clamps, reads the current value (+0x08) and writes only on change
 (+0x18).
 
-Known Setup indexes: 0 = panel mode (section 9), 6 = master volume, 0x13 = tempo fine (-10..+10),
+Known Setup indexes: 0 = panel mode (section 9), 6 = master volume, 9-0xC = scatter (section 8,
+"Scatter"), 0x19 = held-step mask (section 7, "Step trigger"), 0x13 = tempo fine (-10..+10),
 0x14 = shuffle (0..100), 0x15 = playing, toggled by START/STOP [code: the toggle sends MIDI Start `0xFA` or Stop `0xFC`].
 
 ### Effects
@@ -473,7 +474,7 @@ the pad number is the stored value + 1 is [hyp].
 | 8 | High Pass | Bit Crusher: LEVEL = dry/wet, TIME = sample rate, FEEDBACK = filter cutoff | Up Down Curve: hold 16th, up-down 8th |
 
 Tempo sync, from the same list: no reverb type; delay types 1-7 (TIME is a note value); all side
-chain types. The list gives no value ranges and nothing on the scatter (10 types, 10 depths).
+chain types. The list gives no value ranges and nothing on the scatter (section 8, "Scatter").
 
 **Setup mode** (hold PTN SELECT at power on), from the manual and user guides, not traced in the
 code [hyp]: TEMPO sets the MIDI channel (display `C10` by default); TAP + TEMPO to `OFF` stops the
@@ -557,13 +558,23 @@ written by `FUN_6000E152` and the change handlers (setters `FUN_60026AAE`... ) [
 | P[0x42 + i] | accent mask of instrument i |
 | P[0x66] | **play position** (step 0..last). Stop sets it to last, so the next advance plays 0 |
 | P[0x67 + i] | flam mask of instrument i |
-| byte +0x1D8, s16 +0x1DA, bytes +0x1DC | scatter: order length, index (-1 = off), step order |
+| byte +0x1D8, s16 +0x1DA, bytes +0x1DC | held-step order: length, index (-1 = off), step list (see below) |
 
 `FUN_600262F2(P, step, flam)` plays one step. With step -1 it advances P[0x66] (if P[1]: +1, 0
-after P[3]), then applies the scatter order. It then tests the single bit `1 << step` in every
+after P[3]), then applies the held-step order. It then tests the single bit `1 << step` in every
 mask and sends the hits to the sound engine. flam != 0 (explicit step, from the delay queue at
 `0x60009A50`) also needs the flam mask. Returns bit i = instrument i fired. **[unit]**: hooking
 the calls below and swapping mask bits changes what plays (POLY.md hardware test 1).
+**Held-step order.** The bytes P+0x1C8..+0x1D7 (one per step) and the list at +0x1D8..+0x1EB come
+from Setup index 0x19 (global `0x43`, a 16-bit step mask): its change callback (`0x60023758`, table
+entry at `0x6007EF98`) calls `FUN_6002765C(P, mask)`, which keeps the held steps in ascending order
+(`FUN_600275B4` inserts or removes one step; mask 0 sets the index to -1). Only the pad press and
+release handlers `FUN_6004F570` / `FUN_6004F4EC` of one screen (vtable `0x6007C778`, factory
+`FUN_600157A8`) write that mask; a mode button (0x11-0x16) or LAST STEP (0x1A) clears it [code].
+Which screen this is, is not known. The scatter callbacks (section 8, "Scatter") do not write it,
+so +0x1DA is not a scatter field (`TR8_PL_HELD_IDX` in `tr8_v161.h`; an earlier name was
+`TR8_PL_SCATTER`). The poly patch only needs "-1 = the firmware does not pick the step from the
+list" ([POLY.md](POLY.md)).
 Callers with -1: `0x60009800`, `0x6000985A`, `0x60009884` (at counter 0, after setting P[3] to
 0, which forces step 0), `0x60026910`. This is the hook used by [POLY.md](POLY.md).
 
@@ -614,7 +625,7 @@ sends (section 10).
 The control meanings come from the names and the TR-8 panel; the CC column comes from the code.
 All CC numbers in this table agree with the official Roland TR-8 MIDI Implementation Chart
 (v1.11, Nov. 18, 2014). The chart also lists CC 68, 69, 70 (SCATTER TYPE, DEPTH, SW) as receive
-only; the scatter controls are not in these 49 ids [open: where the firmware reads them].
+only; the scatter controls are not in these 49 ids (see "Scatter" below).
 BD tune (id 8) is [unit] (used in the motion tests).
 
 ### Control path (normal play)
@@ -647,6 +658,56 @@ BD tune (id 8) is [unit] (used in the motion tests).
    `FUN_6001446A(ctx, id, value)` (another control -> HMI parameter map) unless the knob redirect
    byte `0x6007E580` is set. **`FUN_6001446A` is not on the normal path**: the first motion
    prototype hooked it and recorded nothing. [unit]
+
+### Scatter
+
+The scatter state is in the Setup database (object `0x60149F38`) [code]:
+
+| Setup index | Global id | Range | Meaning |
+|---|---|---|---|
+| 9 | `0x33` | 0..1 | ON |
+| 10 | `0x34` | 0..1 | the dial edits the depth (1) or the type (0) [hyp: DEPTH mode] |
+| 0xB | `0x35` | 0..9 | type (dial positions 1..10) |
+| 0xC | `0x36` | 0..9 | depth |
+
+System id `0x12` keeps a copy of the type: the dial handler writes it after each type change, and
+`FUN_6004E31C` copies it back into Setup 0xB (power-on restore [hyp]).
+
+**Inputs** [code]:
+
+- **Dial**: rotary encoder 0. `FUN_60013FB0(0, delta)` adds the delta with `FUN_600185F0`
+  (relative set, clamped to the range): to Setup 0xC when Setup 10 is 1, else to Setup 0xB (then
+  System `0x12`). With LAST STEP (0x1A) held, the dial writes System `0x24` instead. The same
+  function handles encoder 1 [hyp: TEMPO].
+- **ON**: button `0x2D` (press, `FUN_6001961E`). With button `0x2C` held while playing, it sets
+  the one-cycle flag (+0x18 of the handler object), as in the manual: DEPTH + ON stops the scatter
+  at the end of the cycle [hyp: `0x2C` = DEPTH]. When System id `0x25` is 0 and the flag is clear,
+  the press toggles Setup 9 (`FUN_6004D6F6` writes "value == 0"); otherwise it sets Setup 9 = 1
+  [hyp: System `0x25` selects latch or momentary]. START/STOP that stops the sequencer clears the
+  flag and Setup 9 when the flag is set.
+- **MIDI** (`FUN_60004966`, receive): CC 68 -> Setup 0xB and System `0x12`, value
+  `(v * 18 / 127 + 1) >> 1` (0..9); CC 69 -> Setup 0xC, same scaling; CC 70 -> Setup 9 = `v >= 64`.
+
+**Effect.** The parameter-change callback table (12-byte entries `{global id, on change, second
+callback}`, around `0x6007EE48`-`0x6007F730`) has, for the scatter ids, entries at `0x6007EF2C`
+(`0x33`), `0x6007EF44` (`0x35`), `0x6007EF50` (`0x36`). They call, with the scatter object
+**S = `0x6014A130`** [code]:
+
+- `0x33` -> `FUN_6002A16E(S, ?, on, word +4 of the Setup object)`: S[2] = on, then it programs
+  the engine (calls into the fast code through `thunk_EXT_FUN_0100746E`) for the current type.
+- `0x35` -> `0x6002A1AA`: if value < 10, S[0xB] (+0x2C) = type, then `0x60029BFC`.
+- `0x36` -> `0x6002A1B4`: if value < 10, S[0xC] (+0x30) = depth, then `0x60029BFC`.
+
+**Type table**: 10 records of 0x124 bytes at `0x6006B548`, record *t* = dial position *t* + 1.
+Word 0 is the algorithm, which selects one of 14 setup functions in `FUN_6002A16E` (0 =
+`FUN_60028FD6`, 1 = `FUN_600297B4`, ..., 13 = `FUN_60029830`). Word 0 for the 10 types:
+10, 10, 12, 13, 10, 10, 0, 0, 10, 11. Words 2 and 3 are a range that the depth (S[0xC]) scales
+(500..5000 for most types, 500..3000 for type 3, 100..5000 for types 6-10) [code: the
+interpolation follows the switch; what the range controls is not known]. The rest of each record
+is not decoded.
+
+S is 0x34 bytes below the player object P (`0x6014A164`, section 7); whether both are parts of one
+sequencer object is not known.
 
 ## 9. Buttons and panel mode
 
@@ -848,5 +909,5 @@ HMI index 0x12 / 10 (`FUN_600089E6`).
 8. MIDI: the receive path (`midi\task_midi_rx.cpp`) and whether external CCs take the same path
    as `FUN_60015906`.
 10. Effects (section 6, "Effects"): which Efx index is reverb, delay and side chain; what the
-    value -1 means; whether the setup-mode KIT button writes System id `0x16`; where the
-    scatter type and depth are read (10 types x 10 depths, CC 68/69/70).
+    value -1 means; whether the setup-mode KIT button writes System id `0x16`. Scatter: what
+    the 0x124-byte type records hold, and which screen writes the held-step mask (Setup 0x19).

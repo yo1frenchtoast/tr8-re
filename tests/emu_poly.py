@@ -91,11 +91,11 @@ def expect(name, got, want):
 def bits(*steps):
     return sum(1 << s for s in steps)
 
-def setup(last=15, scatter=-1):
+def setup(last=15, held=-1):
     for i in range(0x80):
         pw(i, 0)
     pw(LAST, last)
-    uc.mem_write(P + 0x1DA, struct.pack("<h", scatter))
+    uc.mem_write(P + 0x1DA, struct.pack("<h", held))
     pw(INST + BD, bits(0, 4, 8, 12))           # four on the floor, follows the pattern
     pw(INST + CH, bits(0))                     # CH, length 3: plays every 3 steps
     pw(INST + RS, bits(0, 1))                  # RS, length 5: plays 2 of every 5 steps
@@ -235,13 +235,14 @@ during.append(lambda: pw(INST + CH, bits(0, 2)))
 play(1)
 expect("mask changed during the call is kept", pr(INST + CH), bits(0, 2))
 
-# Scatter active: the step order is the firmware's, poly does not remap
-setup(scatter=0)
-uc.mem_write(P + 0x1D8, bytes([4]))            # scatter table length 4
+# Held-step list active (Setup 0x19, FINDINGS.md section 7): the firmware picks the step,
+# poly does not remap
+setup(held=0)
+uc.mem_write(P + 0x1D8, bytes([4]))            # held-step list length 4
 uc.mem_write(P + 0x1DC, bytes([0, 1, 2, 3]))
 pw(POS, 15)
 m = play(8)
-expect("scatter: CH plays as written (step 0 of the 4-step order)", fired(m, CH), [0, 4])
+expect("held steps: CH plays as written (step 0 of the 4-step list)", fired(m, CH), [0, 4])
 
 # Flam hit (explicit step, flam = 1): uses the heads of the last advance
 setup()

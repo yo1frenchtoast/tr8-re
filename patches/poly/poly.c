@@ -160,8 +160,8 @@ uint32_t poly_trig(volatile uint32_t *p, int step, int flam)
             s = (s >= (int)p[TR8_PL_LAST]) ? 0 : s + 1;   /* what the firmware will do */
             n = __atomic_add_fetch(&poly_n, 1, __ATOMIC_RELAXED);
         }
-        if (*(volatile int16_t *)((volatile uint8_t *)p + TR8_PL_SCATTER) != -1)
-            s = -1;                               /* scatter reorders steps: leave it alone */
+        if (*(volatile int16_t *)((volatile uint8_t *)p + TR8_PL_HELD_IDX) != -1)
+            s = -1;                               /* held-step list picks the step: leave it alone */
     }
     if ((unsigned)s > 15)
         return TR8_FN_TRIGGER(p, step, flam);
